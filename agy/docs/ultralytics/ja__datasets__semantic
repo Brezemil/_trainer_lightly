@@ -1,0 +1,258 @@
+---
+source_url: https://docs.ultralytics.com/ja/datasets/semantic
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/semantic/index.md)
+
+# Link to this sectionセマンティックセグメンテーションデータセットの概要#
+
+[セマンティックセグメンテーション](https://www.ultralytics.com/glossary/semantic-segmentation)は、画像のすべてのピクセルに1つのクラスラベルを割り当てます。[インスタンスセグメンテーション](/ja/datasets/segment)とは異なり、セマンティックセグメンテーションでは同じクラスの個々のオブジェクトを分離しません。学習ターゲットは、各ピクセルがクラスIDを保持する密なクラスマップです。
+
+このガイドでは、Ultralytics YOLOセマンティックセグメンテーションモデルで使用されるデータセット形式を説明し、学習と検証に利用可能な組み込みのデータセット設定を一覧表示します。
+
+## Link to this sectionサポートされているデータセット形式#
+
+2種類のラベル形式がサポートされています。データセットローダーは、データセットYAMLで`masks_dir`キーが定義されているかどうかに基づいてパスを選択します。
+
+### Link to this sectionPNGマスク形式#
+
+セマンティックセグメンテーションデータセットは、サンプルごとに1つの画像ファイルと1つのマスクファイルを使用します。マスクは通常PNG形式のシングルチャネル画像であり、各ピクセル値は対応する画像ピクセルのクラスインデックスとなります。
+
+  * ピクセル値`0`、`1`、`2`、...は、データセットの`names`マッピングからのクラスIDを表します。
+  * ピクセル値`255`は無視ラベルとして扱われ、損失およびメトリック計算から除外されます。
+  * マスクファイルは、対応する画像ファイルと同じファイル名（拡張子を除く）を使用する必要があります。例：`frankfurt_000000_000294.png`。
+  * Masks are resolved as `.png` by default; if missing, other supported image extensions are also accepted. Use lossless formats such as `.png` or `.tiff`, since lossy compression (e.g. `.jpg`) corrupts the class ID pixel values.
+
+
+
+デフォルトのレイアウトでは、画像とマスクを並列のフォルダーに保持します。データセットYAMLの`masks_dir`値は、マスクを見つけるために`images`パスコンポーネントを置換します。
+    
+    
+    dataset/
+    ├── images/
+    │   ├── train/
+    │   └── val/
+    └── masks/
+        ├── train/
+        └── val/
+
+For example, an image at `images/train/aachen_000000_000019.png` is paired with a mask at `masks/train/aachen_000000_000019.png` when `masks_dir: masks`.
+
+### Link to this sectionYOLOポリゴンラベル形式#
+
+データセットにすでにUltralytics YOLOポリゴンラベル（画像1枚につき1つの`.txt`ファイルに`<class-index> <x1> <y1> <x2> <y2> ...`の行があるもの）がある場合は、PNGマスクへの変換なしで直接セマンティックセグメンテーションを学習できます。行レベルのレイアウトについては、[インスタンスセグメンテーションのデータセット形式](/ja/datasets/segment#ultralytics-yolo-format)を参照してください。
+
+このパスは、データセットYAMLで`masks_dir`が**省略** されている場合に自動的に選択されます。動作は以下の通りです：
+
+  * ポリゴンはロード時に画像ごとのセマンティックマスクに変換され、重なり領域では小さなオブジェクトが大きなオブジェクトを上書きするように面積順でソートされます。
+  * **Multi-class** (`N > 1` in `names`): an extra `background` class is appended after your declared classes for pixels not covered by any polygon. The model is built with `N + 1` output channels and the last channel is background.
+  * **Single-class** (`N == 1` in `names`): still trained as 1 class. The mask is binary, with your declared class shown as `1` and pixels not covered by any polygon as `0`. No extra background class is added to `names`.
+  * オーギュメンテーションのパディング（例：ランダムクロップ）によって追加されたピクセルは、無視ラベルとして`255`を使用します。
+
+
+
+データがすでにインスタンスポリゴンとしてラベル付けされており、同じファイルからセマンティックセグメンテーションモデルを作成したい場合、このパスを使用してください。
+
+### Link to this sectionデータセットYAML形式#
+
+セマンティックセグメンテーションデータセットはYAMLファイルで構成されます。主なフィールドは以下の通りです：
+
+キー| 説明  
+---|---  
+`path`| データセットのルートディレクトリ。  
+`train`| `path`からの相対的な学習画像パス、または絶対パス。  
+`val`| `path`からの相対的な検証画像パス、または絶対パス。  
+`test`| オプションのテスト画像パス。  
+`masks_dir`| セマンティックマスクに使用されるディレクトリ名。このキーを省略すると、YOLOポリゴンラベル形式に切り替わります。  
+`names`| クラスIDからクラス名へのマッピング。  
+`label_mapping`| ソースデータセットのIDから学習IDまたは`ignore_label`へのオプションのマッピング。  
+  
+ultralytics/cfg/datasets/cityscapes8.yaml
+    
+    
+    # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+    
+    # Cityscapes semantic segmentation dataset (19 classes)
+    # Documentation: https://docs.ultralytics.com/datasets/semantic/cityscapes8
+    # Example usage: yolo semantic train data=cityscapes8.yaml model=yolo26n-sem.pt
+    # parent
+    # ├── ultralytics
+    # └── datasets
+    #     └── cityscapes8 ← downloads here (small subset)
+    #         └── images
+    #         └── masks
+    
+    # Dataset root directory
+    path: cityscapes8 # dataset root dir
+    train: images/train # train images (relative to 'path') 4 images
+    val: images/val # val images (relative to 'path') 4 images
+    
+    masks_dir: masks # semantic mask directory
+    
+    # Cityscapes 19-class labels
+    names:
+      0: road
+      1: sidewalk
+      2: building
+      3: wall
+      4: fence
+      5: pole
+      6: traffic light
+      7: traffic sign
+      8: vegetation
+      9: terrain
+      10: sky
+      11: person
+      12: rider
+      13: car
+      14: truck
+      15: bus
+      16: train
+      17: motorcycle
+      18: bicycle
+    
+    # Map source label IDs to train IDs; ignore_label is converted to 255.
+    label_mapping:
+      -1: ignore_label
+      0: ignore_label
+      1: ignore_label
+      2: ignore_label
+      3: ignore_label
+      4: ignore_label
+      5: ignore_label
+      6: ignore_label
+      7: 0
+      8: 1
+      9: ignore_label
+      10: ignore_label
+      11: 2
+      12: 3
+      13: 4
+      14: ignore_label
+      15: ignore_label
+      16: ignore_label
+      17: 5
+      18: ignore_label
+      19: 6
+      20: 7
+      21: 8
+      22: 9
+      23: 10
+      24: 11
+      25: 12
+      26: 13
+      27: 14
+      28: 15
+      29: ignore_label
+      30: ignore_label
+      31: 16
+      32: 17
+      33: 18
+    
+    # Download URL (optional)
+    download: https://github.com/ultralytics/assets/releases/download/v0.0.0/cityscapes8.zip
+
+ソースマスクのIDが連続した学習クラスIDと一致しない場合は、`label_mapping`を使用してください。CityscapesおよびADE20Kには、元のラベルIDをYOLOセマンティックセグメンテーション学習IDに変換し、未使用のラベルを無視するマッピングが含まれています。
+
+## Link to this section使用方法#
+
+PythonまたはCLIを使用してYOLO26セマンティックセグメンテーションモデルを学習します：
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained semantic segmentation model
+    model = YOLO("yolo26n-sem.pt")
+    
+    # Train on the Cityscapes8 semantic segmentation dataset
+    results = model.train(data="cityscapes8.yaml", epochs=100, imgsz=1024)
+
+## Link to this sectionサポートされているデータセット#
+
+Ultralyticsは、以下のデータセット向けのセマンティックセグメンテーションデータセットYAMLファイルを提供しています：
+
+  * [Cityscapes](/ja/datasets/semantic/cityscapes): 19の学習クラスを持つ都市のストリートシーンのセマンティックセグメンテーションデータセット。
+  * [Cityscapes8](/ja/datasets/semantic/cityscapes8): クイックテストおよびCIチェック用の8画像Cityscapesサブセット。
+  * [ADE20K](/ja/datasets/semantic/ade20k): 150のセマンティッククラスを持つシーン解析データセット。
+
+
+
+## Link to this section独自のデータセットを追加する#
+
+### Link to this sectionオプションA — PNGマスク#
+
+  1. `images/train`や`images/val`などの分割フォルダーの下に画像を保存します。
+  2. 画像1枚につき1つのシングルチャネルマスクを、`masks/train`や`masks/val`などのミラーリングされたマスクフォルダーの下に保存します。
+  3. マスクのピクセル値がクラスIDであることを確認してください。無視されるべきピクセルには`255`を使用してください。
+  4. `path`、`train`、`val`、`masks_dir`、`names`を含むデータセットYAMLを作成します。
+  5. マスクIDを連続した学習IDに変換する必要がある場合にのみ、`label_mapping`を追加します。
+
+
+    
+    
+    path: path/to/my-semantic-dataset
+    train: images/train
+    val: images/val
+    masks_dir: masks
+    
+    names:
+        0: background
+        1: road
+        2: building
+
+### Link to this sectionオプションB — ポリゴンラベル#
+
+  1. 画像と `.txt` ポリゴンファイルを、[インスタンスセグメンテーション](/ja/datasets/segment) と全く同じように配置してください。
+  2. `path`、`train`、`val`、`names`を含むデータセットYAMLを作成します。**`masks_dir`は省略してください**。
+  3. `names`に「background」エントリを追加しないでください。マルチクラスデータセットの場合、ローダーが自動的に追加します。シングルクラスデータセットの場合、学習は1クラスのままとなり、宣言されたクラスはマスク内で`1`になり、カバーされていないピクセルは`0`になります。
+
+
+    
+    
+    path: path/to/my-polygon-dataset
+    train: images/train
+    val: images/val
+    
+    names:
+        0: person
+        1: car
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionセマンティックセグメンテーションマスクとインスタンスセグメンテーションラベルの違いは何ですか？#
+
+セマンティックセグメンテーションマスクは、密なピクセルマップです。各ピクセルがクラスIDを保持し、学習画像1枚につき1つのマスク画像が存在します。Ultralytics YOLOのインスタンスセグメンテーションラベルは、ポリゴン座標を持つテキストファイルを使用し、オブジェクトインスタンスごとに1行が割り当てられます。
+
+### Link to this section学習中に無視されるピクセル値は何ですか？#
+
+ピクセル値`255`が無視ラベルとして使用されます。これらのピクセルは損失およびメトリック計算時にスキップされ、無効な領域、ラベルのないピクセル、または学習ラベルセット外のクラスに役立ちます。
+
+### Link to this sectionマスクファイル名は画像ファイル名と一致する必要がありますか？#
+
+はい。各セマンティックマスクは、対応する画像と同じファイル名（拡張子を除く）である必要があります。データセットローダーは`images`ディレクトリのコンポーネントを`masks_dir`に置換し、一致するマスクファイルを検索します。
+
+### Link to this section元のデータセットラベルIDを直接使用できますか？#
+
+はい、それらがすでに`names`クラスIDと一致していれば可能です。ソースデータセットが非連続のIDを使用している場合や、無視すべきラベルが含まれている場合は、`label_mapping`セクションを追加してソースピクセル値を学習IDに変換してください。
+
+### Link to this sectionインスタンスセグメンテーションデータセットを使用してセマンティックセグメンテーションを学習できますか？#
+
+はい。インスタンスセグメンテーションデータセットはUltralytics YOLOポリゴンラベル（画像1枚につき1つの`.txt`ファイルに`<class-index> <x1> <y1> <x2> <y2> ...`の行があるもの）を使用しており、同じファイルをセマンティックセグメンテーションに再利用可能です。データセットYAMLから`masks_dir`を**省略** するだけです。ローダーはポリゴンを画像ごとのマスクにオンザフライで変換します。マルチクラスデータセット（`N > 1`）の場合、余分な`background`クラスが追加され、モデルは`N + 1`出力チャネルで構築されます。シングルクラスデータセット（`N == 1`）の場合、学習は1クラスのままとなり、マスクは宣言されたクラスを`1`として、カバーされていないピクセルを`0`として表示します。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/semantic/index.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)
+
+作成日 4 週間前更新日 2 週間前
+
+## コメント
+
+このページの内容
+
+AIで探索

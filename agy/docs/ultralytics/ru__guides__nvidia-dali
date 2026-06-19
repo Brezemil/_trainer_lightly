@@ -1,0 +1,536 @@
+---
+source_url: https://docs.ultralytics.com/ru/guides/nvidia-dali
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/nvidia-dali.md)
+
+# Link to this sectionУскоренная обработка данных с помощью GPU и NVIDIA DALI#
+
+## Link to this sectionВведение#
+
+При развертывании моделей [Ultralytics YOLO](/ru/models) в промышленную эксплуатацию [предварительная обработка](https://www.ultralytics.com/glossary/data-preprocessing) часто становится «узким местом». Хотя [TensorRT](/ru/integrations/tensorrt) может выполнять [инференс](/ru/modes/predict) модели всего за несколько миллисекунд, предварительная обработка на CPU (изменение размера, дополнение, нормализация) может занимать 2–10 мс на изображение, особенно при высоком разрешении. [NVIDIA DALI](https://docs.nvidia.com/deeplearning/dali/user-guide/docs/index.html) (библиотека для загрузки данных) решает эту проблему, перенося весь конвейер предварительной обработки на GPU.
+
+Это руководство поможет тебе создать конвейеры DALI, которые точно воспроизводят предварительную обработку Ultralytics YOLO, интегрировать их с `model.predict()`, обрабатывать видеопотоки и выполнять развертывание «от начала до конца» с помощью [Triton Inference Server](/ru/guides/triton-inference-server).
+
+Для кого это руководство?
+
+Это руководство предназначено для инженеров, развертывающих модели YOLO в промышленных средах, где предварительная обработка на CPU является выявленным «узким местом» — обычно это развертывание [TensorRT](/ru/integrations/tensorrt) на GPU NVIDIA, высокопроизводительные видеоконвейеры или установки [Triton Inference Server](/ru/guides/triton-inference-server). Если ты используешь стандартный инференс с помощью `model.predict()` и у тебя нет проблем с производительностью предварительной обработки, стандартный конвейер на CPU отлично подойдет.
+
+Краткая сводка
+
+  * **Создаешь конвейер DALI?** Используй `fn.resize(mode="not_larger")` \+ `fn.crop(out_of_bounds_policy="pad")` \+ `fn.crop_mirror_normalize`, чтобы воспроизвести предварительную обработку «letterbox» от YOLO на GPU.
+  * **Интегрируешь с Ultralytics?** Передавай вывод DALI как `torch.Tensor` в метод `model.predict()` — Ultralytics автоматически пропустит этап предварительной обработки изображений.
+  * **Развертываешь с Triton?** Используй бэкенд DALI вместе с ансамблем TensorRT для исключения предварительной обработки на CPU.
+
+
+
+## Link to this sectionПочему стоит использовать DALI для предварительной обработки YOLO#
+
+В обычном конвейере инференса YOLO шаги предварительной обработки выполняются на CPU:
+
+  1. **Декодирование** изображения (JPEG/PNG)
+  2. **Изменение размера** с сохранением соотношения сторон
+  3. **Дополнение** (padding) до целевого размера (letterbox)
+  4. **Нормализация** значений пикселей из диапазона `[0, 255]` в `[0, 1]`
+  5. **Преобразование** формата данных из HWC в CHW
+
+
+
+С DALI все эти операции выполняются на GPU, что устраняет «узкое место» CPU. Это особенно полезно, когда:
+
+Сценарий| Почему DALI помогает  
+---|---  
+**Быстрый инференс на GPU**|  Движки [TensorRT](/ru/integrations/tensorrt) с временем инференса менее миллисекунды делают предварительную обработку на CPU основной статьей затрат времени  
+**Входные данные высокого разрешения**|  Видеопотоки 1080p и 4K требуют дорогостоящих операций изменения размера  
+**Большие[размеры пакетов](https://www.ultralytics.com/glossary/batch-size)**| Серверный инференс, обрабатывающий множество изображений параллельно  
+**Ограниченное количество ядер CPU**|  Периферийные устройства (Edge), такие как [NVIDIA Jetson](/ru/guides/nvidia-jetson), или плотные GPU-серверы с малым количеством ядер CPU на каждый GPU  
+  
+## Link to this sectionПредварительные требования#
+
+Только Linux
+
+NVIDIA DALI поддерживает **только Linux**. Он недоступен на Windows или macOS.
+
+Установи необходимые пакеты:
+    
+    
+    pip install ultralytics
+    pip install --extra-index-url https://pypi.nvidia.com nvidia-dali-cuda130
+
+**Требования:**
+
+  * GPU NVIDIA (вычислительная способность 5.0+ / Maxwell или новее)
+  * CUDA 11.0+, 12.0+ или 13.0+
+  * Python 3.10–3.14
+  * Операционная система Linux
+
+
+
+## Link to this sectionПонимание предварительной обработки YOLO#
+
+Перед созданием конвейера DALI полезно понять, что именно делает Ultralytics во время предварительной обработки. Ключевой класс — это `LetterBox` в [`ultralytics/data/augment.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py):
+    
+    
+    from ultralytics.data.augment import LetterBox
+    
+    letterbox = LetterBox(
+        new_shape=(640, 640),  # Target size
+        center=True,  # Center the image (pad equally on both sides)
+        stride=32,  # Stride alignment
+        padding_value=114,  # Gray padding (114, 114, 114)
+    )
+
+Полный конвейер предварительной обработки в [`ultralytics/engine/predictor.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/engine/predictor.py) выполняет следующие шаги:
+
+Шаг| Операция| Функция CPU| Эквивалент DALI  
+---|---|---|---  
+1| Letterbox resize (изменение размера с сохранением пропорций)| `cv2.resize`| `fn.resize(mode="not_larger")`  
+2| Центрированное дополнение (padding)| `cv2.copyMakeBorder`| `fn.crop(out_of_bounds_policy="pad")`  
+3| BGR → RGB| `im[..., ::-1]`| `fn.decoders.image(output_type=types.RGB)`  
+4| HWC → CHW + нормализация /255| `np.transpose` \+ `tensor / 255`| `fn.crop_mirror_normalize(std=[255,255,255])`  
+  
+Операция letterbox сохраняет соотношение сторон путем:
+
+  1. Вычисления масштаба: `r = min(target_h / h, target_w / w)`
+  2. Изменения размера до `(round(w * r), round(h * r))`
+  3. Заполнения оставшегося пространства серым цветом (`114`) до достижения целевого размера
+  4. Центрирования изображения так, чтобы отступы распределялись поровну с обеих сторон
+
+
+
+## Link to this sectionКонвейер DALI для YOLO#
+
+Используй приведенный ниже центрированный конвейер в качестве стандартного образца. Он соответствует поведению `LetterBox(center=True)` в Ultralytics, которое используется в стандартном инференсе YOLO.
+
+### Link to this sectionЦентрированный конвейер (рекомендуется, соответствует LetterBox в Ultralytics)#
+
+Эта версия точно повторяет стандартную предварительную обработку Ultralytics с центрированным дополнением, соответствуя `LetterBox(center=True)`:
+
+Конвейер DALI с центрированным дополнением (рекомендуется)
+    
+    
+    import nvidia.dali as dali
+    import nvidia.dali.fn as fn
+    import nvidia.dali.types as types
+    
+    @dali.pipeline_def(batch_size=8, num_threads=4, device_id=0)
+    def yolo_dali_pipeline_centered(image_dir, target_size=640):
+        """DALI pipeline replicating YOLO preprocessing with centered padding.
+    
+        Matches Ultralytics LetterBox(center=True) behavior exactly.
+        """
+        # Read and decode images on GPU
+        jpegs, _ = fn.readers.file(file_root=image_dir, random_shuffle=False, name="Reader")
+        images = fn.decoders.image(jpegs, device="mixed", output_type=types.RGB)
+    
+        # Aspect-ratio-preserving resize
+        resized = fn.resize(
+            images,
+            resize_x=target_size,
+            resize_y=target_size,
+            mode="not_larger",
+            interp_type=types.INTERP_LINEAR,
+            antialias=False,  # Match cv2.INTER_LINEAR (no antialiasing)
+        )
+    
+        # Centered padding using fn.crop with out_of_bounds_policy
+        # When crop size > image size, fn.crop centers the image and pads symmetrically
+        padded = fn.crop(
+            resized,
+            crop=(target_size, target_size),
+            out_of_bounds_policy="pad",
+            fill_values=114,  # YOLO padding value
+        )
+    
+        # Normalize and convert layout
+        output = fn.crop_mirror_normalize(
+            padded,
+            dtype=types.FLOAT,
+            output_layout="CHW",
+            mean=[0.0, 0.0, 0.0],
+            std=[255.0, 255.0, 255.0],
+        )
+        return output
+
+Когда достаточно `fn.pad`?
+
+Если тебе не нужно полное соответствие `LetterBox(center=True)`, ты можешь упростить шаг заполнения, используя `fn.pad(...)` вместо `fn.crop(..., out_of_bounds_policy="pad")`. Этот вариант добавляет отступы только с **правой и нижней** сторон, что может быть приемлемо для кастомных конвейеров развертывания, но не будет в точности соответствовать стандартному центрированному letterbox-поведению Ultralytics.
+
+Почему `fn.crop` для центрированного дополнения?
+
+Оператор `fn.pad` в DALI добавляет отступы только с **правой и нижней** сторон. Чтобы получить центрированное дополнение (соответствующее `LetterBox(center=True)` в Ultralytics), используй `fn.crop` с параметром `out_of_bounds_policy="pad"`. При стандартных значениях `crop_pos_x=0.5` и `crop_pos_y=0.5` изображение автоматически центрируется с симметричными отступами.
+
+Различия в сглаживании
+
+Функция `fn.resize` в DALI по умолчанию включает сглаживание (`antialias=True`), в то время как `cv2.resize` в OpenCV с методом `INTER_LINEAR` **не** применяет сглаживание. Всегда устанавливай `antialias=False` в DALI, чтобы соответствовать конвейеру на CPU. Пропуск этого шага вызывает небольшие численные различия, которые могут повлиять на [точность модели](https://www.ultralytics.com/glossary/accuracy).
+
+### Link to this sectionЗапуск конвейера#
+
+Создай и запусти конвейер DALI
+    
+    
+    # Build and run the pipeline
+    pipe = yolo_dali_pipeline_centered(image_dir="/path/to/images", target_size=640)
+    pipe.build()
+    
+    # Get a batch of preprocessed images
+    (output,) = pipe.run()
+    
+    # Convert to numpy or PyTorch tensors
+    batch_np = output.as_cpu().as_array()  # Shape: (batch_size, 3, 640, 640)
+    print(f"Output shape: {batch_np.shape}, dtype: {batch_np.dtype}")
+    print(f"Value range: [{batch_np.min():.4f}, {batch_np.max():.4f}]")
+
+## Link to this sectionИспользование DALI с Ultralytics Predict#
+
+Ты можешь передать предварительно обработанный тензор [PyTorch](https://www.ultralytics.com/glossary/pytorch) напрямую в `model.predict()`. Когда передается `torch.Tensor`, Ultralytics **пропускает предварительную обработку изображений** (letterbox, BGR→RGB, HWC→CHW и нормализацию /255) и выполняет только перенос на устройство и приведение типов перед отправкой в модель.
+
+Поскольку в этом случае у Ultralytics нет доступа к исходным размерам изображения, координаты рамок детекции возвращаются в пространстве 640×640 с letterbox. Чтобы сопоставить их с исходными координатами изображения, используй [`scale_boxes`](/reference/utils/ops), который учитывает точную логику округления, используемую `LetterBox`:
+    
+    
+    from ultralytics.utils.ops import scale_boxes
+    
+    # boxes: tensor of shape (N, 4) in xyxy format, in 640x640 letterboxed coords
+    # Scale boxes from letterboxed (640, 640) back to original (orig_h, orig_w)
+    boxes = scale_boxes((640, 640), boxes, (orig_h, orig_w))
+
+Это применимо ко всем внешним путям предварительной обработки — прямому вводу тензоров, видеопотокам и развертыванию через Triton.
+
+Инференс DALI + Ultralytics
+    
+    
+    from nvidia.dali.plugin.pytorch import DALIGenericIterator
+    
+    from ultralytics import YOLO
+    
+    # Load model
+    model = YOLO("yolo26n.pt")
+    
+    # Create DALI iterator
+    pipe = yolo_dali_pipeline_centered(image_dir="/path/to/images", target_size=640)
+    pipe.build()
+    dali_iter = DALIGenericIterator(pipe, ["images"], reader_name="Reader")
+    
+    # Run inference with DALI-preprocessed tensors
+    for batch in dali_iter:
+        images = batch[0]["images"]  # Already on GPU, shape (B, 3, 640, 640)
+        results = model.predict(images, verbose=False)
+        for result in results:
+            print(f"Detected {len(result.boxes)} objects")
+
+Нулевые затраты на предварительную обработку
+
+Когда ты передаешь `torch.Tensor` в `model.predict()`, шаг предварительной обработки занимает ~0.004 мс (практически ноль) по сравнению с ~1–10 мс при обработке на CPU. Тензор должен быть в формате BCHW, иметь тип float32 (или float16) и быть нормализованным в диапазон `[0, 1]`. Ultralytics по-прежнему будет автоматически выполнять перенос на устройство и приведение типов.
+
+## Link to this sectionDALI с видеопотоками#
+
+Для обработки видео в реальном времени используй `fn.external_source`, чтобы подавать кадры из любого источника — [OpenCV](https://www.ultralytics.com/glossary/opencv), GStreamer или кастомных библиотек захвата:
+
+Конвейер DALI для предварительной обработки видеопотока
+    
+    
+    import nvidia.dali as dali
+    import nvidia.dali.fn as fn
+    import nvidia.dali.types as types
+    
+    @dali.pipeline_def(batch_size=1, num_threads=4, device_id=0)
+    def yolo_video_pipeline(target_size=640):
+        """DALI pipeline for processing video frames from external source."""
+        # External source for feeding frames from OpenCV, GStreamer, etc.
+        frames = fn.external_source(device="cpu", name="input")
+        frames = fn.reshape(frames, layout="HWC")
+    
+        # Move to GPU and preprocess
+        frames_gpu = frames.gpu()
+        resized = fn.resize(
+            frames_gpu,
+            resize_x=target_size,
+            resize_y=target_size,
+            mode="not_larger",
+            interp_type=types.INTERP_LINEAR,
+            antialias=False,
+        )
+        padded = fn.crop(
+            resized,
+            crop=(target_size, target_size),
+            out_of_bounds_policy="pad",
+            fill_values=114,
+        )
+        output = fn.crop_mirror_normalize(
+            padded,
+            dtype=types.FLOAT,
+            output_layout="CHW",
+            mean=[0.0, 0.0, 0.0],
+            std=[255.0, 255.0, 255.0],
+        )
+        return output
+
+## Link to this sectionTriton Inference Server с DALI#
+
+Для промышленного развертывания объедини предварительную обработку DALI с инференсом [TensorRT](/ru/integrations/tensorrt) в [Triton Inference Server](/ru/guides/triton-inference-server) с использованием ансамблевой модели. Это полностью исключает предварительную обработку на CPU — «сырые» байты JPEG поступают на вход, детекции выходят, и всё обрабатывается на GPU.
+
+### Link to this sectionСтруктура репозитория моделей#
+    
+    
+    model_repository/
+    ├── dali_preprocessing/
+    │   ├── 1/
+    │   │   └── model.dali
+    │   └── config.pbtxt
+    ├── yolo_trt/
+    │   ├── 1/
+    │   │   └── model.plan
+    │   └── config.pbtxt
+    └── ensemble_dali_yolo/
+        ├── 1/                  # Empty directory (required by Triton)
+        └── config.pbtxt
+
+### Link to this sectionШаг 1: Создай конвейер DALI#
+
+Сериализуй конвейер DALI для бэкенда Triton DALI:
+
+Сериализация конвейера DALI для Triton
+    
+    
+    import nvidia.dali as dali
+    import nvidia.dali.fn as fn
+    import nvidia.dali.types as types
+    
+    @dali.pipeline_def(batch_size=8, num_threads=4, device_id=0)
+    def triton_dali_pipeline():
+        """DALI preprocessing pipeline for Triton deployment."""
+        # Input: raw encoded image bytes from Triton
+        images = fn.external_source(device="cpu", name="DALI_INPUT_0")
+        images = fn.decoders.image(images, device="mixed", output_type=types.RGB)
+    
+        resized = fn.resize(
+            images,
+            resize_x=640,
+            resize_y=640,
+            mode="not_larger",
+            interp_type=types.INTERP_LINEAR,
+            antialias=False,
+        )
+        padded = fn.crop(
+            resized,
+            crop=(640, 640),
+            out_of_bounds_policy="pad",
+            fill_values=114,
+        )
+        output = fn.crop_mirror_normalize(
+            padded,
+            dtype=types.FLOAT,
+            output_layout="CHW",
+            mean=[0.0, 0.0, 0.0],
+            std=[255.0, 255.0, 255.0],
+        )
+        return output
+    
+    # Serialize pipeline to model repository
+    pipe = triton_dali_pipeline()
+    pipe.serialize(filename="model_repository/dali_preprocessing/1/model.dali")
+
+### Link to this sectionШаг 2: Экспортируй YOLO в TensorRT#
+
+Экспорт модели YOLO в движок TensorRT
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    model.export(format="engine", imgsz=640, half=True, batch=8)
+    # Copy the .engine file to model_repository/yolo_trt/1/model.plan
+
+### Link to this sectionШаг 3: Настрой Triton#
+
+**dali_preprocessing/config.pbtxt:**
+    
+    
+    name: "dali_preprocessing"
+    backend: "dali"
+    max_batch_size: 8
+    input [
+      {
+        name: "DALI_INPUT_0"
+        data_type: TYPE_UINT8
+        dims: [ -1 ]
+      }
+    ]
+    output [
+      {
+        name: "DALI_OUTPUT_0"
+        data_type: TYPE_FP32
+        dims: [ 3, 640, 640 ]
+      }
+    ]
+
+**yolo_trt/config.pbtxt:**
+    
+    
+    name: "yolo_trt"
+    platform: "tensorrt_plan"
+    max_batch_size: 8
+    input [
+      {
+        name: "images"
+        data_type: TYPE_FP32
+        dims: [ 3, 640, 640 ]
+      }
+    ]
+    output [
+      {
+        name: "output0"
+        data_type: TYPE_FP32
+        dims: [ 300, 6 ]
+      }
+    ]
+
+**ensemble_dali_yolo/config.pbtxt:**
+    
+    
+    name: "ensemble_dali_yolo"
+    platform: "ensemble"
+    max_batch_size: 8
+    input [
+      {
+        name: "INPUT"
+        data_type: TYPE_UINT8
+        dims: [ -1 ]
+      }
+    ]
+    output [
+      {
+        name: "OUTPUT"
+        data_type: TYPE_FP32
+        dims: [ 300, 6 ]
+      }
+    ]
+    ensemble_scheduling {
+      step [
+        {
+          model_name: "dali_preprocessing"
+          model_version: -1
+          input_map {
+            key: "DALI_INPUT_0"
+            value: "INPUT"
+          }
+          output_map {
+            key: "DALI_OUTPUT_0"
+            value: "preprocessed_image"
+          }
+        },
+        {
+          model_name: "yolo_trt"
+          model_version: -1
+          input_map {
+            key: "images"
+            value: "preprocessed_image"
+          }
+          output_map {
+            key: "output0"
+            value: "OUTPUT"
+          }
+        }
+      ]
+    }
+
+Как работает маппинг ансамбля
+
+The ensemble connects models through **virtual tensor names**. The `output_map` value `"preprocessed_image"` in the DALI step matches the `input_map` value `"preprocessed_image"` in the TensorRT step. These are arbitrary names that link one step's output to the next step's input — they don't need to match any model's internal tensor names.
+
+### Link to this sectionШаг 4: Отправь запросы на инференс#
+
+Почему `tritonclient` вместо `YOLO('http://...')`?
+
+В Ultralytics есть [встроенная поддержка Triton](/ru/guides/triton-inference-server#running-inference), которая автоматически обрабатывает препроцессинг и постпроцессинг. Однако она не будет работать с ансамблем DALI, так как `YOLO()` отправляет предобработанный тензор float32, в то время как ансамбль ожидает «сырые» байты JPEG. Используй `tritonclient` напрямую для ансамблей DALI, а для стандартных развертываний без DALI используй [встроенную интеграцию](/ru/guides/triton-inference-server).
+
+Отправка изображений в ансамбль Triton
+    
+    
+    import numpy as np
+    import tritonclient.http as httpclient
+    
+    client = httpclient.InferenceServerClient(url="localhost:8000")
+    
+    # Load image as raw bytes (JPEG/PNG encoded)
+    image_data = np.fromfile("image.jpg", dtype="uint8")
+    image_data = np.expand_dims(image_data, axis=0)  # Add batch dimension
+    
+    # Create input
+    input_tensor = httpclient.InferInput("INPUT", image_data.shape, "UINT8")
+    input_tensor.set_data_from_numpy(image_data)
+    
+    # Run inference through the ensemble
+    result = client.infer(model_name="ensemble_dali_yolo", inputs=[input_tensor])
+    detections = result.as_numpy("OUTPUT")  # Shape: (1, 300, 6) -> [x1, y1, x2, y2, conf, class_id]
+    
+    # Filter by confidence (no NMS needed — YOLO26 is end-to-end)
+    detections = detections[0]  # First image
+    detections = detections[detections[:, 4] > 0.25]  # Confidence threshold
+    print(f"Detected {len(detections)} objects")
+
+Пакетная обработка изображений JPEG
+
+При отправке пакета изображений JPEG в Triton, дополни все кодированные массивы байтов до одинаковой длины (максимальное количество байтов в пакете). Для входного тензора Triton требуются однородные размеры пакета.
+
+## Link to this sectionПоддерживаемые задачи#
+
+Препроцессинг DALI работает со всеми задачами YOLO, использующими стандартный конвейер `LetterBox`:
+
+Задача| Поддерживается| Примечания  
+---|---|---  
+[Детекция](/ru/tasks/detect)| ✅| Стандартный препроцессинг letterbox  
+[Instance Segmentation](/ru/tasks/segment)| ✅| Тот же препроцессинг, что и в детекции  
+[Семантическая сегментация](/ru/tasks/semantic)| ✅| Тот же препроцессинг изображений, что и в детекции  
+[Оценка позы (Pose Estimation)](/ru/tasks/pose)| ✅| Тот же препроцессинг, что и в детекции  
+[Ориентированная детекция (OBB)](/ru/tasks/obb)| ✅| Тот же препроцессинг, что и в детекции  
+[Классификация](/ru/tasks/classify)| ❌| Использует трансформации torchvision (кроп по центру), а не letterbox  
+  
+## Link to this sectionОграничения#
+
+  * **Только для Linux** : DALI не поддерживает Windows или macOS
+  * **Требуется NVIDIA GPU** : Нет резервного варианта только на CPU
+  * **Статический конвейер** : Структура конвейера определяется во время сборки и не может меняться динамически
+  * **`fn.pad` только справа/снизу**: Используй `fn.crop` с `out_of_bounds_policy="pad"` для дополнения по центру
+  * **Нет режима rect** : Конвейеры DALI создают выходные данные фиксированного размера (например, 640×640). Режим rect с `auto=True`, который создает выходные данные переменного размера (например, 384×640), не поддерживается. Обрати внимание, что хотя [TensorRT](/ru/integrations/tensorrt) поддерживает динамические входные размеры, конвейер DALI с фиксированным размером идеально сочетается с движком фиксированного размера для достижения максимальной пропускной способности
+  * **Память при нескольких экземплярах** : Использование `instance_group` с `count` > 1 в Triton может привести к высокому потреблению памяти. Используй группу экземпляров по умолчанию для модели DALI
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionКак препроцессинг DALI соотносится со скоростью препроцессинга на CPU?#
+
+Преимущество зависит от твоего конвейера. Когда инференс на GPU уже быстрый благодаря [TensorRT](/ru/integrations/tensorrt), препроцессинг на CPU за 2-10 мс может стать доминирующей статьей расходов. DALI устраняет это узкое место, выполняя препроцессинг на GPU. Наибольший прирост заметен при использовании входных данных высокого разрешения (1080p, 4K), больших [размеров пакетов](https://www.ultralytics.com/glossary/batch-size) и систем с ограниченным количеством ядер CPU на один GPU.
+
+### Link to this sectionМогу ли я использовать DALI с моделями PyTorch (не только TensorRT)?#
+
+Да. Используй `DALIGenericIterator` для получения предобработанных выходных данных `torch.Tensor`, а затем передавай их в `model.predict()`. Однако выигрыш в производительности наиболее заметен с моделями [TensorRT](/ru/integrations/tensorrt), где инференс уже очень быстрый, а препроцессинг на CPU становится узким местом.
+
+### Link to this sectionВ чем разница между `fn.pad` и `fn.crop` для дополнения?#
+
+`fn.pad` добавляет дополнение (padding) только по **правому и нижнему** краям. `fn.crop` с `out_of_bounds_policy="pad"` центрирует изображение и добавляет дополнение симметрично со всех сторон, повторяя поведение Ultralytics `LetterBox(center=True)`.
+
+### Link to this sectionДает ли DALI результаты, идентичные попиксельно с препроцессингом на CPU?#
+
+Почти идентичные. Установи `antialias=False` в `fn.resize`, чтобы соответствовать `cv2.INTER_LINEAR` в OpenCV. Небольшие различия с плавающей запятой (< 0.001) могут возникнуть из-за различий в арифметике GPU и CPU, но они не оказывают измеримого влияния на [точность](https://www.ultralytics.com/glossary/accuracy) детекции.
+
+### Link to this sectionЧто насчет CV-CUDA как альтернативы DALI?#
+
+[CV-CUDA](https://github.com/CVCUDA/CV-CUDA) — это еще одна библиотека NVIDIA для ускоренного на GPU визуального процессинга. Она предоставляет управление на уровне операторов (как [OpenCV](https://www.ultralytics.com/glossary/opencv), но на GPU), а не подход конвейера (pipeline), как у DALI. `cvcuda.copymakeborder()` в CV-CUDA поддерживает явное дополнение с каждой стороны, что делает центрированный letterbox простым. Выбирай DALI для конвейерных рабочих процессов (особенно с [Triton](/ru/guides/triton-inference-server)), а CV-CUDA — для детального управления на уровне операторов в пользовательском коде инференса.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/nvidia-dali.md)
+
+[RAraimbekovm2](https://github.com/raimbekovm)[GLglenn-jocher1](https://github.com/glenn-jocher)[ONonuralpszr1](https://github.com/onuralpszr)
+
+Создано в прошлом месяцеОбновлено вчера
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

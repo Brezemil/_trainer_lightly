@@ -1,0 +1,352 @@
+---
+source_url: https://docs.ultralytics.com/zh/datasets/explorer/api
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/explorer/api.md)
+
+# Link to this sectionUltralytics Explorer API#
+
+社区提示 ⚠️
+
+自 **`ultralytics>=8.3.12`** 版本起，Ultralytics Explorer 已被移除。若要使用 Explorer，请安装 `pip install ultralytics==8.3.11`。类似的（且功能更扩展的）数据集探索功能可在 [Ultralytics Platform](https://platform.ultralytics.com/) 中找到。
+
+## Link to this section简介#
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/ultralytics/blob/main/docs/en/datasets/explorer/explorer.ipynb) Explorer API 是一个用于探索数据集的 Python API。它支持使用 SQL 查询、向量相似度搜索和语义搜索来筛选及搜索你的数据集。
+
+  
+
+
+  
+**Watch:** Ultralytics Explorer API Overview 
+
+## Link to this section安装#
+
+Explorer 的部分功能依赖于外部库。当你使用 Explorer 时，这些库会自动安装。若要手动安装这些依赖项，请使用以下命令：
+    
+    
+    pip install ultralytics[explorer]
+
+## Link to this section用法#
+    
+    
+    from ultralytics import Explorer
+    
+    # Create an Explorer object
+    explorer = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    
+    # Create embeddings for your dataset
+    explorer.create_embeddings_table()
+    
+    # Search for similar images to a given image/images
+    df = explorer.get_similar(img="path/to/image.jpg")
+    
+    # Or search for similar images to a given index/indices
+    df = explorer.get_similar(idx=0)
+
+注意
+
+给定数据集和模型对的 [Embeddings](https://www.ultralytics.com/glossary/embeddings) 表仅会创建一次并可重复使用。这些表在底层使用 [LanceDB](https://lancedb.github.io/lancedb/)，该工具支持磁盘扩展，因此你可以为 COCO 等大型数据集创建和重复使用嵌入，而无需担心内存不足。
+
+如果你希望强制更新嵌入表，可以将 `force=True` 传递给 `create_embeddings_table` 方法。
+
+你可以直接访问 LanceDB 表对象以进行高级分析。在 Working with Embeddings Table 章节 中了解更多信息。
+
+## Link to this section1\. 相似度搜索#
+
+相似度搜索是一种用于查找与给定图像相似的图像的技术。其基本理念是相似的图像具有相似的嵌入。一旦嵌入表建立完成，你就可以通过以下任一方式运行语义搜索：
+
+  * 针对数据集中的给定索引或索引列表：`exp.get_similar(idx=[1,10], limit=10)`
+  * 针对数据集之外的任何图像或图像列表：`exp.get_similar(img=["path/to/img1", "path/to/img2"], limit=10)`
+
+
+
+如果输入多个对象，系统将使用其嵌入的聚合结果。
+
+你将获得一个 pandas DataFrame，其中包含与输入最相似的 `limit` 个数据点，以及它们在嵌入空间中的距离。你可以使用此数据集执行进一步筛选。
+
+语义搜索
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    similar = exp.get_similar(img="https://ultralytics.com/images/bus.jpg", limit=10)
+    print(similar.head())
+    
+    # Search using multiple indices
+    similar = exp.get_similar(
+        img=["https://ultralytics.com/images/bus.jpg", "https://ultralytics.com/images/bus.jpg"],
+        limit=10,
+    )
+    print(similar.head())
+
+### Link to this section绘制相似图像#
+
+你也可以使用 `plot_similar` 方法绘制相似图像。该方法接受与 `get_similar` 相同的参数，并将相似图像以网格形式显示。
+
+绘制相似图像
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    plt = exp.plot_similar(img="https://ultralytics.com/images/bus.jpg", limit=10)
+    plt.show()
+
+## Link to this section2\. AI 问答 (自然语言查询)#
+
+此功能允许你使用自然语言筛选数据集，而无需编写 SQL。AI 驱动的查询生成器会将你的提示转换为查询并返回匹配结果。例如，你可以询问：“向我展示 100 张恰好包含一个人和 2 条狗的图像。也可以包含其他对象”，它会生成查询并向你展示这些结果。 注意：此功能使用 LLM，因此结果是概率性的，可能不准确。
+
+AI 问答
+    
+    
+    from ultralytics.data.explorer import plot_query_result
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    df = exp.ask_ai("show me 100 images with exactly one person and 2 dogs. There can be other objects too")
+    print(df.head())
+    
+    # plot the results
+    plt = plot_query_result(df)
+    plt.show()
+
+## Link to this section3\. SQL 查询#
+
+你可以使用 `sql_query` 方法在数据集上运行 SQL 查询。该方法接受 SQL 查询作为输入，并返回包含结果的 pandas DataFrame。
+
+SQL 查询
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    df = exp.sql_query("WHERE labels LIKE '%person%' AND labels LIKE '%dog%'")
+    print(df.head())
+
+### Link to this section绘制 SQL 查询结果#
+
+你也可以使用 `plot_sql_query` 方法绘制 SQL 查询的结果。该方法接受与 `sql_query` 相同的参数，并将结果以网格形式显示。
+
+绘制 SQL 查询结果
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    # plot the SQL Query
+    exp.plot_sql_query("WHERE labels LIKE '%person%' AND labels LIKE '%dog%' LIMIT 10")
+
+## Link to this section4\. 使用嵌入表#
+
+你也可以直接使用嵌入表。嵌入表创建完成后，可以通过 `Explorer.table` 访问它。
+
+提示
+
+Explorer 在内部运行于 [LanceDB](https://lancedb.github.io/lancedb/) 表之上。你可以通过 `Explorer.table` 对象直接访问此表，并执行原始查询、下推预过滤和后过滤等操作。
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer()
+    exp.create_embeddings_table()
+    table = exp.table
+
+以下是你可以对表执行操作的一些示例：
+
+### Link to this section获取原始 Embeddings#
+
+示例
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer()
+    exp.create_embeddings_table()
+    table = exp.table
+    
+    embeddings = table.to_pandas()["vector"]
+    print(embeddings)
+
+### Link to this section使用预过滤和后过滤进行高级查询#
+
+示例
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer(model="yolo11n.pt")
+    exp.create_embeddings_table()
+    table = exp.table
+    
+    # Dummy embedding
+    embedding = [i for i in range(256)]
+    rs = table.search(embedding).metric("cosine").where("").limit(10)
+
+### Link to this section创建向量索引#
+
+使用大型数据集时，你还可以创建专用的向量索引以加快查询速度。这可以通过在 LanceDB 表上使用 `create_index` 方法来实现。
+    
+    
+    table.create_index(num_partitions=..., num_sub_vectors=...)
+
+## Link to this section5\. Embeddings 应用#
+
+你可以使用嵌入表执行各种探索性分析。以下是一些示例：
+
+### Link to this section相似度索引#
+
+Explorer 附带了一个 `similarity_index` 操作：
+
+  * 它尝试评估每个数据点与数据集其余部分之间的相似程度。
+  * 实现方式是统计在生成的嵌入空间中，有多少图像嵌入与当前图像的距离小于 `max_dist`，同时考虑每次 `top_k` 个相似图像。
+
+
+
+它返回一个包含以下列的 pandas DataFrame：
+
+  * `idx`: 图像在数据集中的索引
+  * `im_file`: 图像文件路径
+  * `count`: 数据集中距离当前图像小于 `max_dist` 的图像数量
+  * `sim_im_files`: `count` 个相似图像的路径列表
+
+
+
+提示
+
+对于给定的数据集、模型、`max_dist` 和 `top_k`，生成的相似度索引将被重复使用。如果你的数据集发生了变化，或者你只是需要重新生成相似度索引，可以传递 `force=True`。
+
+相似度索引
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer()
+    exp.create_embeddings_table()
+    
+    sim_idx = exp.similarity_index()
+
+你可以使用相似度索引构建自定义条件来筛选数据集。例如，你可以使用以下代码筛选出与数据集中任何其他图像都不相似的图像：
+    
+    
+    import numpy as np
+    
+    sim_count = np.array(sim_idx["count"])
+    sim_idx["im_file"][sim_count > 30]
+
+### Link to this section可视化嵌入空间#
+
+你也可以使用你选择的绘图工具来可视化嵌入空间。例如，下面是一个使用 Matplotlib 的简单示例：
+    
+    
+    import matplotlib.pyplot as plt
+    from sklearn.decomposition import PCA
+    
+    # Reduce dimensions using PCA to 3 components for visualization in 3D
+    pca = PCA(n_components=3)
+    reduced_data = pca.fit_transform(embeddings)
+    
+    # Create a 3D scatter plot using Matplotlib Axes3D
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    
+    # Scatter plot
+    ax.scatter(reduced_data[:, 0], reduced_data[:, 1], reduced_data[:, 2], alpha=0.5)
+    ax.set_title("3D Scatter Plot of Reduced 256-Dimensional Data (PCA)")
+    ax.set_xlabel("Component 1")
+    ax.set_ylabel("Component 2")
+    ax.set_zlabel("Component 3")
+    
+    plt.show()
+
+开始使用 Explorer API 创建你自己的 CV 数据集探索报告。如需灵感，请查看 [VOC Exploration Example](/zh/datasets/explorer/explorer)。
+
+## Link to this section使用 Ultralytics Explorer 构建的应用#
+
+尝试我们基于 Explorer API 的 [GUI Demo](/zh/datasets/explorer/dashboard)
+
+## Link to this section常见问题 (FAQ)#
+
+### Link to this sectionUltralytics Explorer API 有什么用途？#
+
+Ultralytics Explorer API 专为全面的数据集探索而设计。它允许用户使用 SQL 查询、向量相似度搜索和语义搜索来筛选和搜索数据集。这个强大的 Python API 可以处理大型数据集，非常适合使用 Ultralytics 模型执行各种 [computer vision](https://www.ultralytics.com/glossary/computer-vision-cv) 任务。
+
+### Link to this section如何安装 Ultralytics Explorer API？#
+
+若要安装 Ultralytics Explorer API 及其依赖项，请使用以下命令：
+    
+    
+    pip install ultralytics[explorer]
+
+这将自动安装 Explorer API 功能所需的所有必要外部库。有关更多设置详情，请参阅我们文档的 installation section。
+
+### Link to this section如何使用 Ultralytics Explorer API 进行相似度搜索？#
+
+你可以通过创建嵌入表并查询相似图像，使用 Ultralytics Explorer API 执行相似度搜索。这是一个基本示例：
+    
+    
+    from ultralytics import Explorer
+    
+    # Create an Explorer object
+    explorer = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    explorer.create_embeddings_table()
+    
+    # Search for similar images to a given image
+    similar_images_df = explorer.get_similar(img="path/to/image.jpg")
+    print(similar_images_df.head())
+
+欲了解更多详情，请访问 Similarity Search section。
+
+### Link to this section使用 LanceDB 与 Ultralytics Explorer 有什么好处？#
+
+Ultralytics Explorer 在底层使用 LanceDB，它提供了可扩展的、基于磁盘的嵌入表。这确保了你可以为 COCO 等大型数据集创建和重用嵌入，而不会耗尽内存。这些表仅创建一次即可重复使用，从而提高了数据处理的效率。
+
+### Link to this sectionUltralytics Explorer API 中的 AI 问答功能是如何工作的？#
+
+AI 问答功能允许用户使用自然语言查询来筛选数据集。此功能利用 LLM 在后台将这些查询转换为 SQL 查询。这是一个示例：
+    
+    
+    from ultralytics import Explorer
+    
+    # Create an Explorer object
+    explorer = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    explorer.create_embeddings_table()
+    
+    # Query with natural language
+    query_result = explorer.ask_ai("show me 100 images with exactly one person and 2 dogs. There can be other objects too")
+    print(query_result.head())
+
+如需更多示例，请查看 Ask AI section。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/explorer/api.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[RIRizwanMunawar3](https://github.com/RizwanMunawar)[RAraimbekovm2](https://github.com/raimbekovm)[AYAyushExel2](https://github.com/AyushExel)[PDpderrenger1](https://github.com/pderrenger)[MImiles-deans-ultralytics1](https://github.com/miles-deans-ultralytics)[ONonuralpszr1](https://github.com/onuralpszr)[MAMatthewNoyce1](https://github.com/MatthewNoyce)[ANankanpy1](https://github.com/ankanpy)
+
+已创建 2024年1月6日已更新 2周前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

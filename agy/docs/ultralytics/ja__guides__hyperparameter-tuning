@@ -1,0 +1,420 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/hyperparameter-tuning
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/hyperparameter-tuning.md)
+
+# Link to this sectionUltralytics YOLO [ハイパーパラメータチューニング](https://www.ultralytics.com/glossary/hyperparameter-tuning)ガイド#
+
+## Link to this sectionはじめに#
+
+ハイパーパラメータチューニングは、単なる一度きりの設定ではなく、精度、適合率（Precision）、再現率（Recall）などの[機械学習](https://www.ultralytics.com/glossary/machine-learning-ml)モデルのパフォーマンス指標を最適化するための反復的なプロセスです。Ultralytics YOLOにおいて、これらのハイパーパラメータは学習率から、層の数や使用する活性化関数の種類といったアーキテクチャの詳細まで多岐にわたります。[Ultralytics Platform](https://platform.ultralytics.com)は、設定可能なハイパーパラメータとリアルタイムの指標追跡機能を備えた[クラウドトレーニング](/ja/platform/train/cloud-training)もサポートしています。
+
+  
+
+
+  
+**Watch:** How to Tune Hyperparameters for Better Model Performance 🚀 
+
+### Link to this sectionハイパーパラメータとは何か？#
+
+ハイパーパラメータとは、アルゴリズムに対する高レベルな構造的設定のことです。これらはトレーニングフェーズの前に設定され、トレーニング中には固定されます。Ultralytics YOLOで一般的にチューニングされるハイパーパラメータを以下に示します：
+
+  * **学習率（Learning Rate）** `lr0`: [損失関数](https://www.ultralytics.com/glossary/loss-function)の最小値に向かって移動する際、各反復におけるステップサイズを決定します。
+  * **[バッチサイズ](https://www.ultralytics.com/glossary/batch-size)** `batch`: フォワードパスで同時に処理される画像の数です。
+  * **[エポック](https://www.ultralytics.com/glossary/epoch)数** `epochs`: エポックとは、すべてのトレーニングサンプルに対してフォワードパスとバックワードパスを1回ずつ完全に完了することを指します。
+  * **アーキテクチャの仕様** : チャネル数、層の数、活性化関数の種類など。
+
+
+
+![Hyperparameter optimization search space visualization](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/hyperparameter-tuning-visual.avif)
+
+YOLO26で使用されるデータ拡張ハイパーパラメータの全リストについては、[設定ページ](/ja/usage/cfg#augmentation-settings)を参照してください。
+
+### Link to this section遺伝的アルゴリズムによる進化と突然変異#
+
+Ultralytics YOLOは、ハイパーパラメータを最適化するために[遺伝的アルゴリズム](https://en.wikipedia.org/wiki/Genetic_algorithm)を使用します。遺伝的アルゴリズムは、自然選択と遺伝のメカニズムに着想を得ています。
+
+  * **交叉（Crossover）** : 各反復では、これまでに得られた最高の適合度を持つ最大9つの構成から遺伝子を組み合わせます。その際、適合度で重み付けされた親の選択を行い、BLX-α交叉を使用します。
+  * **突然変異（Mutation）** : 再結合された候補に対し、各ハイパーパラメータに（パラメータごとに0.5の確率で）対数正規乗算因子を適用して摂動を与えます。突然変異の強さ（シグマ）は、最初の300反復にわたって0.2から0.1へ線形に減衰するため、アルゴリズムは初期段階では広く探索を行い、収束するにつれて精緻化していきます。反復1では交叉する親が存在しないため、デフォルトのトレーニングハイパーパラメータをベースラインとして使用します。
+
+
+
+## Link to this sectionハイパーパラメータチューニングの準備#
+
+チューニングプロセスを開始する前に、以下の点を確認することが重要です：
+
+  1. **指標の特定** : モデルのパフォーマンスを評価するために使用する指標を決定します。AP50、F1スコアなどが該当します。
+  2. **チューニング予算の設定** : 割り当てるコンピューティングリソースの量を定義します。ハイパーパラメータチューニングは、計算負荷が高くなる可能性があります。
+
+
+
+## Link to this sectionステップ#
+
+### Link to this sectionハイパーパラメータの初期化#
+
+妥当な一連の初期ハイパーパラメータから開始します。これはUltralytics YOLOによって設定されたデフォルトのハイパーパラメータであるか、ドメイン知識や以前の実験に基づいたものを使用できます。
+
+### Link to this sectionハイパーパラメータの突然変異#
+
+`_mutate`メソッドを使用して、既存のセットに基づいて新しいハイパーパラメータセットを生成します。[Tunerクラス](https://docs.ultralytics.com/reference/engine/tuner)がこのプロセスを自動的に処理します。
+
+### Link to this sectionモデルをトレーニング#
+
+突然変異させたハイパーパラメータセットを使用してトレーニングを実行します。その後、選択した指標を使用してトレーニングパフォーマンスを評価します。
+
+### Link to this sectionモデルの評価#
+
+AP50、F1スコア、またはカスタム指標を使用してモデルのパフォーマンスを評価します。[評価プロセス](https://docs.ultralytics.com/modes/val)は、現在のハイパーパラメータが以前のものより優れているかどうかを判断するのに役立ちます。
+
+### Link to this section結果のログ記録#
+
+パフォーマンス指標と対応するハイパーパラメータの両方を将来の参照のためにログに記録することが重要です。Ultralytics YOLOは、これらの結果を自動的にNDJSON形式で保存します。
+
+### Link to this section反復#
+
+設定された反復回数に達するか、パフォーマンス指標が満足のいくものになるまでプロセスを繰り返します。各反復は、以前の実行から得られた知識を基に構築されます。
+
+### Link to this section反復回数と母集団サイズ#
+
+組み込みのチューナー（`use_ray=False`）を使用する場合、`iterations`はシーケンシャルな試行の総数を制御します。各試行では、1つのハイパーパラメータ設定で1つのモデルをトレーニングします。たとえば、`iterations=40`かつ`epochs=50`の場合、50エポックの実行を1回行い40の候補を評価するのではなく、50エポックのトレーニング実行を40回独立してスケジュールします。
+
+組み込みの遺伝的アルゴリズムには、明示的な母集団サイズパラメータはありません。以前の試行が存在する場合、最高の適合度を持つ最大9つの構成を親としてサンプリングし、BLX-α交叉と突然変異を適用して、反復ごとに1つの候補を生成します。
+
+並列試行やより高度な探索戦略が必要な場合は、`use_ray=True`を設定してRay Tuneを使用します。この場合、`iterations`は`num_samples`として受け取られます。詳細については、[Ray Tune統合ガイド](/ja/integrations/ray-tune)を参照してください。
+
+## Link to this sectionデフォルトの探索空間の説明#
+
+以下の表は、YOLO26のハイパーパラメータチューニングにおけるデフォルトの探索空間パラメータを一覧にしています。各パラメータには、タプル`(min, max)`で定義された特定の値範囲があります。
+
+パラメータ| タイプ| 値の範囲| 説明  
+---|---|---|---  
+`lr0`| `float`| `(1e-5, 1e-2)`| トレーニング開始時の初期学習率。低い値はトレーニングを安定させますが、収束は遅くなります  
+`lrf`| `float`| `(0.01, 1.0)`| lr0の割合としての最終学習率係数。トレーニング中に学習率がどれだけ減少するかを制御します  
+`momentum`| `float`| `(0.7, 0.98)`| SGDモーメンタム係数。高い値は勾配方向を一定に保つのに役立ち、収束を早めることができます  
+`weight_decay`| `float`| `(0.0, 0.001)`| 過学習を防ぐためのL2正則化係数。大きい値ほど強い正則化を強制します  
+`warmup_epochs`| `float`| `(0.0, 5.0)`| 線形学習率ウォームアップのエポック数。トレーニング初期の不安定さを防ぐのに役立ちます  
+`warmup_momentum`| `float`| `(0.0, 0.95)`| ウォームアップフェーズ中の初期モーメンタム。最終的なモーメンタム値まで徐々に増加します  
+`box`| `float`| `(1.0, 20.0)`| 全損失関数におけるバウンディングボックスの損失重み。ボックス回帰と分類のバランスを取ります  
+`cls`| `float`| `(0.1, 4.0)`| 全損失関数における分類損失の重み。高い値は正しいクラス予測を強調します  
+`cls_pw`| `float`| `(0.0, 1.0)`| クラス不均衡を扱うためのクラス重み付けのべき乗。高い値は、希少なクラスへの重みを増加させます  
+`dfl`| `float`| `(0.4, 12.0)`| 全損失関数におけるDFL（Distribution Focal Loss）の重み。高い値は正確なバウンディングボックスの局所化を強調します  
+`hsv_h`| `float`| `(0.0, 0.1)`| HSV色空間におけるランダム色相（hue）拡張範囲。モデルが色の変化に対して汎化するのを助けます  
+`hsv_s`| `float`| `(0.0, 0.9)`| HSV空間におけるランダム彩度（saturation）拡張範囲。異なる照明条件をシミュレートします  
+`hsv_v`| `float`| `(0.0, 0.9)`| ランダム明度（brightness）拡張範囲。モデルが異なる露出レベルを処理するのを助けます  
+`degrees`| `float`| `(0.0, 45.0)`| 度単位での最大回転拡張。モデルが物体の向きに対して不変になるよう助けます  
+`translate`| `float`| `(0.0, 0.9)`| 画像サイズに対する割合としての最大平行移動拡張。物体の位置に対する堅牢性を向上させます  
+`scale`| `float`| `(0.0, 0.95)`| ランダムスケーリング拡張範囲。モデルが異なるサイズの物体を検出するのを助けます  
+`shear`| `float`| `(0.0, 10.0)`| 度単位での最大シア（せん断）拡張。トレーニング画像に透視投影に近い歪みを加えます  
+`perspective`| `float`| `(0.0, 0.001)`| ランダムパースペクティブ（透視）拡張範囲。異なる視角をシミュレートします  
+`flipud`| `float`| `(0.0, 1.0)`| トレーニング中に画像を垂直に反転させる確率。頭上や航空画像に有用です  
+`fliplr`| `float`| `(0.0, 1.0)`| 画像を水平に反転させる確率。モデルが物体の向きに対して不変になるよう助けます  
+`bgr`| `float`| `(0.0, 1.0)`| 色チャンネルを入れ替えるBGR拡張を使用する確率。色不変性の向上に役立つ場合があります  
+`mosaic`| `float`| `(0.0, 1.0)`| 4枚の画像を結合するモザイク拡張を使用する確率。特に小さな物体の検出に有用です  
+`mixup`| `float`| `(0.0, 1.0)`| 2枚の画像をブレンドするミックスアップ拡張を使用する確率。モデルの堅牢性を向上させる可能性があります  
+`cutmix`| `float`| `(0.0, 1.0)`| カットミックス拡張を使用する確率。局所的な特徴を維持しつつ、画像の領域を組み合わせます  
+`copy_paste`| `float`| `(0.0, 1.0)`| コピーペースト拡張を使用する確率。インスタンスセグメンテーションのパフォーマンス向上に寄与します  
+`close_mosaic`| `float`| `(0.0, 10.0)`| 完了前にトレーニングを安定させるため、最後のNエポックでモザイクを無効にします  
+  
+## Link to this sectionカスタム探索空間の例#
+
+探索空間を定義し、`model.tune()`メソッドを使用して`Tuner`クラスを利用し、COCO8データセット上でYOLO26nを30エポック分、AdamWオプティマイザでチューニングする例を以下に示します。なお、チューニングを高速化するため、プロット、チェックポイントの作成、最終エポック以外での検証はスキップしています。
+
+警告
+
+この例は**デモンストレーション** 目的です。短時間や小規模なチューニングから得られたハイパーパラメータは、実環境のトレーニングには適さないことがほとんどです。実際には、信頼性が高く移植可能な結果を確保するために、データセット、エポック数、データ拡張など、本格的なトレーニングに近い設定でチューニングを行う必要があります。クイックチューニングは、汎化できない、より速い収束や短期的な検証スコアの向上にパラメータを偏らせる可能性があります。
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    # Initialize the YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Define search space
+    search_space = {
+        "lr0": (1e-5, 1e-2),
+        "degrees": (0.0, 45.0),
+    }
+    
+    # Tune hyperparameters on COCO8 for 30 epochs
+    model.tune(
+        data="coco8.yaml",
+        epochs=30,
+        iterations=300,
+        optimizer="AdamW",
+        space=search_space,
+        plots=False,
+        save=False,
+        val=False,
+    )
+
+## Link to this section中断されたハイパーパラメータチューニングセッションの再開#
+
+You can resume an interrupted hyperparameter tuning session by passing `resume=True`. You can optionally pass the directory `name` used under `runs/{task}` to resume. Otherwise, it would resume the last interrupted session. You also need to provide all the previous training arguments including `data`, `epochs`, `iterations` and `space`.
+
+`model.tune()`で`resume=True`を使用する
+    
+    
+    from ultralytics import YOLO
+    
+    # Define a YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Define search space
+    search_space = {
+        "lr0": (1e-5, 1e-2),
+        "degrees": (0.0, 45.0),
+    }
+    
+    # Resume previous run
+    results = model.tune(data="coco8.yaml", epochs=50, iterations=300, space=search_space, resume=True)
+    
+    # Resume tuning run with name 'tune_exp'
+    results = model.tune(data="coco8.yaml", epochs=50, iterations=300, space=search_space, name="tune_exp", resume=True)
+
+## Link to this section結果#
+
+ハイパーパラメータチューニングプロセスが完了すると、チューニング結果をまとめた複数のファイルとディレクトリが生成されます。各内容を以下に説明します：
+
+### Link to this sectionファイル構成#
+
+結果のディレクトリ構成は以下のようになります。`train1/`のようなトレーニングディレクトリには、個別のチューニング反復（つまり、1セットのハイパーパラメータでトレーニングされた1つのモデル）が含まれています。`tune/`ディレクトリには、すべての個別のモデルトレーニングから得られたチューニング結果が含まれます：
+    
+    
+    runs/
+    └── detect/
+        ├── train1/
+        ├── train2/
+        ├── ...
+        └── tune/
+            ├── best_hyperparameters.yaml
+            ├── tune_fitness.png
+            ├── tune_results.ndjson
+            ├── tune_scatter_plots.png
+            └── weights/
+                ├── last.pt
+                └── best.pt
+
+### Link to this sectionファイルの説明#
+
+#### Link to this sectionbest_hyperparameters.yaml#
+
+このYAMLファイルには、チューニングプロセス中に見つかった最適なパフォーマンスを示すハイパーパラメータが含まれています。このファイルを使用して、最適化された設定で将来のトレーニングを初期化できます。
+
+  * **形式** : YAML
+
+  * **用途** : ハイパーパラメータの結果
+
+  * **例** ：
+        
+        # 558/900 iterations complete ✅ (45536.81s)
+        # Results saved to /usr/src/ultralytics/runs/detect/tune
+        # Best fitness=0.64297 observed at iteration 498
+        # Best fitness metrics are {'metrics/precision(B)': 0.87247, 'metrics/recall(B)': 0.71387, 'metrics/mAP50(B)': 0.79106, 'metrics/mAP50-95(B)': 0.62651, 'val/box_loss': 2.79884, 'val/cls_loss': 2.72386, 'val/dfl_loss': 0.68503, 'fitness': 0.64297}
+        # Best fitness model is /usr/src/ultralytics/runs/detect/train498
+        # Best fitness hyperparameters are printed below.
+        
+        lr0: 0.00269
+        lrf: 0.00288
+        momentum: 0.73375
+        weight_decay: 0.00015
+        warmup_epochs: 1.22935
+        warmup_momentum: 0.1525
+        box: 18.27875
+        cls: 1.32899
+        dfl: 0.56016
+        hsv_h: 0.01148
+        hsv_s: 0.53554
+        hsv_v: 0.13636
+        degrees: 0.0
+        translate: 0.12431
+        scale: 0.07643
+        shear: 0.0
+        perspective: 0.0
+        flipud: 0.0
+        fliplr: 0.08631
+        mosaic: 0.42551
+        mixup: 0.0
+        copy_paste: 0.0
+
+
+
+
+#### Link to this sectiontune_fitness.png#
+
+これは、適合度と反復回数をプロットしたグラフです。遺伝的アルゴリズムが時間の経過とともにどのように機能したかを可視化するのに役立ちます。
+
+  * **形式** : PNG
+  * **用途** : パフォーマンスの可視化
+
+
+
+![Hyperparameter Tuning Fitness vs Iteration](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/best-fitness.avif)
+
+このプロットには以下が含まれます：
+
+  * **データセットごとの反復回数につき1つのマーカー** 。単一データセットの実行では反復ごとに1つの点が示され、マルチデータセットの実行では反復ごとにデータセットにつき1つの点が示されます。
+  * **「平滑化された平均」の点線** 。これは反復ごとのトップレベル適合値に対してガウス平滑化（`sigma=3`）を適用して計算されます。
+
+
+
+#### Link to this sectiontune_results.ndjson#
+
+各チューニング反復の詳細な結果を含むNDJSONファイルです。各行は、集計された適合度、チューニングされたハイパーパラメータ、およびデータセットごとの指標を含む1つのJSONオブジェクトです。単一データセットとマルチデータセットのチューニングでは、同じファイル形式が使用されます。
+
+  * **形式** : NDJSON
+  * **用途** : 反復ごとの結果追跡
+  * **例** ：
+
+
+
+読みやすさを考慮したpretty-printedな例を以下に示します。実際の`.ndjson`ファイルでは、各オブジェクトは1行に格納されます。
+    
+    
+    {
+        "iteration": 1,
+        "fitness": 0.48628,
+        "hyperparameters": {
+            "lr0": 0.01,
+            "lrf": 0.01,
+            "momentum": 0.937,
+            "weight_decay": 0.0005
+        },
+        "datasets": {
+            "coco8": {
+                "metrics/precision(B)": 0.65666,
+                "metrics/recall(B)": 0.85,
+                "metrics/mAP50(B)": 0.85086,
+                "metrics/mAP50-95(B)": 0.64104,
+                "val/box_loss": 1.57958,
+                "val/cls_loss": 1.04986,
+                "val/dfl_loss": 1.32641,
+                "fitness": 0.64104
+            },
+            "coco8-grayscale": {
+                "metrics/precision(B)": 0.6582,
+                "metrics/recall(B)": 0.51667,
+                "metrics/mAP50(B)": 0.59106,
+                "metrics/mAP50-95(B)": 0.33152,
+                "val/box_loss": 1.95424,
+                "val/cls_loss": 1.64059,
+                "val/dfl_loss": 1.70226,
+                "fitness": 0.33152
+            }
+        },
+        "save_dirs": {
+            "coco8": "runs/detect/coco8",
+            "coco8-grayscale": "runs/detect/coco8-grayscale"
+        }
+    }
+
+トップレベルの`fitness`は、データセットごとの`fitness`値の算術平均です。単一データセットのチューニングの場合、`datasets`辞書には`fitness`がトップレベルの`fitness`と等しいエントリが1つだけ含まれます。完了した反復ごとに1つのJSONオブジェクトが記録されます。実際の`save_dirs`パスは絶対パスですが、読みやすさを考慮して上記では省略されています。
+
+#### Link to this sectiontune_scatter_plots.png#
+
+このファイルには `tune_results.ndjson` から生成された散布図が含まれており、さまざまなハイパーパラメータとパフォーマンスメトリクスの関係を可視化できます。デフォルト値が0であるハイパーパラメータ（例：以下の `degrees` や `shear`）は、乗法的な変異係数がゼロに近い値から拡大するための要素をほとんど持たないため、初期シードからゆっくりとしか進化しない場合があります。
+
+  * **形式** : PNG
+  * **用途** : 探索的データ分析
+
+
+
+![Hyperparameter tuning results scatter plot analysis](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/tune-scatter-plots.avif)
+
+#### Link to this sectionweights/#
+
+このディレクトリには、ハイパーパラメータチューニングプロセス中の最後および最良のイテレーションで保存された [PyTorch](https://www.ultralytics.com/glossary/pytorch) モデルが含まれています。
+
+  * **`last.pt`** : last.ptは、トレーニングの最後のエポックの重みです。
+  * **`best.pt`** : best.ptは、最良の適応度スコアを達成したイテレーションの重みです。
+
+
+
+これらの結果を使用して、将来のモデルトレーニングや分析に対して、より情報に基づいた意思決定を行うことができます。これらの成果物を参照して、モデルのパフォーマンスがどれほど優れているか、またどのようにさらに改善できるかを理解してください。
+
+## Link to this section結論#
+
+Ultralytics YOLOにおけるハイパーパラメータチューニングプロセスは、BLX-α交叉と対数正規変異を組み合わせた遺伝的アルゴリズムベースのアプローチにより、簡素化されつつも強力です。このガイドで説明されている手順に従うことで、モデルを体系的に調整し、より優れたパフォーマンスを達成するのに役立ちます。
+
+### Link to this sectionさらなる学習#
+
+  1. [Wikipediaにおけるハイパーパラメータ最適化](https://en.wikipedia.org/wiki/Hyperparameter_optimization)
+  2. [YOLOv5 ハイパーパラメータ進化ガイド](/ja/yolov5/tutorials/hyperparameter-evolution)
+  3. [Ray TuneとYOLO26を使用した効率的なハイパーパラメータチューニング](/ja/integrations/ray-tune)
+
+
+
+詳細については、[`Tuner` クラス](https://docs.ultralytics.com/reference/engine/tuner)のソースコードと付属のドキュメントをご覧ください。質問や機能のリクエスト、その他サポートが必要な場合は、[GitHub](https://github.com/ultralytics/ultralytics/issues/new/choose) または [Discord](https://discord.com/invite/ultralytics) までお気軽にお問い合わせください。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionハイパーパラメータチューニング中にUltralytics YOLOの [学習率](https://www.ultralytics.com/glossary/learning-rate) を最適化するにはどうすればよいですか？#
+
+Ultralytics YOLOの学習率を最適化するには、まず `lr0` パラメータを使用して初期学習率を設定します。一般的な値の範囲は `0.001` から `0.01` です。ハイパーパラメータチューニングプロセス中に、この値は最適な設定を見つけるために変異します。このプロセスを自動化するには `model.tune()` メソッドを利用できます。例:
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    # Initialize the YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Tune hyperparameters on COCO8 for 30 epochs
+    model.tune(data="coco8.yaml", epochs=30, iterations=300, optimizer="AdamW", plots=False, save=False, val=False)
+
+詳細については、[Ultralytics YOLO 設定ページ](/ja/usage/cfg#augmentation-settings)をご確認ください。
+
+### Link to this sectionYOLO26でハイパーパラメータチューニングに遺伝的アルゴリズムを使用する利点は何ですか？#
+
+Ultralytics YOLO26における遺伝的アルゴリズムは、ハイパーパラメータ空間を探索するための堅牢な手法を提供し、高度に最適化されたモデルパフォーマンスを実現します。主な利点は以下の通りです:
+
+  * **効率的な探索** : BLX-α交叉は最も適応度の高い親から遺伝子を組み合わせ、対数正規変異は結果を攪乱することで新しい候補を発見します。
+  * **局所的最適解の回避** : ランダム性を導入することで、局所的最適解を回避し、より優れた大域的最適化を確実にします。
+  * **パフォーマンスメトリクス** : タスク固有の適応度スコア（検出の場合は mAP50-95）に基づいて適応します。
+
+
+
+遺伝的アルゴリズムを使用してハイパーパラメータを最適化する方法については、[ハイパーパラメータ進化ガイド](/ja/yolov5/tutorials/hyperparameter-evolution)をご覧ください。
+
+### Link to this sectionUltralytics YOLOのハイパーパラメータチューニングプロセスにはどれくらいの時間がかかりますか？#
+
+Ultralytics YOLOのハイパーパラメータチューニングにかかる時間は、データセットのサイズ、モデルアーキテクチャの複雑さ、イテレーション数、利用可能な計算リソースなど、いくつかの要因に大きく依存します。例えば、COCO8のようなデータセットでYOLO26nを30エポック調整する場合、ハードウェアにもよりますが、数時間から数日かかることがあります。
+
+チューニング時間を効果的に管理するために、事前に明確なチューニング予算を定義してください（内部セクションリンク）。これは、リソース配分と最適化目標のバランスを取るのに役立ちます。
+
+### Link to this sectionYOLOのハイパーパラメータチューニング中にモデルパフォーマンスを評価するには、どのメトリクスを使用すべきですか？#
+
+YOLOのハイパーパラメータチューニング中にモデルパフォーマンスを評価する際は、いくつかの主要なメトリクスを使用できます:
+
+  * **AP50** : IoU閾値0.50における平均適合率（Average Precision）。
+  * **F1スコア** : 適合率と再現率の調和平均。
+  * **適合率（Precision）と再現率（Recall）** : 真陽性を偽陽性および偽陰性と比較してモデルの [精度](https://www.ultralytics.com/glossary/accuracy) を示す個別のメトリクス。
+
+
+
+これらのメトリクスは、モデルのパフォーマンスのさまざまな側面を理解するのに役立ちます。包括的な概要については、[Ultralytics YOLO パフォーマンスメトリクス](/ja/guides/yolo-performance-metrics) ガイドを参照してください。
+
+### Link to this sectionYOLO26の高度なハイパーパラメータ最適化にRay Tuneを使用できますか？#
+
+はい、Ultralytics YOLO26は高度なハイパーパラメータ最適化のために [Ray Tune](https://docs.ray.io/en/latest/tune/index.html) と統合されています。Ray Tuneは、ベイズ最適化やHyperbandなどの洗練された探索アルゴリズムを提供し、チューニングプロセスを高速化するための並列実行機能も備えています。
+
+To use Ray Tune with YOLO26, simply set the `use_ray=True` parameter in your `model.tune()` method call. For more details and examples, check out the [Ray Tune integration guide](/ja/integrations/ray-tune).
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/hyperparameter-tuning.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[RAraimbekovm4](https://github.com/raimbekovm)[Y-Y-T-G2](https://github.com/Y-T-G)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[XIxiazl19931](https://github.com/xiazl1993)[LALaughing-q1](https://github.com/Laughing-q)AHAhmet Faruk GÜMÜŞTAŞ1[PDpderrenger1](https://github.com/pderrenger)[AMamm11111](https://github.com/amm1111)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+作成日 2023年11月12日更新日 3 日前
+
+## コメント
+
+このページの内容
+
+AIで探索

@@ -1,0 +1,218 @@
+---
+source_url: https://docs.ultralytics.com/ko/guides/yolo-thread-safe-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+# Link to this sectionYOLO 모델을 이용한 스레드 안전(Thread-Safe) 추론#
+
+멀티 스레드 환경에서 YOLO 모델을 실행할 때는 스레드 안전성을 보장하기 위해 신중한 고려가 필요합니다. Python의 `threading` 모듈을 사용하면 여러 스레드를 동시에 실행할 수 있지만, 이러한 스레드 전반에서 YOLO 모델을 사용할 때는 주의해야 할 중요한 안전 문제가 있습니다. 이 페이지에서는 스레드 안전한 YOLO 모델 추론을 생성하는 방법을 안내합니다.
+
+  
+
+
+  
+**Watch:** How to Perform Thread Safe Inference with Ultralytics YOLO Models in Python | Multi-Threading 🚀 
+
+## Link to this sectionPython 스레딩 이해하기#
+
+Python 스레드는 프로그램이 여러 작업을 동시에 실행할 수 있도록 하는 병렬 처리의 한 형태입니다. 그러나 Python의 전역 인터프리터 잠금(GIL)으로 인해 한 번에 하나의 스레드만 Python 바이트코드를 실행할 수 있습니다.
+
+![Single-thread vs multi-thread inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/single-vs-multi-thread-examples.avif)
+
+이것이 제한 사항처럼 들릴 수 있지만, 스레드는 특히 I/O 바운드 작업이나 YOLO의 기본 C 라이브러리가 수행하는 작업처럼 GIL을 해제하는 작업을 사용할 때 여전히 동시성을 제공할 수 있습니다.
+
+## Link to this section공유 모델 인스턴스의 위험성#
+
+YOLO 모델을 스레드 외부에서 인스턴스화하고 이 인스턴스를 여러 스레드에서 공유하면 경합 조건(race condition)이 발생할 수 있습니다. 경합 조건에서는 동시 접근으로 인해 모델의 내부 상태가 일관되지 않게 수정됩니다. 이는 모델 또는 해당 구성 요소가 스레드 안전하게 설계되지 않은 상태를 유지할 때 특히 문제가 됩니다.
+
+### Link to this section스레드 안전하지 않은 예시: 단일 모델 인스턴스#
+
+Python에서 스레드를 사용할 때는 동시성 문제를 일으킬 수 있는 패턴을 인식하는 것이 중요합니다. 다음은 피해야 할 상황입니다: 여러 스레드 간에 단일 YOLO 모델 인스턴스를 공유하는 것.
+    
+    
+    # Unsafe: Sharing a single model instance across threads
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate the model outside the thread
+    shared_model = YOLO("yolo26n.pt")
+    
+    def predict(image_path):
+        """Predicts objects in an image using a preloaded YOLO model, take path string to image as argument."""
+        results = shared_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that share the same model instance
+    Thread(target=predict, args=("image1.jpg",)).start()
+    Thread(target=predict, args=("image2.jpg",)).start()
+
+위 예시에서 `shared_model`은 여러 스레드에 의해 사용되는데, 이는 여러 스레드에 의해 `predict`가 동시에 실행될 수 있으므로 예측할 수 없는 결과를 초래할 수 있습니다.
+
+### Link to this section스레드 안전하지 않은 예시: 다중 모델 인스턴스#
+
+마찬가지로, 여러 YOLO 모델 인스턴스를 사용하는 안전하지 않은 패턴은 다음과 같습니다:
+    
+    
+    # Unsafe: Sharing multiple model instances across threads can still lead to issues
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate multiple models outside the thread
+    shared_model_1 = YOLO("yolo26n_1.pt")
+    shared_model_2 = YOLO("yolo26n_2.pt")
+    
+    def predict(model, image_path):
+        """Runs prediction on an image using a specified YOLO model, returning the results."""
+        results = model.predict(image_path)
+        # Process results
+    
+    # Starting threads with individual model instances
+    Thread(target=predict, args=(shared_model_1, "image1.jpg")).start()
+    Thread(target=predict, args=(shared_model_2, "image2.jpg")).start()
+
+두 개의 개별 모델 인스턴스가 존재하더라도 동시성 문제의 위험은 여전히 존재합니다. `YOLO`의 내부 구현이 스레드 안전하지 않은 경우, 개별 인스턴스를 사용하더라도 경합 조건을 방지하지 못할 수 있으며, 특히 이러한 인스턴스가 스레드 로컬이 아닌 기본 리소스나 상태를 공유하는 경우 더욱 그렇습니다.
+
+## Link to this section스레드 안전한 추론#
+
+스레드 안전한 추론을 수행하려면 각 스레드 내부에 별도의 YOLO 모델을 인스턴스화해야 합니다. 이렇게 하면 각 스레드가 고유한 격리된 모델 인스턴스를 갖게 되어 경합 조건의 위험이 제거됩니다.
+
+### Link to this section스레드 안전한 예시#
+
+안전한 병렬 추론을 위해 각 스레드 내에서 YOLO 모델을 인스턴스화하는 방법은 다음과 같습니다:
+    
+    
+    # Safe: Instantiating a single model inside each thread
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image using a new YOLO model instance in a thread-safe manner; takes image path as input."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that each have their own model instance
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+이 예시에서는 각 스레드가 고유한 `YOLO` 인스턴스를 생성합니다. 이는 어떤 스레드도 다른 스레드의 모델 상태를 방해하지 않도록 하여, 각 스레드가 다른 스레드와의 예기치 않은 상호 작용 없이 안전하게 추론을 수행하도록 보장합니다.
+
+## Link to this sectionThreadingLocked 데코레이터 사용#
+
+Ultralytics는 함수를 스레드 안전하게 실행하는 데 사용할 수 있는 `ThreadingLocked` 데코레이터를 제공합니다. 이 데코레이터는 잠금(lock)을 사용하여 한 번에 하나의 스레드만 데코레이트된 함수를 실행할 수 있도록 합니다.
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.utils import ThreadingLocked
+    
+    # Create a model instance
+    model = YOLO("yolo26n.pt")
+    
+    # Decorate the predict method to make it thread-safe
+    @ThreadingLocked()
+    def thread_safe_predict(image_path):
+        """Thread-safe prediction using a shared model instance."""
+        results = model.predict(image_path)
+        return results
+    
+    # Now you can safely call this function from multiple threads
+
+`ThreadingLocked` 데코레이터는 스레드 간에 모델 인스턴스를 공유해야 하지만 한 번에 하나의 스레드만 모델에 접근하도록 보장하려는 경우에 특히 유용합니다. 이 접근 방식은 각 스레드에 대해 새 모델 인스턴스를 생성하는 것과 비교하여 메모리를 절약할 수 있지만, 스레드가 잠금이 해제될 때까지 기다려야 하므로 동시성이 감소할 수 있습니다.
+
+## Link to this section결론#
+
+Python의 `threading`과 함께 YOLO 모델을 사용할 때는 항상 스레드 안전성을 보장하기 위해 해당 모델을 사용할 스레드 내부에서 인스턴스화하십시오. 이 관행은 경합 조건을 방지하고 추론 작업이 안정적으로 실행되도록 합니다.
+
+더 고급 시나리오를 원하거나 멀티 스레드 추론 성능을 추가로 최적화하려면 [multiprocessing](https://docs.python.org/3/library/multiprocessing.html)을 사용한 프로세스 기반 병렬 처리나 전용 워커 프로세스가 포함된 작업 큐를 활용하는 것을 고려하십시오.
+
+## Link to this sectionFAQ#
+
+### Link to this section멀티 스레드 Python 환경에서 YOLO 모델을 사용할 때 경합 조건을 어떻게 방지할 수 있나요?#
+
+멀티 스레드 Python 환경에서 Ultralytics YOLO 모델을 사용할 때 경합 조건을 방지하려면 각 스레드 내부에 별도의 YOLO 모델을 인스턴스화하십시오. 이렇게 하면 각 스레드가 고유한 격리된 모델 인스턴스를 갖게 되어 모델 상태의 동시 수정이 방지됩니다.
+
+예시:
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image in a thread-safe manner."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+스레드 안전성 보장에 대한 자세한 내용은 YOLO 모델을 이용한 스레드 안전 추론을 방문하십시오.
+
+### Link to this sectionPython에서 멀티 스레드 YOLO 모델 추론을 실행하기 위한 모범 사례는 무엇인가요?#
+
+Python에서 멀티 스레드 YOLO 모델 추론을 안전하게 실행하려면 다음 모범 사례를 따르십시오:
+
+  1. 스레드 간에 단일 모델 인스턴스를 공유하지 말고 각 스레드 내에서 YOLO 모델을 인스턴스화하십시오.
+  2. 전역 인터프리터 잠금(GIL) 관련 문제를 피하기 위해 병렬 처리에 Python의 `multiprocessing` 모듈을 사용하십시오.
+  3. YOLO의 기본 C 라이브러리가 수행하는 작업을 사용하여 GIL을 해제하십시오.
+  4. 메모리가 우려되는 경우 공유 모델 인스턴스에 대해 `ThreadingLocked` 데코레이터를 사용하는 것을 고려하십시오.
+
+
+
+스레드 안전한 모델 인스턴스화를 위한 예시:
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Runs inference in a thread-safe manner with a new YOLO model instance."""
+        model = YOLO("yolo26n.pt")
+        results = model.predict(image_path)
+        # Process results
+    
+    # Initiate multiple threads
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+추가적인 맥락은 스레드 안전한 추론 섹션을 참조하십시오.
+
+### Link to this section왜 각 스레드는 자체 YOLO 모델 인스턴스를 가져야 하나요?#
+
+각 스레드는 경합 조건을 방지하기 위해 자체 YOLO 모델 인스턴스를 가져야 합니다. 단일 모델 인스턴스가 여러 스레드 간에 공유되면 동시 접근으로 인해 예측할 수 없는 동작과 모델 내부 상태 수정이 발생할 수 있습니다. 별도의 인스턴스를 사용하면 스레드 격리가 보장되어 멀티 스레드 작업이 안정적이고 안전해집니다.
+
+자세한 지침은 스레드 안전하지 않은 예시: 단일 모델 인스턴스 및 스레드 안전한 예시 섹션을 확인하십시오.
+
+### Link to this sectionPython의 전역 인터프리터 잠금(GIL)은 YOLO 모델 추론에 어떤 영향을 미치나요?#
+
+Python의 전역 인터프리터 잠금(GIL)은 한 번에 하나의 스레드만 Python 바이트코드를 실행할 수 있도록 제한하며, 이는 CPU 바운드 멀티 스레딩 작업의 성능을 제한할 수 있습니다. 그러나 I/O 바운드 작업이나 YOLO의 기본 C 라이브러리처럼 GIL을 해제하는 라이브러리를 사용하는 프로세스의 경우 여전히 동시성을 달성할 수 있습니다. 향상된 성능을 위해 Python의 `multiprocessing` 모듈을 사용한 프로세스 기반 병렬 처리를 고려하십시오.
+
+Python의 스레딩에 대한 자세한 내용은 Python 스레딩 이해하기 섹션을 참조하십시오.
+
+### Link to this sectionYOLO 모델 추론 시 스레딩 대신 프로세스 기반 병렬 처리를 사용하는 것이 더 안전한가요?#
+
+네, Python의 `multiprocessing` 모듈을 사용하는 것이 YOLO 모델 추론을 병렬로 실행하는 데 더 안전하고 종종 더 효율적입니다. 프로세스 기반 병렬 처리는 별도의 메모리 공간을 생성하여 전역 인터프리터 잠금(GIL)을 피하고 동시성 문제의 위험을 줄입니다. 각 프로세스는 자체 YOLO 모델 인스턴스와 함께 독립적으로 작동합니다.
+
+YOLO 모델을 사용한 프로세스 기반 병렬 처리에 대한 자세한 내용은 스레드 안전한 추론 페이지를 참조하십시오.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+[GLglenn-jocher10](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+생성됨 2023년 11월 12일업데이트됨 2주 전
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

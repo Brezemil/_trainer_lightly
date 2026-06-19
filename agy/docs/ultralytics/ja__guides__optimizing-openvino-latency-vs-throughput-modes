@@ -1,0 +1,188 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/optimizing-openvino-latency-vs-throughput-modes
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+# Link to this sectionYOLOのためのOpenVINO推論最適化#
+
+![OpenVINO Ecosystem](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/openvino-ecosystem.avif)
+
+## Link to this sectionはじめに#
+
+[ディープラーニング](https://www.ultralytics.com/glossary/deep-learning-dl)モデル、特にUltralytics YOLOモデルのような[物体検出](https://www.ultralytics.com/glossary/object-detection)モデルをデプロイする際、最適なパフォーマンスの実現は不可欠です。本ガイドでは、[IntelのOpenVINOツールキット](https://docs.ultralytics.com/integrations/openvino)を活用して、レイテンシとスループットに焦点を当てた推論最適化について詳しく解説します。コンシューマー向けのアプリケーションであれ、大規模なデプロイであれ、これらの最適化戦略を理解し適用することで、モデルはさまざまなデバイス上で効率的に動作します。
+
+## Link to this sectionレイテンシの最適化#
+
+レイテンシの最適化は、コンシューマー向けシナリオで典型的な、単一入力に対して単一モデルから即時の応答を必要とするアプリケーションにとって極めて重要です。目標は、入力から推論結果までの遅延を最小限に抑えることです。しかし、低レイテンシを実現するには、特に並行推論を実行する場合や複数のモデルを管理する場合において、慎重な検討が必要です。
+
+### Link to this sectionレイテンシ最適化の主要戦略:#
+
+  * **デバイスごとの単一推論:** 低レイテンシを実現する最も単純な方法は、デバイスごとに一度に1つの推論に制限することです。同時実行性を高めると、多くの場合レイテンシが増加します。
+  * **サブデバイスの活用:** マルチソケットCPUやマルチタイルGPUのようなデバイスは、内部のサブデバイスを活用することで、レイテンシの増加を最小限に抑えながら複数のリクエストを実行できます。
+  * **OpenVINO Performance Hints:** Utilizing OpenVINO's `ov::LATENCY` for the `ov::performance_mode` property during model compilation simplifies performance tuning, offering a device-agnostic and future-proof approach.
+
+
+
+### Link to this section初回推論レイテンシの管理:#
+
+  * **モデルキャッシング:** モデルの読み込み時間やコンパイル時間がレイテンシに与える影響を軽減するため、可能な限りモデルキャッシングを使用してください。キャッシングが実行できないシナリオでは、通常、CPUが最も高速なモデル読み込み時間を提供します。
+  * **モデルのマッピング対読み込み:** 読み込み時間を短縮するため、OpenVINOではモデルの読み込みがマッピングに置き換えられました。ただし、モデルがリムーバブルドライブやネットワークドライブ上にある場合は、`ov::enable_mmap(false)` を使用して読み込みに戻すことを検討してください。
+  * **AUTOデバイス選択:** このモードはCPU上で推論を開始し、準備ができ次第アクセラレータに切り替えることで、初回推論のレイテンシをシームレスに低減します。
+
+
+
+## Link to this sectionスループットの最適化#
+
+スループットの最適化は、個々のリクエストのパフォーマンスを大幅に犠牲にすることなく[リソース利用率](https://www.ultralytics.com/blog/measuring-ai-performance-to-weigh-the-impact-of-your-innovations)を最大化し、多数の推論リクエストを同時に処理するシナリオにおいて不可欠です。
+
+### Link to this sectionスループット最適化のアプローチ:#
+
+  1. **OpenVINOパフォーマンスヒント:** パフォーマンスヒントを使用してデバイス全体のスループットを向上させるための、ハイレベルで将来性のある手法です。
+         
+         import openvino.properties.hint as hints
+         
+         config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+         compiled_model = core.compile_model(model, "GPU", config)
+
+  2. **明示的なバッチ処理とストリーム:** 高度なパフォーマンスチューニングのための、明示的なバッチ処理とストリームの使用を含む、よりきめ細かなアプローチです。
+
+
+
+
+### Link to this sectionスループット重視型アプリケーションの設計:#
+
+スループットを最大化するには、アプリケーションは以下の処理を行う必要があります。
+
+  * デバイスの能力を最大限に活用し、入力を並列で処理する。
+  * データフローを並行実行用にスケジュールされた同時推論リクエストに分解する。
+  * 効率を維持し、デバイスの枯渇を避けるためにコールバック付きのAsync APIを利用する。
+
+
+
+### Link to this sectionマルチデバイス実行:#
+
+OpenVINOのマルチデバイスモードは、アプリケーションレベルでのデバイス管理を必要とせずに、デバイス間で自動的に推論リクエストの負荷を分散することで、スループットのスケーリングを簡素化します。
+
+## Link to this section現実世界のパフォーマンス向上#
+
+Ultralytics YOLOモデルでOpenVINO最適化を実装すると、大幅なパフォーマンス向上が見込めます。[ベンチマーク](https://docs.ultralytics.com/integrations/openvino#openvino-yolov8-benchmarks)で示されているように、ユーザーはIntel CPU上で最大3倍高速な推論速度を体験でき、統合GPU、専用GPU、VPUを含むIntelハードウェア製品全体でさらに大きな加速が可能です。
+
+たとえば、Intel Xeon CPU上でYOLOv8モデルを実行する場合、OpenVINO最適化バージョンは、[精度](https://www.ultralytics.com/glossary/accuracy)を損なうことなく、画像あたりの推論時間において一貫してPyTorchの対応バージョンを上回ります。
+
+## Link to this section実用的な実装#
+
+Ultralytics YOLOモデルをOpenVINO用にエクスポートおよび最適化するには、[エクスポート](https://docs.ultralytics.com/modes/export)機能を使用します。
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to OpenVINO format
+    model.export(format="openvino", half=True)  # Export with FP16 precision
+
+エクスポート後、最適化されたモデルで推論を実行できます。
+    
+    
+    # Load the OpenVINO model
+    ov_model = YOLO("yolo26n_openvino_model/")
+    
+    # Run inference with performance hints for latency
+    results = ov_model("path/to/image.jpg", verbose=True)
+
+## Link to this section結論#
+
+OpenVINOを使用してUltralytics YOLOモデルをレイテンシとスループットのために最適化することで、アプリケーションのパフォーマンスを大幅に向上させることができます。本ガイドで概説した戦略を慎重に適用することで、開発者はモデルを効率的に実行し、さまざまなデプロイ環境の要求を満たすことができます。レイテンシとスループットのどちらの最適化を選択するかは、特定のアプリケーションのニーズとデプロイ環境の特性に依存することに留意してください。
+
+より詳細な技術情報と最新の更新情報については、[OpenVINOドキュメント](https://docs.openvino.ai/2024/index.html)および[Ultralytics YOLOリポジトリ](https://github.com/ultralytics/ultralytics)を参照してください。これらのリソースは、ディープラーニングモデルを最大限に活用するための詳細なガイド、チュートリアル、コミュニティサポートを提供しています。
+
+* * *
+
+モデルが最適なパフォーマンスを達成できるようにすることは、設定を微調整することだけでなく、アプリケーションのニーズを理解し、情報に基づいた決定を下すことです。[リアルタイム応答](https://www.ultralytics.com/blog/real-time-inferences-in-vision-ai-solutions-are-making-an-impact)のための最適化であれ、大規模処理のためのスループット最大化であれ、Ultralytics YOLOモデルとOpenVINOの組み合わせは、開発者が高性能なAIソリューションをデプロイするための強力なツールキットを提供します。
+
+## Link to this sectionFAQ#
+
+### Link to this sectionOpenVINOを使用して低レイテンシ向けにUltralytics YOLOモデルを最適化するにはどうすればよいですか？#
+
+Ultralytics YOLOモデルを低レイテンシ向けに最適化するには、いくつかの主要戦略があります。
+
+  1. **デバイスごとの単一推論:** 遅延を最小限に抑えるため、デバイスごとに一度に1つの推論に制限してください。
+  2. **サブデバイスの活用:** レイテンシの増加を最小限に抑えながら複数のリクエストを処理できる、マルチソケットCPUやマルチタイルGPUのようなデバイスを活用してください。
+  3. **OpenVINOパフォーマンスヒント:** モデルコンパイル時にOpenVINOの `ov::LATENCY` を使用すると、簡素でデバイスに依存しないチューニングが可能です。
+
+
+
+レイテンシ最適化に関するより実践的なヒントについては、ガイドのレイテンシ最適化セクションを確認してください。
+
+### Link to this sectionUltralytics YOLOのスループット最適化にOpenVINOを使用すべき理由は何ですか？#
+
+OpenVINOは、パフォーマンスを犠牲にすることなくデバイスのリソース利用率を最大化することで、Ultralytics YOLOモデルのスループットを向上させます。主な利点は以下の通りです。
+
+  * **パフォーマンスヒント:** デバイス全体にわたるシンプルでハイレベルなパフォーマンスチューニング。
+  * **明示的なバッチ処理とストリーム:** 高度なパフォーマンスのための微調整。
+  * **マルチデバイス実行:** 自動化された推論負荷分散により、アプリケーションレベルの管理を軽減します。
+
+
+
+設定例:
+    
+    
+    import openvino.properties.hint as hints
+    
+    config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+    compiled_model = core.compile_model(model, "GPU", config)
+
+スループット最適化の詳細については、詳細ガイドのスループット最適化セクションで学んでください。
+
+### Link to this sectionOpenVINOで初回推論レイテンシを削減するためのベストプラクティスは何ですか？#
+
+初回推論レイテンシを削減するには、以下の実践を考慮してください。
+
+  1. **モデルキャッシング:** ロード時間とコンパイル時間を短縮するために、モデルキャッシングを使用してください。
+  2. **モデルのマッピング対読み込み:** デフォルトではマッピング (`ov::enable_mmap(true)`) を使用しますが、モデルがリムーバブルドライブやネットワークドライブ上にある場合は、読み込み (`ov::enable_mmap(false)`) に切り替えてください。
+  3. **AUTOデバイス選択:** AUTOモードを利用してCPU推論から開始し、シームレスにアクセラレータへ移行してください。
+
+
+
+初回推論レイテンシを管理するための詳細な戦略については、初回推論レイテンシの管理セクションを参照してください。
+
+### Link to this sectionUltralytics YOLOとOpenVINOを使用して、レイテンシとスループットの最適化をどのようにバランスさせればよいですか？#
+
+レイテンシとスループットの最適化をバランスさせるには、アプリケーションのニーズを理解する必要があります。
+
+  * **レイテンシ最適化:** 即時応答が必要なリアルタイムアプリケーション（コンシューマー向けアプリなど）に最適です。
+  * **スループット最適化:** 多くの同時推論が行われるシナリオ（大規模なデプロイなど）でリソース利用を最大化するのに適しています。
+
+
+
+OpenVINOのハイレベルなパフォーマンスヒントとマルチデバイスモードを使用すると、適切なバランスをとるのに役立ちます。特定の要件に基づいて、適切な[OpenVINOパフォーマンスヒント](https://docs.ultralytics.com/integrations/openvino#openvino-performance-hints)を選択してください。
+
+### Link to this sectionUltralytics YOLOモデルはOpenVINO以外のAIフレームワークで使用できますか？#
+
+はい、Ultralytics YOLOモデルは汎用性が高く、さまざまなAIフレームワークと統合できます。選択肢は以下の通りです。
+
+  * **TensorRT:** NVIDIA GPU最適化については、[TensorRT統合ガイド](https://docs.ultralytics.com/integrations/tensorrt)に従ってください。
+  * **CoreML:** Appleデバイスについては、[CoreMLエクスポート手順](https://docs.ultralytics.com/integrations/coreml)を参照してください。
+  * **[TensorFlow](https://www.ultralytics.com/glossary/tensorflow).js:** WebおよびNode.jsアプリについては、[TF.js変換ガイド](https://docs.ultralytics.com/integrations/tfjs)を参照してください。
+
+
+
+その他の統合については、[Ultralytics統合ページ](https://docs.ultralytics.com/integrations)を参照してください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+作成日 2024年3月17日更新日 先月
+
+## コメント
+
+このページの内容
+
+AIで探索

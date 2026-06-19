@@ -1,0 +1,520 @@
+---
+source_url: https://docs.ultralytics.com/ja/models/yoloe
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/yoloe.md)
+
+# Link to this sectionYOLOE: リアルタイムで何でも認識#
+
+## Link to this sectionはじめに#
+
+![YOLOEのプロンプトオプション](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yoloe-visualization.avif)
+
+[YOLOE (Real-Time Seeing Anything)](https://arxiv.org/html/2503.07465v1) は、ゼロショットでプロンプト可能な新しいYOLOモデルの進歩であり、**オープンボキャブラリー** での検出およびセグメンテーションのために設計されています。固定カテゴリーに限定されていた従来のYOLOモデルとは異なり、YOLOEはテキスト、画像、または内部ボキャブラリーのプロンプトを使用して、あらゆるオブジェクトクラスのリアルタイム検出を可能にします。YOLOv10をベースに構築され、[YOLO-World](/ja/models/yolo-world)から着想を得たYOLOEは、速度と精度の影響を最小限に抑えながら、**最先端のゼロショット性能** を実現しています。
+
+  
+
+
+  
+**Watch:** How to use Ultralytics YOLOE-26 (New) | Open Vocabulary & Real-Time Seeing Anything 🚀 
+
+以前のYOLOモデルと比較して、YOLOEは効率と精度を大幅に向上させています。LVISにおいてYOLO-Worldv2を**+3.5 AP**上回りつつ、トレーニングリソースの使用量は3分の1、推論速度は1.4倍高速化しました。COCOでファインチューニングされたYOLOE-v8-largeは、YOLOv8-Lを** 0.1 mAP**上回り、**トレーニング時間は約4分の1** です。これは、YOLOEの精度、効率、汎用性の卓越したバランスを示すものです。以下のセクションでは、YOLOEのアーキテクチャ、ベンチマーク比較、および[Ultralytics](https://www.ultralytics.com/)フレームワークとの統合について説明します。
+
+## Link to this sectionアーキテクチャの概要#
+
+![YOLOE Architecture](https://github.com/THU-MIG/yoloe/raw/main/figures/pipeline.svg)
+
+YOLOEは、標準的なYOLO構造を保持しています。特徴抽出用の畳み込み**バックボーン** （CSP-Darknetなど）、マルチスケール融合用の**ネック** （PAN-FPNなど）、そしてオブジェクト性、クラス、ボックスを個別に予測する**アンカーフリーかつデカップルされた** 検出**ヘッド** （YOLOv8/YOLO11と同様）です。YOLOEは、オープンボキャブラリー検出を可能にする3つの新しいモジュールを導入しています。
+
+  * **再パラメータ化可能な領域-テキストアライメント (RepRTA)** : 小規模な補助ネットワークを通じてテキスト[埋め込み](https://www.ultralytics.com/glossary/embeddings)（CLIPなど）を改良することで、**テキストプロンプトによる検出** をサポートします。推論時にはこのネットワークがメインモデルに折り畳まれるため、オーバーヘッドはゼロです。これにより、YOLOEはランタイムのペナルティなしで、任意のテキストラベル付きオブジェクト（未見の「信号機」など）を検出します。
+
+  * **セマンティック活性化ビジュアルプロンプトエンコーダー (SAVPE)** : 軽量な埋め込みブランチを通じて**ビジュアルプロンプトによる検出** を実現します。参照画像が与えられると、SAVPEはセマンティックおよび活性化特徴をエンコードし、モデルが視覚的に類似したオブジェクトを検出するように条件付けを行います。これはロゴや特定の部品に役立つワンショット検出機能です。
+
+  * **レイジー領域プロンプトコントラスト (LRPC)** : **プロンプトフリーモード** において、YOLOEは大規模なボキャブラリー（LVISおよびObjects365の1200以上のカテゴリー）でトレーニングされた内部埋め込みを使用してオープンセット認識を実行します。外部プロンプトやエンコーダーなしで、YOLOEは埋め込み類似度ルックアップを通じてオブジェクトを識別し、推論時に大規模なラベル空間を効率的に処理します。
+
+
+
+
+さらに、YOLOEは検出ヘッドをマスク予測ブランチで拡張することで（YOLACTやYOLOv8-Segと同様）、最小限のオーバーヘッドでリアルタイムの**インスタンスセグメンテーション** を統合しています。
+
+重要な点として、YOLOEのオープンワールドモジュールは、通常のクローズドセットYOLOとして使用する場合、**推論コストを一切発生させません** 。トレーニング後、YOLOEのパラメータは標準的なYOLOヘッドに再パラメータ化可能であり、FLOPと速度が同一（[YOLO11](/ja/models/yolo11)と完全に一致など）に保たれます。
+
+## Link to this section利用可能なモデル、サポートされているタスク、および動作モード#
+
+このセクションでは、特定の事前学習済み重みを持つ利用可能なモデル、それらがサポートするタスク、および [推論](/ja/modes/predict)、[検証](/ja/modes/val)、[学習](/ja/modes/train)、[エクスポート](/ja/modes/export) といったさまざまな動作モードとの互換性について詳しく説明します。サポートされているモードは ✅、サポートされていないモードは ❌ で示されます。
+
+### Link to this sectionテキスト/ビジュアルプロンプトモデル#
+
+モデルタイプ| 事前学習済みウェイト| サポートされるタスク| 推論| バリデーション| トレーニング| エクスポート  
+---|---|---|---|---|---|---  
+YOLOE-11S| [yoloe-11s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11s-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11M| [yoloe-11m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11m-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11L| [yoloe-11l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11l-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8S| [yoloe-v8s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8s-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8M| [yoloe-v8m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8m-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8L| [yoloe-v8l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8l-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26N| [yoloe-26n-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26S| [yoloe-26s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26s-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26M| [yoloe-26m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26m-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26L| [yoloe-26l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26l-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26X| [yoloe-26x-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26x-seg.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+  
+### Link to this sectionプロンプトフリーモデル#
+
+モデルタイプ| 事前学習済みウェイト| サポートされるタスク| 推論| バリデーション| トレーニング| エクスポート  
+---|---|---|---|---|---|---  
+YOLOE-11S-PF| [yoloe-11s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11s-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11M-PF| [yoloe-11m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11m-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11L-PF| [yoloe-11l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11l-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8S-PF| [yoloe-v8s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8s-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8M-PF| [yoloe-v8m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8m-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8L-PF| [yoloe-v8l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8l-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26N-PF| [yoloe-26n-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26S-PF| [yoloe-26s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26s-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26M-PF| [yoloe-26m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26m-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26L-PF| [yoloe-26l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26l-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26X-PF| [yoloe-26x-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26x-seg-pf.pt)| [インスタンスセグメンテーション](/ja/tasks/segment)| ✅| ✅| ✅| ✅  
+  
+YOLOE-26の性能
+
+YOLOE-26モデルの詳細なパフォーマンスベンチマークについては、[YOLO26ドキュメント](/ja/models/yolo26#yoloe-26-open-vocabulary-detection-and-segmentation)を参照してください。
+
+## Link to this section使用例#
+
+YOLOEモデルは、Pythonアプリケーションに簡単に統合できます。Ultralyticsは、開発を効率化するために使いやすい[Python API](/ja/usage/python)および[CLIコマンド](/ja/usage/cli)を提供しています。
+
+### Link to this section学習の使用方法#
+
+#### Link to this sectionカスタムデータセットでのファインチューニング#
+
+任意の事前トレーニング済みYOLOEモデルを、検出およびインスタンスセグメンテーションタスクの両方のために、カスタムYOLOデータセットでファインチューニングできます。
+
+  
+
+
+  
+**Watch:** How to Train YOLOE on Car Parts Segmentation Dataset | Open-Vocabulary Model, Prediction & Export 🚀 
+
+例
+
+**インスタンスセグメンテーション**
+
+Fine-tuning a YOLOE pretrained checkpoint mostly follows the [standard YOLO training procedure](/ja/modes/train). The key difference is explicitly passing `YOLOEPESegTrainer` as the `trainer` parameter to `model.train()`:
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer
+    
+    model = YOLOE("yoloe-26s-seg.pt")
+    
+    # Fine-tune on your segmentation dataset
+    results = model.train(
+        data="coco128-seg.yaml",  # Segmentation dataset
+        epochs=80,
+        patience=10,
+        trainer=YOLOEPESegTrainer,  # <- Important: use segmentation trainer
+    )
+
+**オブジェクト検出**
+
+All pretrained YOLOE models perform instance segmentation by default. To use these pretrained checkpoints for training a detection model, initialize a detection model from scratch using the YAML configuration, then load the pretrained segmentation checkpoint of the same scale. Note that we use `YOLOEPETrainer` instead of `YOLOEPESegTrainer` since we're training a detection model:
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOEPETrainer
+    
+    # Initialize a detection model from a config
+    model = YOLOE("yoloe-26s.yaml")
+    
+    # Load weights from a pretrained segmentation checkpoint (same scale)
+    model.load("yoloe-26s-seg.pt")
+    
+    # Fine-tune on your detection dataset
+    results = model.train(
+        data="coco128.yaml",  # Detection dataset
+        epochs=80,
+        patience=10,
+        trainer=YOLOEPETrainer,  # <- Important: use detection trainer
+    )
+
+### Link to this sectionPredictの使用方法#
+
+YOLOEは、テキストベースおよびビジュアルプロンプトの両方をサポートしています。プロンプトの使用は簡単で、以下に示すように`predict`メソッドを通じて渡すだけです。
+
+例
+
+テキストプロンプトを使用すると、テキストによる説明を通じて検出したいクラスを指定できます。次のコードは、YOLOEを使用して画像内の人物とバスを検出する方法を示しています。
+    
+    
+    from ultralytics import YOLOE
+    
+    # Initialize a YOLOE model
+    model = YOLOE("yoloe-26l-seg.pt")  # or yoloe-26s/m-seg.pt for different sizes
+    
+    # Set text prompt to detect person and bus. You only need to do this once after you load the model.
+    model.set_classes(["person", "bus"])
+    
+    # Run detection on the given image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+### Link to this sectionValの使用方法#
+
+データセットに対するモデルの検証は、次のように効率化されています:
+
+例
+    
+    
+    from ultralytics import YOLOE
+    
+    # Create a YOLOE model
+    model = YOLOE("yoloe-26l-seg.pt")  # or yoloe-26s/m-seg.pt for different sizes
+    
+    # Conduct model validation on the COCO128-seg example dataset
+    metrics = model.val(data="coco128-seg.yaml")
+
+### Link to this sectionエクスポートの使用#
+
+エクスポートプロセスは他のYOLOモデルと同様ですが、テキストプロンプトとビジュアルプロンプトを処理するための柔軟性が追加されています。
+
+エクスポートされたモデルは静的です
+
+Classes configured with `set_classes()` (or via `refer_image` for visual prompts) are baked into the exported weights. Once exported, the model can no longer accept new prompts: calling `set_classes()` or passing `visual_prompts=...` to `predict()` on a loaded export will fail. To change the detected classes, re-export from the original `.pt` checkpoint with the new prompts configured. The exported file behaves like a standard YOLO detector and can also be loaded with `YOLO()` instead of `YOLOE()`.
+
+例
+    
+    
+    from ultralytics import YOLOE
+    
+    # Select yoloe-26s/m-seg.pt for different sizes
+    model = YOLOE("yoloe-26l-seg.pt")
+    
+    # Configure the set_classes() before exporting the model
+    model.set_classes(["person", "bus"])
+    
+    export_model = model.export(format="onnx")
+    model = YOLOE(export_model)
+    
+    # Run detection on the given image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+### Link to this section公式モデルのトレーニング#
+
+#### Link to this sectionデータセットの準備#
+
+注意
+
+公式のYOLOEモデルの学習には、学習データに対するセグメントアノテーションが必要です。データセットをセグメントアノテーションに変換するための[公式チーム提供のスクリプト](https://github.com/THU-MIG/yoloe/blob/main/tools/generate_sam_masks.py)はこちらです（[SAM2.1モデル](/ja/models/sam-2)を使用）。または、公式チームが提供する以下の表から、`Processed Segment Annotations`を直接ダウンロードすることもできます。
+
+  * 学習データ
+
+
+
+データセット| タイプ| サンプル| ボックス| Raw Detection Annotations| Processed Segment Annotations  
+---|---|---|---|---|---  
+[Objects365v1](https://opendatalab.com/OpenDataLab/Objects365_v1)| 検出| 609k| 9621k| [objects365_train.json](https://opendatalab.com/OpenDataLab/Objects365_v1)| [objects365_train_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/objects365_train_segm.json)  
+[GQA](https://cs.stanford.edu/people/dorarad/gqa/about.html)| [グラウンディング](https://www.ultralytics.com/glossary/grounding)| 621k| 3681k| [final_mixed_train_no_coco.json](https://huggingface.co/GLIPModel/GLIP/resolve/main/mdetr_annotations/final_mixed_train_no_coco.json)| [final_mixed_train_no_coco_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/final_mixed_train_no_coco_segm.json)  
+[Flickr30k](https://shannon.cs.illinois.edu/DenotationGraph/)| Grounding| 149k| 641k| [final_flickr_separateGT_train.json](https://huggingface.co/GLIPModel/GLIP/resolve/main/mdetr_annotations/final_flickr_separateGT_train.json)| [final_flickr_separateGT_train_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/final_flickr_separateGT_train_segm.json)  
+  
+  * 検証データ
+
+
+
+データセット| タイプ| アノテーションファイル  
+---|---|---  
+[LVIS minival](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/lvis.yaml)| 検出| [minival.txt](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/lvis.yaml)  
+  
+#### Link to this sectionゼロからのトレーニングを開始する#
+
+注意
+
+`Visual Prompt`モデルは、十分なトレーニングを受けた`Text Prompt`モデルに基づいてファインチューニングされます。
+
+例
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOESegTrainerFromScratch
+    
+    # Option 1: Use Python dictionary
+    data = dict(
+        train=dict(
+            yolo_data=["Objects365.yaml"],
+            grounding_data=[
+                dict(
+                    img_path="flickr/full_images/",
+                    json_file="flickr/annotations/final_flickr_separateGT_train_segm.json",
+                ),
+                dict(
+                    img_path="mixed_grounding/gqa/images",
+                    json_file="mixed_grounding/annotations/final_mixed_train_no_coco_segm.json",
+                ),
+            ],
+        ),
+        val=dict(yolo_data=["lvis.yaml"]),
+    )
+    
+    # Option 2: Use YAML file (yoloe_data.yaml)
+    # train:
+    #   yolo_data:
+    #     - Objects365.yaml
+    #   grounding_data:
+    #     - img_path: flickr/full_images/
+    #       json_file: flickr/annotations/final_flickr_separateGT_train_segm.json
+    #     - img_path: mixed_grounding/gqa/images
+    #       json_file: mixed_grounding/annotations/final_mixed_train_no_coco_segm.json
+    # val:
+    #   yolo_data:
+    #     - lvis.yaml
+    
+    model = YOLOE("yoloe-26l-seg.yaml")
+    model.train(
+        data=data,  # or data="yoloe_data.yaml" if using YAML file
+        batch=128,
+        epochs=30,
+        close_mosaic=2,
+        optimizer="AdamW",
+        lr0=2e-3,
+        warmup_bias_lr=0.0,
+        weight_decay=0.025,
+        momentum=0.9,
+        workers=4,
+        trainer=YOLOESegTrainerFromScratch,
+        device="0,1,2,3,4,5,6,7",
+    )
+
+## Link to this sectionYOLOEのパフォーマンス比較#
+
+YOLOEは、速度やモデルサイズを損なうことなく、COCOやLVISなどの標準的なベンチマークにおいて、クローズドセットのYOLOモデルと同等またはそれ以上の精度を実現します。以下の表は、YOLOE-L（YOLO11ベース）およびYOLOE26-L（[YOLO26](/ja/models/yolo26)ベース）と、それに対応するクローズドセットモデルを比較したものです。
+
+モデル| COCO mAP50-95| LVIS mAP50-95| 推論速度 (T4)| パラメータ| GFLOPs (640px)  
+---|---|---|---|---|---  
+**YOLOv8-L** (クローズドセット)| 52.9%| -| **9.06 ms** (110 FPS)| 43.7 M| 165.2 B  
+**YOLO11-L** (クローズドセット)| 53.5%| -| **6.2 ms** (161 FPS)| 26.2 M| 86.9 B  
+**YOLOE-L** (オープンボキャブラリー)| 52.6%| 35.2%| **6.2 ms** (161 FPS)| 26.2 M| 86.9 B†  
+**YOLOE26-L** (オープンボキャブラリー)| -| 36.8%| **6.2 ms** (161 FPS)| 32.3 M| 88.3 B†  
+  
+† _YOLOE-LはYOLO11-Lのアーキテクチャを共有し、YOLOE26-LはYOLO26-Lのアーキテクチャを共有しているため、推論速度とGFLOPsは同等です。_
+
+YOLOE26-Lは、T4 GPU上で640×640の画像を**6.2 ms (161 FPS)**で処理し、**32.3Mのパラメータ** と**88.3BのFLOPs**で**36.8%のLVIS mAP** を達成します。これは、同じ推論速度を維持しながら、YOLOE-Lの**35.2%のLVIS mAP** から向上したものです。重要な点として、YOLOEのオープンボキャブラリーモジュールには**推論コストがかからない** ため、**「ただ飯はない（no free lunch trade-off）」**設計が実証されています。
+
+ゼロショットタスクにおいて、YOLOE26は以前のオープンボキャブラリー検出器を大幅に上回ります。LVISでは、YOLOE26-Sは**29.9% mAP** を達成し、YOLO-World-Sを**+11.4 AP**上回ります。一方、YOLOE26-Lは** 36.8% mAP**を達成し、YOLO-World-Lを** +10.0 AP**上回ります。YOLOE26はT4 GPU上で** 161 FPS**の効率的な推論を維持しており、リアルタイムのオープンボキャブラリーアプリケーションに最適です。
+
+注意
+
+**ベンチマーク条件:** YOLOEの結果は、Objects365、GoldG、LVISで事前学習し、その後COCOでファインチューニングまたは評価されたモデルに基づいています。YOLOv8に対するYOLOEのわずかなmAPの優位性は、広範な事前学習によるものです。このオープンボキャブラリートレーニングがない場合、YOLOEは同サイズのYOLOモデルと同等であり、パフォーマンスを犠牲にすることなくSOTAの精度とオープンワールドの柔軟性を実現していることが証明されています。
+
+## Link to this section過去のモデルとの比較#
+
+YOLOEは、従来のYOLOモデルやオープンボキャブラリー検出器と比較して、注目すべき進歩をもたらしています:
+
+  * **YOLOE vs YOLOv5:** [YOLOv5](/ja/models/yolov5)は優れた速度と精度のバランスを提供していましたが、新しいクラスのために再トレーニングが必要で、アンカーベースのヘッドを使用していました。対照的に、YOLOEは**アンカーフリー** であり、新しいクラスを動的に検出します。YOLOEはYOLOv8の改善を基にしており、YOLOv5と異なり、より高い精度（COCOでYOLOv5の約50% mAPに対し52.6%）を実現し、インスタンスセグメンテーションを統合しています。
+
+  * **YOLOE vs YOLOv8:** YOLOEは[YOLOv8](/ja/models/yolov8)の再設計されたアーキテクチャを拡張し、同等以上の精度（YOLOv8-Lの約44Mパラメータで52.9%に対し、**約26Mパラメータで52.6% mAP** ）を実現しています。より強力な事前学習により、トレーニング時間を大幅に短縮しています。主な進歩はYOLOEの**オープンワールド機能** であり、YOLOv8のクローズドセット設計とは異なり、プロンプトを通じて未知のオブジェクト（例：「**電動キックボード** 」や「**ピースサイン** 」）を検出できます。
+
+  * **YOLOE vs YOLO11:** [YOLO11](/ja/models/yolo11)は、強化された効率と少ないパラメータ数（約22%削減）でYOLOv8を改良しています。YOLOEはこれらの利点を直接継承し、YOLO11の推論速度とパラメータ数（約26Mパラメータ）に一致させながら、**オープンボキャブラリー検出とセグメンテーション** を追加しています。クローズドセットのシナリオでは、YOLOEはYOLO11と同等ですが、重要な点として、未知のクラスを検出する適応性を追加しており、速度を犠牲にすることなく**YOLO11 + オープンワールド機能** を実現しています。
+
+  * **YOLOE26 vs YOLOE (YOLO11ベース):** YOLOE26は[YOLO26](/ja/models/yolo26)のアーキテクチャに基づいて構築されており、より高速な推論のためにNMSフリーのエンドツーエンド設計を継承しています。LVISにおいて、YOLOE26-Lは**36.8% mAP** を達成し、YOLOE-Lの**35.2% mAP** から向上しています。YOLOE26は、YOLOEの3つのモデルスケール（S/M/L）と比較して5つすべてのスケール（N/S/M/L/X）を提供し、さまざまな展開シナリオに対してより高い柔軟性を提供します。
+
+  * **YOLOE26 vs 以前のオープンボキャブラリー検出器:** 初期のオープンボキャブラリーモデル（GLIP、OWL-ViT、[YOLO-World](/ja/models/yolo-world)）は視覚言語[トランスフォーマー](https://www.ultralytics.com/glossary/transformer)に大きく依存しており、推論が遅くなっていました。LVISにおいて、YOLOE26-Sは**29.9% mAP** （YOLO-World-Sに対し**+11.4 AP**）、YOLOE26-Lは**36.8% mAP** （YOLO-World-Lに対し**+10.0 AP**）を達成しながら、T4 GPU上で**161 FPS** のリアルタイム推論を維持しています。トランスフォーマーベースの手法（GLIPなど）と比較して、YOLOE26は数桁高速な推論を提供し、オープンセット検出における精度と効率のギャップを効果的に埋めています。
+
+
+
+
+要約すると、YOLOEとYOLOE26はYOLOの定評ある速度と効率を維持し、前身モデルの精度を上回り、セグメンテーションを統合し、強力なオープンワールド検出を導入しています。YOLOE26はYOLO26のNMSフリーのエンドツーエンド推論でアーキテクチャをさらに進化させており、リアルタイムのオープンボキャブラリーアプリケーションに最適です。
+
+## Link to this section使用事例とアプリケーション#
+
+YOLOEのオープンボキャブラリー検出とセグメンテーションは、従来の固定クラスモデルを超えた多様なアプリケーションを可能にします:
+
+  * **オープンワールド物体検出:** [ロボティクス](https://www.ultralytics.com/blog/understanding-the-integration-of-computer-vision-in-robotics)のような動的なシナリオに最適です。ロボットはプロンプトを使用して以前は見知らぬオブジェクトを認識したり、[セキュリティシステム](https://www.ultralytics.com/blog/computer-vision-for-theft-prevention-enhancing-security)が再トレーニングなしで新しい脅威（危険物など）に迅速に適応したりできます。
+
+  * **フューショットおよびワンショット検出:** ビジュアルプロンプト（SAVPE）を使用して、YOLOEは単一の参照画像から新しいオブジェクトを迅速に学習します。これは[工業検査](https://www.ultralytics.com/blog/computer-vision-in-manufacturing-improving-production-and-quality)（部品や欠陥の即時特定）や**カスタム監視** に最適で、最小限のセットアップで視覚的な検索を可能にします。
+
+  * **大規模ボキャブラリーおよびロングテール認識:** 1000以上のクラスのボキャブラリーを備えたYOLOEは、[生物多様性モニタリング](https://www.ultralytics.com/blog/ai-in-wildlife-conservation)（希少種の検出）、**美術館のコレクション** 、[小売在庫管理](https://www.ultralytics.com/blog/ai-for-smarter-retail-inventory-management)、または**eコマース** などのタスクに優れており、クラスごとの広範なトレーニングなしで多くのクラスを確実に識別します。
+
+  * **インタラクティブな検出とセグメンテーション:** YOLOEは、自然な入力（テキストまたはビジュアルプロンプト）によって駆動される、**検索可能なビデオ/画像検索** 、**拡張現実（AR）** 、直感的な**画像編集** などのリアルタイムのインタラクティブアプリケーションをサポートします。ユーザーはセグメンテーションマスクを使用して、オブジェクトを正確に分離、識別、または編集できます。
+
+  * **自動データラベリングとブートストラップ:** YOLOEは、初期のバウンディングボックスとセグメンテーションのアノテーションを提供することで、迅速なデータセット作成を促進し、人間のラベリング作業を大幅に削減します。特に**大規模メディアコレクションの分析** において価値があり、存在するオブジェクトを自動識別して、特殊なモデルをより高速に構築するのに役立ちます。
+
+  * **あらゆるオブジェクトのセグメンテーション:** プロンプトを通じて任意のオブジェクトにセグメンテーション機能を拡張します。これは、[医療画像](https://www.ultralytics.com/blog/ai-and-radiology-a-new-era-of-precision-and-efficiency)、**顕微鏡検査** 、または[衛星画像分析](https://www.ultralytics.com/blog/using-computer-vision-to-analyze-satellite-imagery)に特に有益であり、特殊な事前学習モデルなしで構造を自動的に識別して正確にセグメント化します。[SAM](/ja/models/sam)のようなモデルとは異なり、YOLOEは自動的にオブジェクトを同時に認識およびセグメント化し、**コンテンツ作成** や**シーン理解** などのタスクを支援します。
+
+
+
+
+これらすべての使用事例において、YOLOEの核心的な利点は**汎用性** であり、動的なシナリオ全体で検出、認識、セグメンテーションのための統合モデルを提供します。その効率性は、リソースが制限されたデバイスでのリアルタイムパフォーマンスを保証し、ロボティクス、[自動運転](https://www.ultralytics.com/blog/ai-in-self-driving-cars)、防衛などに最適です。
+
+ヒント
+
+ニーズに応じてYOLOEのモードを選択してください:
+
+  * **クローズドセットモード:** 固定クラスのタスク用（最高速度と精度）。
+  * **プロンプトモード:** テキストまたはビジュアルプロンプトで新しいオブジェクトを迅速に追加。
+  * **プロンプトフリーオープンセットモード:** 多くのカテゴリにわたる汎用検出（カタログ作成や探索に最適）。
+
+
+
+多くの場合、モードを組み合わせる（プロンプトフリーの探索の後にターゲットを絞ったプロンプトを行うなど）ことで、YOLOEの可能性を最大限に引き出すことができます。
+
+## Link to this sectionトレーニングと推論#
+
+YOLOEは、他のYOLOモデル（YOLOv8、YOLO-World）と同様に、[Ultralytics Python API](/ja/usage/python)および[CLI](/ja/usage/cli)とシームレスに統合されます。開始方法は次のとおりです:
+
+YOLOEによるトレーニングと推論
+    
+    
+    from ultralytics import YOLO
+    
+    # Load pretrained YOLOE model and train on custom data
+    model = YOLO("yoloe-26s-seg.pt")
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+    
+    # Run inference using text prompts ("person", "bus")
+    model.set_classes(["person", "bus"])
+    results = model.predict(source="test_images/street.jpg")
+    results[0].save()  # save annotated output
+
+YOLOEはデフォルトでは標準の検出器として動作しますが、クラス（`set_classes`）を指定することで簡単にプロンプト付き検出に切り替わります。結果にはバウンディングボックス、マスク、ラベルが含まれます。
+
+### Link to this sectionその他のサポートされているタスク#
+
+  * **バリデーション:** `model.val()`または`yolo val`を使用して、精度を簡単に評価できます。
+  * **エクスポート:** YOLOEモデルをONNXやTensorRTなどにエクスポート（`model.export()`）し、展開を容易にします。
+  * **トラッキング:** YOLOEは統合時にオブジェクトトラッキング（`yolo track`）をサポートしており、ビデオ内のプロンプトされたクラスを追跡するのに役立ちます。
+
+
+
+注意
+
+YOLOEは推論結果（`results[0].masks`）に**セグメンテーションマスク** を自動的に含めるため、個別のモデルを必要とせずにオブジェクト抽出や測定などのピクセル精度のタスクを簡素化します。
+
+## Link to this sectionはじめに#
+
+以下の手順に従って、UltralyticsでYOLOEを素早くセットアップします:
+
+  1. **インストール** : Ultralyticsパッケージをインストールまたは更新します:
+         
+         pip install -U ultralytics
+
+  2. **YOLOE重みのダウンロード** : 事前学習済みのYOLOEモデル（YOLOE-v8-S/L、YOLOE-11バリアントなど）は、YOLOE GitHubリリースから入手できます。Ultralytics YOLOクラスにロードするには、目的の`.pt`ファイルをダウンロードするだけです。
+
+  3. **ハードウェア要件** :
+
+     * **推論** : 推奨GPU（4-8GB以上のVRAMを搭載したNVIDIA）。小規模モデルは、エッジGPU（[Jetson](/ja/guides/nvidia-jetson)など）やCPUでより低い解像度で効率的に動作します。コンパクトなワークステーションでの高性能推論については、[NVIDIA DGX Spark](/ja/guides/nvidia-dgx-spark)ガイドをご覧ください。
+     * **トレーニング** : カスタムデータでのYOLOEのファインチューニングには、通常1つのGPUで十分です。作成者が使用した広範なオープンボキャブラリー事前学習（LVIS/Objects365）には、多大な計算能力（8× RTX 4090 GPU）が必要でした。
+  4. **設定** : YOLOEの設定には標準のUltralytics YAMLファイルを使用します。デフォルト設定（`yoloe-26s-seg.yaml`など）で通常は十分ですが、必要に応じてバックボーン、クラス、または画像サイズを変更できます。
+
+  5. **YOLOEの実行** :
+
+     * **クイック推論** （プロンプトフリー）:
+           
+           yolo predict model=yoloe-26s-seg-pf.pt source="image.jpg"
+
+     * **プロンプト付き検出** （テキストプロンプトの例）:
+           
+           from ultralytics import YOLO
+           
+           model = YOLO("yoloe-26s-seg.pt")
+           model.set_classes(["bowl", "apple"])
+           results = model.predict("kitchen.jpg")
+           results[0].save()
+
+  6. **統合のヒント** :
+
+     * **クラス名** : デフォルトのYOLOE出力はLVISカテゴリを使用します。`set_classes()`を使用して独自のラベルを指定してください。
+     * **速度** : プロンプトを使用しない限り、YOLOEにオーバーヘッドはありません。テキストプロンプトの影響は最小限であり、ビジュアルプロンプトの影響はわずかに大きくなります。
+     * **NMSの動作** : YOLOEは予測中に自動的に`agnostic_nms=True`を使用し、クラス間で重なり合うボックスをマージします。これにより、YOLOEの大規模ボキャブラリー（1200以上のLVISクラス）内で同じオブジェクトが複数のカテゴリに一致した際に、重複した検出を防ぎます。`agnostic_nms=False`を明示的に渡すことで、これをオーバーライドできます。
+     * **バッチ推論** : 直接サポートされています（`model.predict([img1, img2])`）。画像固有のプロンプトについては、画像を個別に実行してください。
+
+
+
+[Ultralyticsドキュメント](https://docs.ultralytics.com/)は、さらなるリソースを提供します。YOLOEを使用すると、使い慣れたYOLOエコシステム内で強力なオープンワールド機能を簡単に探索できます。
+
+ヒント
+
+**プロのヒント:** YOLOEのゼロショット精度を最大化するには、ゼロからトレーニングするのではなく、提供されたチェックポイントからファインチューニングしてください。検出精度を向上させるには、一般的なトレーニングラベル（LVISカテゴリを参照）と一致するプロンプト単語を使用してください。
+
+## Link to this section引用と謝辞#
+
+YOLOEがあなたの研究やプロジェクトに貢献した場合は、**清華大学** の**Ao Wang、Lihao Liu、Hui Chen、Zijia Lin、Jungong Han、およびGuiguang Ding** による元の論文を引用してください:
+
+引用
+    
+    
+    @misc{wang2025yoloerealtimeseeing,
+          title={YOLOE: Real-Time Seeing Anything},
+          author={Ao Wang and Lihao Liu and Hui Chen and Zijia Lin and Jungong Han and Guiguang Ding},
+          year={2025},
+          eprint={2503.07465},
+          archivePrefix={arXiv},
+          primaryClass={cs.CV},
+          url={https://arxiv.org/abs/2503.07465},
+    }
+
+詳細な読書については、元のYOLOE論文が[arXiv](https://arxiv.org/html/2503.07465v1)で入手可能です。プロジェクトのソースコードと追加リソースには、彼らの[GitHubリポジトリ](https://github.com/THU-MIG/yoloe)からアクセスできます。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionYOLOEとYOLO-Worldの違いは何ですか？#
+
+YOLOEと[YOLO-World](/ja/models/yolo-world)の両方がオープンボキャブラリー検出を可能にしますが、YOLOEにはいくつかの利点があります。YOLOEはLVISでYOLO-Worldv2よりも3倍少ないトレーニングリソースを使用し、1.4倍高速に実行しながら、精度で+3.5 APを達成しています。YOLOEは3つのプロンプトモード（テキスト、ビジュアル、内部ボキャブラリー）もサポートしていますが、YOLO-Worldは主にテキストプロンプトに焦点を当てています。さらに、YOLOEには組み込みの[インスタンスセグメンテーション](https://www.ultralytics.com/blog/what-is-instance-segmentation-a-quick-guide)機能が含まれており、追加のオーバーヘッドなしで検出されたオブジェクトにピクセル精度のマスクを提供します。
+
+### Link to this sectionYOLOEを通常のYOLOモデルとして使用できますか？#
+
+はい、YOLOEはパフォーマンスの低下なしに標準のYOLOモデルとまったく同様に機能します。クローズドセットモード（プロンプトなし）で使用される場合、YOLOEのオープンボキャブラリーモジュールは標準の検出ヘッドに再パラメータ化され、同等のYOLO11モデルと同一の速度と精度を実現します。これにより、YOLOEは非常に汎用性が高く、最大の速度のために従来の検出器として使用し、必要なときにのみオープンボキャブラリーモードに切り替えることができます。
+
+### Link to this sectionYOLOEではどのような種類のプロンプトを使用できますか？#
+
+YOLOEは3種類のプロンプトをサポートしています:
+
+  1. **テキストプロンプト** : 自然言語を使用してオブジェクトクラスを指定します（例：「人」、「信号機」、「電動キックボード」）
+  2. **ビジュアルプロンプト** : 検出したいオブジェクトの参照画像を提供します
+  3. **内部ボキャブラリー** : 外部プロンプトなしでYOLOEの組み込みボキャブラリー（1200以上のカテゴリ）を使用します
+
+
+
+この柔軟性により、モデルを再トレーニングすることなくYOLOEをさまざまなシナリオに適応させることができ、検出要件が頻繁に変更される動的な環境で特に役立ちます。
+
+### Link to this sectionYOLOEはインスタンスセグメンテーションをどのように処理しますか？#
+
+YOLOEは、マスク予測ブランチで検出ヘッドを拡張することにより、インスタンスセグメンテーションをアーキテクチャに直接統合しています。このアプローチはYOLOv8-Segと似ていますが、プロンプトで指定されたあらゆるオブジェクトクラスに対して機能します。セグメンテーションマスクは推論結果に自動的に含まれ、`results[0].masks`を介してアクセスできます。この統合されたアプローチにより、検出モデルとセグメンテーションモデルを個別に用意する必要がなくなり、ピクセル単位の正確なオブジェクト境界を必要とするアプリケーションのワークフローを効率化します。
+
+### Link to this sectionYOLOEはカスタムプロンプトを使用した推論をどのように処理しますか？#
+
+[YOLO-World](/ja/models/yolo-world)と同様に、YOLOEはオフライン語彙を利用して効率を高める「プロンプトによる検出（prompt-then-detect）」戦略をサポートしています。キャプションや特定のオブジェクトカテゴリなどのカスタムプロンプトは、事前にエンコードされ、オフライン語彙埋め込みとして保存されます。このアプローチにより、再トレーニングを必要とせずに検出プロセスが効率化されます。モデル内でこれらのプロンプトを動的に設定することで、特定の検出タスクに合わせてカスタマイズできます：
+    
+    
+    from ultralytics import YOLO
+    
+    # Initialize a YOLOE model
+    model = YOLO("yoloe-26s-seg.pt")
+    
+    # Define custom classes
+    model.set_classes(["person", "bus"])
+    
+    # Execute prediction on an image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/yoloe.md)
+
+[GLglenn-jocher14](https://github.com/glenn-jocher)[RIRizwanMunawar10](https://github.com/RizwanMunawar)[Y-Y-T-G7](https://github.com/Y-T-G)[LALaughing-q5](https://github.com/Laughing-q)[RAraimbekovm3](https://github.com/raimbekovm)[SHShuaiLYU2](https://github.com/ShuaiLYU)[ONonuralpszr2](https://github.com/onuralpszr)RORonald Eddy Jr1[FCfcakyon1](https://github.com/fcakyon)[PDpderrenger1](https://github.com/pderrenger)[PIpicsalex1](https://github.com/picsalex)WIWillie Maddox1[JSJShengP1](https://github.com/JShengP)[LEleonnil1](https://github.com/leonnil)
+
+作成日 2025年3月19日更新日 3 日前
+
+## コメント
+
+このページの内容
+
+AIで探索

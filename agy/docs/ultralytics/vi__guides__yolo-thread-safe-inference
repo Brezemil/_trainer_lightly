@@ -1,0 +1,218 @@
+---
+source_url: https://docs.ultralytics.com/vi/guides/yolo-thread-safe-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+# Link to this sectionSuy luận an toàn đa luồng với các model YOLO#
+
+Chạy các model YOLO trong môi trường đa luồng đòi hỏi phải cân nhắc kỹ lưỡng để đảm bảo an toàn luồng (thread safety). Module `threading` của Python cho phép bạn chạy nhiều luồng đồng thời, nhưng khi sử dụng các model YOLO trên các luồng này, có những vấn đề quan trọng về an toàn mà bạn cần lưu ý. Trang này sẽ hướng dẫn bạn cách thực hiện suy luận model YOLO một cách an toàn với đa luồng.
+
+  
+
+
+  
+**Watch:** How to Perform Thread Safe Inference with Ultralytics YOLO Models in Python | Multi-Threading 🚀 
+
+## Link to this sectionTìm hiểu về cơ chế đa luồng (Threading) trong Python#
+
+Các luồng (threads) trong Python là một dạng song song cho phép chương trình của bạn thực thi nhiều tác vụ cùng một lúc. Tuy nhiên, Global Interpreter Lock (GIL) của Python có nghĩa là tại mỗi thời điểm chỉ có một luồng có thể thực thi bytecode của Python.
+
+![Single-thread vs multi-thread inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/single-vs-multi-thread-examples.avif)
+
+Mặc dù điều này nghe có vẻ là một hạn chế, nhưng các luồng vẫn có thể cung cấp tính đồng thời (concurrency), đặc biệt là đối với các tác vụ liên quan đến I/O hoặc khi sử dụng các tác vụ giải phóng GIL, chẳng hạn như các tác vụ được thực hiện bởi các thư viện C nền tảng của YOLO.
+
+## Link to this sectionSự nguy hiểm của việc chia sẻ instance model#
+
+Việc khởi tạo một model YOLO bên ngoài các luồng và chia sẻ instance này giữa nhiều luồng có thể dẫn đến điều kiện tranh đua (race conditions), nơi trạng thái nội bộ của model bị thay đổi không nhất quán do các truy cập đồng thời. Điều này đặc biệt gây vấn đề khi model hoặc các thành phần của nó nắm giữ trạng thái không được thiết kế để hoạt động an toàn trong môi trường đa luồng.
+
+### Link to this sectionVí dụ không an toàn về luồng: Sử dụng chung một instance model#
+
+Khi sử dụng luồng trong Python, điều quan trọng là phải nhận ra các mẫu có thể dẫn đến vấn đề đồng thời. Đây là điều bạn nên tránh: chia sẻ một instance model YOLO duy nhất cho nhiều luồng.
+    
+    
+    # Unsafe: Sharing a single model instance across threads
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate the model outside the thread
+    shared_model = YOLO("yolo26n.pt")
+    
+    def predict(image_path):
+        """Predicts objects in an image using a preloaded YOLO model, take path string to image as argument."""
+        results = shared_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that share the same model instance
+    Thread(target=predict, args=("image1.jpg",)).start()
+    Thread(target=predict, args=("image2.jpg",)).start()
+
+Trong ví dụ trên, `shared_model` được sử dụng bởi nhiều luồng, điều này có thể dẫn đến các kết quả không thể dự đoán trước vì hàm `predict` có thể được thực thi đồng thời bởi nhiều luồng.
+
+### Link to this sectionVí dụ không an toàn về luồng: Nhiều instance model#
+
+Tương tự, dưới đây là một mẫu không an toàn khi sử dụng nhiều instance model YOLO:
+    
+    
+    # Unsafe: Sharing multiple model instances across threads can still lead to issues
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate multiple models outside the thread
+    shared_model_1 = YOLO("yolo26n_1.pt")
+    shared_model_2 = YOLO("yolo26n_2.pt")
+    
+    def predict(model, image_path):
+        """Runs prediction on an image using a specified YOLO model, returning the results."""
+        results = model.predict(image_path)
+        # Process results
+    
+    # Starting threads with individual model instances
+    Thread(target=predict, args=(shared_model_1, "image1.jpg")).start()
+    Thread(target=predict, args=(shared_model_2, "image2.jpg")).start()
+
+Mặc dù có hai instance model riêng biệt, rủi ro về vấn đề đồng thời vẫn tồn tại. Nếu việc triển khai nội bộ của `YOLO` không an toàn với luồng, việc sử dụng các instance riêng biệt có thể không ngăn chặn được các điều kiện tranh đua, đặc biệt nếu các instance này chia sẻ bất kỳ tài nguyên hoặc trạng thái nền tảng nào không thuộc phạm vi của từng luồng (thread-local).
+
+## Link to this sectionSuy luận an toàn với đa luồng#
+
+Để thực hiện suy luận an toàn với đa luồng, bạn nên khởi tạo một model YOLO riêng biệt bên trong mỗi luồng. Điều này đảm bảo rằng mỗi luồng có instance model cô lập của riêng mình, loại bỏ rủi ro về điều kiện tranh đua.
+
+### Link to this sectionVí dụ an toàn với đa luồng#
+
+Đây là cách khởi tạo một model YOLO bên trong mỗi luồng để suy luận song song an toàn:
+    
+    
+    # Safe: Instantiating a single model inside each thread
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image using a new YOLO model instance in a thread-safe manner; takes image path as input."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that each have their own model instance
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Trong ví dụ này, mỗi luồng tạo ra instance `YOLO` riêng của nó. Điều này ngăn chặn bất kỳ luồng nào can thiệp vào trạng thái model của luồng khác, từ đó đảm bảo mỗi luồng thực hiện suy luận một cách an toàn mà không có các tương tác không mong muốn với các luồng còn lại.
+
+## Link to this sectionSử dụng decorator ThreadingLocked#
+
+Ultralytics cung cấp một decorator `ThreadingLocked` có thể được sử dụng để đảm bảo việc thực thi các hàm một cách an toàn với luồng. Decorator này sử dụng khóa (lock) để đảm bảo tại mỗi thời điểm chỉ có một luồng được phép thực thi hàm được gắn decorator.
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.utils import ThreadingLocked
+    
+    # Create a model instance
+    model = YOLO("yolo26n.pt")
+    
+    # Decorate the predict method to make it thread-safe
+    @ThreadingLocked()
+    def thread_safe_predict(image_path):
+        """Thread-safe prediction using a shared model instance."""
+        results = model.predict(image_path)
+        return results
+    
+    # Now you can safely call this function from multiple threads
+
+Decorator `ThreadingLocked` đặc biệt hữu ích khi bạn cần chia sẻ một instance model giữa các luồng nhưng muốn đảm bảo rằng chỉ một luồng có thể truy cập nó tại một thời điểm. Cách tiếp cận này có thể tiết kiệm bộ nhớ so với việc tạo một instance model mới cho mỗi luồng, nhưng nó có thể làm giảm tính đồng thời vì các luồng sẽ cần đợi khóa được giải phóng.
+
+## Link to this sectionKết luận#
+
+Khi sử dụng các model YOLO với `threading` của Python, hãy luôn khởi tạo các model của bạn bên trong luồng sẽ sử dụng chúng để đảm bảo an toàn. Thực tiễn này giúp tránh các điều kiện tranh đua và đảm bảo các tác vụ suy luận của bạn chạy một cách đáng tin cậy.
+
+Đối với các kịch bản nâng cao hơn và để tối ưu hóa hiệu suất suy luận đa luồng của bạn, hãy cân nhắc sử dụng tính song song dựa trên tiến trình (process-based parallelism) với [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) hoặc tận dụng hàng đợi tác vụ với các tiến trình worker chuyên biệt.
+
+## Link to this sectionCâu hỏi thường gặp#
+
+### Link to this sectionLàm thế nào tôi có thể tránh các điều kiện tranh đua khi sử dụng các model YOLO trong môi trường Python đa luồng?#
+
+Để ngăn chặn các điều kiện tranh đua khi sử dụng các model Ultralytics YOLO trong môi trường Python đa luồng, hãy khởi tạo một model YOLO riêng biệt bên trong mỗi luồng. Điều này đảm bảo mỗi luồng có instance model cô lập của riêng mình, tránh việc thay đổi trạng thái model đồng thời.
+
+Ví dụ:
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image in a thread-safe manner."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Để biết thêm thông tin về việc đảm bảo an toàn đa luồng, hãy truy cập Suy luận an toàn đa luồng với các model YOLO.
+
+### Link to this sectionĐâu là các phương pháp tốt nhất để chạy suy luận model YOLO đa luồng trong Python?#
+
+Để chạy suy luận model YOLO đa luồng một cách an toàn trong Python, hãy tuân thủ các phương pháp tốt nhất sau đây:
+
+  1. Khởi tạo các model YOLO bên trong mỗi luồng thay vì chia sẻ một instance model duy nhất giữa các luồng.
+  2. Sử dụng module `multiprocessing` của Python cho việc xử lý song song để tránh các vấn đề liên quan đến Global Interpreter Lock (GIL).
+  3. Giải phóng GIL bằng cách sử dụng các tác vụ được thực hiện bởi các thư viện C nền tảng của YOLO.
+  4. Cân nhắc sử dụng decorator `ThreadingLocked` cho các instance model dùng chung khi bộ nhớ là một vấn đề cần quan tâm.
+
+
+
+Ví dụ về việc khởi tạo model an toàn với luồng:
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Runs inference in a thread-safe manner with a new YOLO model instance."""
+        model = YOLO("yolo26n.pt")
+        results = model.predict(image_path)
+        # Process results
+    
+    # Initiate multiple threads
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Để biết thêm ngữ cảnh, hãy tham khảo phần Suy luận an toàn đa luồng.
+
+### Link to this sectionTại sao mỗi luồng nên có instance model YOLO riêng?#
+
+Mỗi luồng nên có instance model YOLO riêng để ngăn chặn các điều kiện tranh đua. Khi một instance model duy nhất được chia sẻ giữa nhiều luồng, các truy cập đồng thời có thể dẫn đến hành vi không dự đoán trước và thay đổi trạng thái nội bộ của model. Bằng cách sử dụng các instance riêng biệt, bạn đảm bảo sự cô lập luồng, giúp các tác vụ đa luồng của bạn đáng tin cậy và an toàn.
+
+Để có hướng dẫn chi tiết, hãy xem các phần Ví dụ không an toàn về luồng: Sử dụng chung một instance model và Ví dụ an toàn với đa luồng.
+
+### Link to this sectionGlobal Interpreter Lock (GIL) của Python ảnh hưởng như thế nào đến việc suy luận model YOLO?#
+
+Global Interpreter Lock (GIL) của Python chỉ cho phép một luồng thực thi bytecode Python tại một thời điểm, điều này có thể hạn chế hiệu suất của các tác vụ đa luồng nặng về CPU. Tuy nhiên, đối với các tác vụ liên quan đến I/O hoặc các quy trình sử dụng thư viện giải phóng GIL, như các thư viện C nền tảng của YOLO, bạn vẫn có thể đạt được tính đồng thời. Để có hiệu suất cao hơn, hãy cân nhắc sử dụng tính song song dựa trên tiến trình với module `multiprocessing` của Python.
+
+Để biết thêm về luồng trong Python, hãy xem phần Tìm hiểu về cơ chế đa luồng (Threading) trong Python.
+
+### Link to this sectionLiệu sử dụng tính song song dựa trên tiến trình có an toàn hơn so với luồng cho suy luận model YOLO?#
+
+Có, việc sử dụng module `multiprocessing` của Python an toàn hơn và thường hiệu quả hơn để chạy suy luận model YOLO song song. Tính song song dựa trên tiến trình tạo ra các không gian bộ nhớ riêng biệt, tránh được Global Interpreter Lock (GIL) và giảm thiểu rủi ro gặp phải các vấn đề đồng thời. Mỗi tiến trình sẽ hoạt động độc lập với instance model YOLO riêng của nó.
+
+Để biết thêm chi tiết về tính song song dựa trên tiến trình với các model YOLO, hãy tham khảo trang về Suy luận an toàn đa luồng.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+[GLglenn-jocher10](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+Đã tạo 12 thg 11, 2023Đã cập nhật 2 tuần trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

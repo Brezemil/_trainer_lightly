@@ -1,0 +1,506 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/yolo-data-augmentation
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-data-augmentation.md)
+
+# Link to this sectionUltralytics YOLOを使用したデータオーギュメンテーション#
+
+![YOLO data augmentation examples showing original and augmented images for training](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/albumentations-augmentation.avif)
+
+## Link to this sectionはじめに#
+
+[データオーギュメンテーション](https://www.ultralytics.com/glossary/data-augmentation)は、既存の画像に様々な変換を適用することでトレーニングデータセットを人工的に拡張する、コンピュータビジョンにおける重要な手法です。Ultralytics YOLOのような[ディープラーニング](https://www.ultralytics.com/glossary/deep-learning-dl)モデルをトレーニングする際、データオーギュメンテーションはモデルの堅牢性を向上させ、過学習を低減し、実世界のシナリオに対する汎化性能を高めるのに役立ちます。
+
+  
+
+
+  
+**Watch:** How to use Mosaic, MixUp & more Data Augmentations to help Ultralytics YOLO Models generalize better 🚀 
+
+### Link to this sectionデータオーギュメンテーションが重要な理由#
+
+データオーギュメンテーションは、コンピュータビジョンモデルのトレーニングにおいて、いくつかの重要な目的を果たします。
+
+  * **データセットの拡張** : 既存の画像のバリエーションを作成することで、新しいデータを収集することなく、効果的にトレーニングデータセットのサイズを増やすことができます。
+  * **汎化性能の向上** : モデルが様々な条件下で物体を認識することを学習し、実世界のアプリケーションにおいてより堅牢になります。
+  * **過学習の低減** : トレーニングデータに変動性を持たせることで、モデルが特定の画像特性を記憶する可能性を低くします。
+  * **パフォーマンスの強化** : 適切なオーギュメンテーションでトレーニングされたモデルは、通常、検証セットおよびテストセットにおいて優れた[精度](https://www.ultralytics.com/glossary/accuracy)を達成します。
+
+
+
+Ultralytics YOLOの実装は、包括的なオーギュメンテーション手法を提供しており、それぞれが特定の目的を果たし、様々な方法でモデルのパフォーマンスに貢献します。このガイドでは、各オーギュメンテーションパラメータを詳細に解説し、プロジェクトでそれらをいつ、どのように効果的に使用するかを理解する手助けをします。
+
+### Link to this section設定例#
+
+Python API、コマンドラインインターフェース（CLI）、または構成ファイルを使用して、各パラメータをカスタマイズできます。以下は、各メソッドでデータオーギュメンテーションを設定する方法の例です。
+
+構成ファイルの例
+    
+    
+    import albumentations as A
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Training with custom augmentation parameters
+    model.train(data="coco.yaml", epochs=100, hsv_h=0.03, hsv_s=0.6, hsv_v=0.5)
+    
+    # Training without any augmentations (disabled values omitted for clarity)
+    model.train(
+        data="coco.yaml",
+        epochs=100,
+        hsv_h=0.0,
+        hsv_s=0.0,
+        hsv_v=0.0,
+        translate=0.0,
+        scale=0.0,
+        fliplr=0.0,
+        mosaic=0.0,
+        erasing=0.0,
+        auto_augment=None,
+    )
+    
+    # Training with custom Albumentations transforms (Python API only)
+    custom_transforms = [
+        A.Blur(blur_limit=7, p=0.5),
+        A.CLAHE(clip_limit=4.0, p=0.5),
+    ]
+    model.train(data="coco.yaml", epochs=100, augmentations=custom_transforms)
+
+#### Link to this section構成ファイルの使用#
+
+You can define all training parameters, including augmentations, in a YAML configuration file (e.g., `train_custom.yaml`). The `mode` parameter is only required when using the CLI. This new YAML file will then override [the default one](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/default.yaml) located in the `ultralytics` package.
+    
+    
+    # train_custom.yaml
+    # 'mode' is required only for CLI usage
+    mode: train
+    data: coco8.yaml
+    model: yolo26n.pt
+    epochs: 100
+    hsv_h: 0.03
+    hsv_s: 0.6
+    hsv_v: 0.5
+
+次に、Python APIでトレーニングを開始します。
+
+学習例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a COCO-pretrained YOLO26n model
+    model = YOLO("yolo26n.pt")
+    
+    # Train the model with custom configuration
+    model.train(cfg="train_custom.yaml")
+
+## Link to this section色空間のオーギュメンテーション#
+
+### Link to this section色相調整 (`hsv_h`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0.015`
+  * **使用法** : 色の相互関係を維持しながら画像の色をシフトします。`hsv_h`ハイパーパラメータはシフトの大きさを定義し、最終的な調整値は`-hsv_h`から`hsv_h`の間でランダムに選択されます。例えば、`hsv_h=0.3`の場合、シフトは`-0.3`から`0.3`の範囲内でランダムに選択されます。`0.5`を超える値の場合、色相シフトはカラーホイールを一周するため、`0.5`から`-0.5`の間ではオーギュメンテーション結果は同じに見えます。
+  * **目的** : 照明条件が物体の見た目に劇的な影響を与える可能性がある屋外のシナリオで特に有用です。例えば、バナナは直射日光の下ではより黄色く見えますが、屋内ではより緑がかって見えることがあります。
+  * **Ultralyticsの実装** : [RandomHSV](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.RandomHSV)
+
+
+
+**`-0.5`**| **`-0.25`**| **`0.0`**| **`0.25`**| **`0.5`**  
+---|---|---|---|---  
+![Hue shift -0.5 augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_h_-0.5.avif)| ![Hue shift -0.25 augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_h_-0.25.avif)| ![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Hue shift 0.25 augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_h_0.25.avif)| ![Hue shift -0.5 augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_h_0.5.avif)  
+  
+### Link to this section彩度調整 (`hsv_s`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0.7`
+  * **使用法** : 画像内の色の鮮やかさを変更します。`hsv_s`ハイパーパラメータはシフトの大きさを定義し、最終的な調整値は`-hsv_s`から`hsv_s`の間でランダムに選択されます。例えば、`hsv_s=0.7`の場合、強度は`-0.7`から`0.7`の範囲内でランダムに選択されます。
+  * **目的** : モデルが様々な気象条件やカメラ設定に対応するのに役立ちます。例えば、赤い交通標識は晴れた日には非常に鮮やかに見えるかもしれませんが、霧の条件下ではくすんで色あせて見えることがあります。
+  * **Ultralyticsの実装** : [RandomHSV](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.RandomHSV)
+
+
+
+**`-1.0`**| **`-0.5`**| **`0.0`**| **`0.5`**| **`1.0`**  
+---|---|---|---|---  
+![Saturation -1.0 grayscale augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_s_-1.avif)| ![Saturation -0.5 augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_s_-0.5.avif)| ![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Saturation 0.5 augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_s_0.5.avif)| ![Saturation 1.0 vivid augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_s_1.avif)  
+  
+### Link to this section輝度調整 (`hsv_v`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0.4`
+  * **使用法** : 画像の明るさを変更します。`hsv_v`ハイパーパラメータはシフトの大きさを定義し、最終的な調整値は`-hsv_v`から`hsv_v`の間でランダムに選択されます。例えば、`hsv_v=0.4`の場合、強度は`-0.4`から`0.4`の範囲内でランダムに選択されます。
+  * **目的** : 異なる照明条件下で動作する必要があるモデルのトレーニングに不可欠です。例えば、赤いリンゴは日光の下では明るく見えるかもしれませんが、日陰ではずっと暗く見えることがあります。
+  * **Ultralyticsの実装** : [RandomHSV](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.RandomHSV)
+
+
+
+**`-1.0`**| **`-0.5`**| **`0.0`**| **`0.5`**| **`1.0`**  
+---|---|---|---|---  
+![Brightness -1.0 dark augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_v_-1.avif)| ![Brightness -0.5 augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_v_-0.5.avif)| ![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Brightness 0.5 augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_v_0.5.avif)| ![Brightness 1.0 bright augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_hsv_v_1.avif)  
+  
+## Link to this section幾何学的変換#
+
+### Link to this section回転 (`degrees`)#
+
+  * **範囲** : `0.0` ～ `180`
+  * **デフォルト** : `0`
+  * **使用法** : 指定された範囲内で画像をランダムに回転させます。`degrees`ハイパーパラメータは回転角度を定義し、最終的な調整値は`-degrees`から`degrees`の間でランダムに選択されます。例えば、`degrees=10.0`の場合、回転は`-10.0`から`10.0`の範囲内でランダムに選択されます。
+  * **目的** : 物体が異なる向きで現れる可能性があるアプリケーションにおいて極めて重要です。例えば、航空ドローンの画像では、車両はあらゆる方向に向いている可能性があるため、モデルは回転に関係なく物体を認識する必要があります。
+  * **Ultralyticsの実装** : [RandomPerspective](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.RandomPerspective)
+
+
+
+**`-180`**| **`-90`**| **`0.0`**| **`90`**| **`180`**  
+---|---|---|---|---  
+![Rotation -180 degrees augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_degrees_-180.avif)| ![Rotation -90 degrees augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_degrees_-90.avif)| ![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Rotation 90 degrees augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_degrees_90.avif)| ![Rotation 180 degrees augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_degrees_180.avif)  
+  
+### Link to this section平行移動 (`translate`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0.1`
+  * **使用法** : 画像サイズに対するランダムな割合で画像を水平および垂直方向にシフトします。`translate`ハイパーパラメータはシフトの大きさを定義し、最終的な調整値は`-translate`から`translate`の範囲内で2回（各軸に1回ずつ）ランダムに選択されます。例えば、`translate=0.5`の場合、x軸上で`-0.5`から`0.5`の間でランダムに選択され、y軸上でも同じ範囲内で別の独立したランダム値が選択されます。
+  * **目的** : モデルが部分的に見える物体を検出することを学習するのを助け、物体の位置に対する堅牢性を向上させます。例えば、車両の損傷評価アプリケーションでは、写真家の位置や距離によって、車の部品が完全に、または部分的にフレームに収まることがあります。平行移動のオーギュメンテーションは、モデルにこれらの特徴の完全性や位置に関係なく、それらを認識することを教えます。
+  * **Ultralyticsの実装** : [RandomPerspective](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.RandomPerspective)
+  * **Note** : For simplicity, the translations applied below are the same each time for both `x` and `y` axes. Values `-1.0` and `1.0` are not shown as they would translate the image completely out of the frame.
+
+
+
+`-0.5`| **`-0.25`**| **`0.0`**| **`0.25`**| **`0.5`**  
+---|---|---|---|---  
+![Translation -0.5 shift augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_translate_-0.5.avif)| ![Translation -0.25 shift augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_translate_-0.25.avif)| ![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Translation 0.25 shift augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_translate_0.25.avif)| ![Translation 0.5 shift augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_translate_0.5.avif)  
+  
+### Link to this sectionスケーリング (`scale`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0.5`
+  * **使用法** : 指定された範囲内でランダムな倍率で画像をリサイズします。`scale`ハイパーパラメータはスケーリング倍率を定義し、最終的な調整値は`1-scale`から`1+scale`の間でランダムに選択されます。例えば、`scale=0.5`の場合、スケーリングは`0.5`から`1.5`の範囲内でランダムに選択されます。
+  * **目的** : モデルが異なる距離やサイズの物体に対応できるようにします。例えば、自動運転アプリケーションでは、車両がカメラから様々な距離で現れる可能性があり、モデルにはそのサイズに関係なく車両を認識することが求められます。
+  * **Ultralyticsの実装** : [RandomPerspective](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.RandomPerspective)
+  * **注** : 
+    * `-1.0`の値は画像が消えてしまうため表示されておらず、`1.0`は単純に2倍のズームになります。
+    * 下の表に表示されている値は、最終的なスケーリング倍率ではなく、ハイパーパラメータ`scale`を通じて適用される値です。
+    * `scale`が`1.0`より大きい場合、スケーリング倍率は`1-scale`から`1+scale`の間でランダムに選択されるため、画像は非常に小さくなるか、反転する可能性があります。例えば、`scale=3.0`の場合、スケーリングは`-2.0`から`4.0`の範囲内でランダムに選択されます。負の値が選択された場合、画像は反転します。
+
+
+
+**`-0.5`**| **`-0.25`**| **`0.0`**| **`0.25`**| **`0.5`**  
+---|---|---|---|---  
+![Scale 0.5x zoom out augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_scale_-0.5.avif)| ![Scale 0.75x zoom out augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_scale_-0.25.avif)| ![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Scale 1.25x zoom in augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_scale_0.25.avif)| ![Scale 1.5x zoom in augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_scale_0.5.avif)  
+  
+### Link to this sectionシアー変換 (`shear`)#
+
+  * **範囲** : `-180` ～ `+180`
+  * **デフォルト** : `0`
+  * **使用法** : 画像の平行線を維持しながら一部分をある方向にシフトさせることで、x軸とy軸の両方向に沿って画像を歪ませる幾何学的変換を導入します。`shear`ハイパーパラメータはシアー角度を定義し、最終的な調整値は`-shear`から`shear`の間でランダムに選択されます。例えば、`shear=10.0`の場合、x軸上で`-10`から`10`の間でランダムに選択され、y軸上でも同じ範囲内で別の独立したランダム値が選択されます。
+  * **目的** : わずかな傾きや斜めの視点によって生じる視角のバリエーションに対して、モデルが汎化できるようにします。例えば、交通監視では、カメラの設置位置が垂直でないために、車や交通標識などの物体が傾いて見えることがあります。シアーのオーギュメンテーションを適用することで、モデルはこのような歪みがあっても物体を確実に認識できるようになります。
+  * **Ultralyticsの実装** : [RandomPerspective](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.RandomPerspective)
+  * **注** : 
+    * `shear`値は画像を急速に歪ませる可能性があるため、小さな値から始めて徐々に大きくしていくことをお勧めします。
+    * 遠近法変換とは異なり、シアーは奥行きや消失点を導入しませんが、その代わりに向かい合う辺を平行に保ちながら角度を変えることで、物体の形状を歪ませます。
+
+
+
+**`-10`**| **`-5`**| **`0.0`**| **`5`**| **`10`**  
+---|---|---|---|---  
+![Shear -10 degrees augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_shear_-10.avif)| ![Shear -5 degrees augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_shear_-5.avif)| ![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Shear 5 degrees augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_shear_5.avif)| ![Shear 10 degrees augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_shear_10.avif)  
+  
+### Link to this sectionパースペクティブ (`perspective`)#
+
+  * **範囲** : `0.0` \- `0.001`
+  * **デフォルト** : `0`
+  * **使用方法** : x軸とy軸の両方に沿って完全なパースペクティブ変換を適用し、異なる深度や角度から見た時のオブジェクトの見え方をシミュレートします。`perspective`ハイパーパラメータはパースペクティブの大きさを定義し、最終的な調整値は `-perspective` から `perspective` の間でランダムに選択されます。例えば、`perspective=0.001` の場合、パースペクティブはx軸上で `-0.001` から `0.001` の範囲でランダムに選択され、y軸上でも同じ範囲で独立したランダムな値が選択されます。
+  * **目的** : パースペクティブ拡張は、極端な視点の変化に対応するために重要です。特に、パースペクティブのシフトによってオブジェクトが短縮されたり歪んで見えるシナリオで役立ちます。例えば、ドローンによる物体検出では、ドローンの傾斜や高度に応じて建物、道路、車両が引き伸ばされたり圧縮されたりして見えることがあります。パースペクティブ変換を適用することで、モデルはこれらの歪みに左右されずにオブジェクトを認識できるようになり、実環境へのデプロイにおける堅牢性が向上します。
+  * **Ultralyticsの実装** : [RandomPerspective](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.RandomPerspective)
+
+
+
+**`-0.001`**| **`-0.0005`**| **`0.0`**| **`0.0005`**| **`0.001`**  
+---|---|---|---|---  
+![Perspective -0.001 transformation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_perspective_-0.001.avif)| ![Perspective -0.0005 transformation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_perspective_-0.0005.avif)| ![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Perspective 0.0005 transformation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_perspective_0.0005.avif)| ![Perspective 0.001 transformation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_geometric_perspective_0.001.avif)  
+  
+### Link to this section上下反転 (`flipud`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0`
+  * **Usage** : Performs a vertical flip by inverting the image along the y-axis. This transformation mirrors the entire image upside-down but preserves all spatial relationships between objects. The flipud hyperparameter defines the probability of applying the transformation, with a value of `flipud=1.0` ensuring that all images are flipped and a value of `flipud=0.0` disabling the transformation entirely. For example, with `flipud=0.5`, each image has a 50% chance of being flipped upside-down.
+  * **目的** : オブジェクトが上下逆さまに現れる可能性があるシナリオで役立ちます。例えば、ロボットビジョンシステムにおいて、コンベアベルトやロボットアーム上のオブジェクトがさまざまな向きで拾い上げられたり配置されたりすることがあります。垂直反転は、モデルがオブジェクトの上下の向きに関係なく認識するのに役立ちます。
+  * **Ultralyticsの実装** : [RandomFlip](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.RandomFlip)
+
+
+
+**`flipud` 無効**| **`flipud` 有効**  
+---|---  
+![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Vertical flip augmentation enabled](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_flip_vertical_1.avif)  
+  
+### Link to this section左右反転 (`fliplr`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0.5`
+  * **使用方法** : x軸に沿って画像をミラーリングし、水平反転を実行します。この変換は左右を入れ替えますが、空間的な整合性は維持されるため、モデルが鏡像の向きで現れるオブジェクトに対しても汎用性を高めるのに役立ちます。`fliplr`ハイパーパラメータは変換を適用する確率を定義し、`fliplr=1.0` はすべての画像が反転されることを保証し、`fliplr=0.0` は変換を完全に無効にします。例えば、`fliplr=0.5` の場合、各画像が左右反転する確率は50%です。
+  * **目的** : 水平反転は、物体検出、姿勢推定、顔認識において、左右の変化に対する堅牢性を向上させるために広く使用されています。例えば、自動運転において、車両や歩行者は道路のどちら側にも現れる可能性があり、水平反転はモデルがどちらの向きでも等しく認識するのに役立ちます。
+  * **Ultralyticsの実装** : [RandomFlip](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.RandomFlip)
+
+
+
+**`fliplr` 無効**| **`fliplr` 有効**  
+---|---  
+![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Horizontal flip augmentation enabled](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_flip_horizontal_1.avif)  
+  
+### Link to this sectionBGRチャネルスワップ (`bgr`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0`
+  * **使用方法** : 画像のカラーチャネルをRGBからBGRに入れ替え、色が表現される順序を変更します。`bgr`ハイパーパラメータは変換を適用する確率を定義し、`bgr=1.0` はすべての画像がチャネルスワップを受けることを保証し、`bgr=0.0` はこれを無効にします。例えば、`bgr=0.5` の場合、各画像がRGBからBGRに変換される確率は50%です。
+  * **目的** : 異なるカラーチャネル順序に対する堅牢性を向上させます。例えば、RGBとBGRのフォーマットが混在して使用される可能性のある様々なカメラシステムや画像ライブラリを横断して動作する必要があるモデルをトレーニングする場合、あるいは入力カラーフォーマットがトレーニングデータと異なる可能性のある環境にモデルをデプロイする場合に役立ちます。
+  * **Ultralyticsの実装** : [Format](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.Format)
+
+
+
+**`bgr` 無効**| **`bgr` 有効**  
+---|---  
+![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![BGR channel swap augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_bgr_channel_swap_1.avif)  
+  
+### Link to this sectionモザイク (`mosaic`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `1`
+  * **使用方法** : 4枚のトレーニング画像を1枚に統合します。`mosaic`ハイパーパラメータは変換を適用する確率を定義し、`mosaic=1.0` はすべての画像が統合されることを保証し、`mosaic=0.0` は変換を無効にします。例えば、`mosaic=0.5` の場合、各画像が他の3枚の画像と統合される確率は50%です。
+  * **目的** : 小さな物体の検出とコンテキストの理解を向上させるのに非常に効果的です。例えば、野生生物保護プロジェクトなどでは、動物がさまざまな距離やスケールで現れることがあるため、モザイク拡張は、限られたデータから多様なトレーニングサンプルを人工的に作成することで、モデルが異なるサイズ、部分的な遮蔽、環境コンテキストにわたって同じ種を認識できるように学習するのを助けます。
+  * **Ultralyticsの実装** : [Mosaic](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.Mosaic)
+  * **注** : 
+    * `mosaic`拡張はモデルの堅牢性を高めますが、一方でトレーニングプロセスをより難しくする可能性もあります。
+    * The `mosaic` augmentation can be disabled near the end of training by setting `close_mosaic` to the number of epochs before completion when it should be turned off. For example, if `epochs` is set to `200` and `close_mosaic` is set to `20`, the `mosaic` augmentation will be disabled after `180` epochs. If `close_mosaic` is set to `0`, the `mosaic` augmentation will be enabled for the entire training process.
+    * 生成されたモザイクの中心はランダムな値を使用して決定され、画像の内側になることも外側になることもあります。
+    * 現在の`mosaic`拡張の実装では、データセットからランダムに選択された4枚の画像を組み合わせています。データセットが小さい場合、同じ画像が同じモザイク内で複数回使用されることがあります。
+
+
+
+**`mosaic` 無効**| **`mosaic` 有効**  
+---|---  
+![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Mosaic 4-image augmentation enabled](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_mosaic_on.avif)  
+  
+### Link to this sectionMixup (`mixup`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0`
+  * **使用方法** : 指定された確率で2枚の画像とそのラベルをブレンドします。`mixup`ハイパーパラメータは変換を適用する確率を定義し、`mixup=1.0` はすべての画像が混合されることを保証し、`mixup=0.0` は変換を無効にします。例えば、`mixup=0.5` の場合、各画像が別の画像と混合される確率は50%です。
+  * **目的** : モデルの堅牢性を高め、過学習を低減させます。例えば、小売製品認識システムにおいて、Mixupは異なる製品の画像をブレンドすることで、モデルがより堅牢な特徴を学習するのを助け、混雑した店舗の棚で他の製品によって部分的に見え隠れしている状態のアイテムでも識別できるようにします。
+  * **Ultralyticsの実装** : [Mixup](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.MixUp)
+  * **注** : 
+    * `mixup`の比率は、`np.random.beta(32.0, 32.0)`のベータ分布からランダムに選択された値であり、各画像が約50%ずつ寄与することを意味しますが、わずかな変動が含まれます。
+
+
+
+**最初の画像、`mixup` 無効**| **2枚目の画像、`mixup` 無効**| **`mixup` 有効**  
+---|---|---  
+![First image for MixUp blending](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Second image for MixUp blending](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_mixup_identity_2.avif)| ![MixUp blending augmentation enabled](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_mixup_on.avif)  
+  
+### Link to this sectionCutMix (`cutmix`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0`
+  * **使用方法** : 指定された確率で、一方の画像の矩形領域を切り取り、もう一方の画像に貼り付けます。`cutmix`ハイパーパラメータは変換を適用する確率を定義し、`cutmix=1.0` はすべての画像がこの変換を受けることを保証し、`cutmix=0.0` は完全に無効にします。例えば、`cutmix=0.5` の場合、各画像が別の画像からのパッチで領域を置き換えられる確率は50%です。
+  * **目的** : ローカルな特徴の整合性を維持しながらリアルな遮蔽シナリオを作成することで、モデルのパフォーマンスを向上させます。例えば、自動運転システムにおいて、CutMixは車両や歩行者が他の物体によって部分的に遮蔽されている場合でもそれらを認識する学習を助け、重なり合う物体が存在する複雑な実環境での検出精度を向上させます。
+  * **Ultralyticsの実装** : [CutMix](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.CutMix)
+  * **注** : 
+    * 切り取り領域のサイズと位置は、適用ごとにランダムに決定されます。
+    * グローバルに画素値をブレンドするMixupとは異なり、`cutmix`は切り取り領域内の元の画素強度を維持し、ローカルな特徴を保持します。
+    * 領域は、既存のバウンディングボックスと重ならない場合にのみターゲット画像に貼り付けられます。さらに、貼り付けられた領域内で元の面積の少なくとも`0.1`（10%）を保持するバウンディングボックスのみが保持されます。
+    * このバウンディングボックスの最小面積閾値は、現在の実装では変更できず、デフォルトで`0.1`に設定されています。
+
+
+
+**最初の画像、`cutmix` 無効**| **2枚目の画像、`cutmix` 無効**| **`cutmix` 有効**  
+---|---|---  
+![First image for CutMix](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_cutmix_identity_1.avif)| ![Second image for CutMix](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_cutmix_identity_2.avif)| ![CutMix augmentation enabled](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_cutmix_on.avif)  
+  
+## Link to this sectionセグメンテーション特有の拡張#
+
+### Link to this sectionCopy-Paste (`copy_paste`)#
+
+  * **範囲** : `0.0` \- `1.0`
+  * **デフォルト** : `0`
+  * **使用方法** : セグメンテーションタスクでのみ機能します。この拡張は、`copy_paste_mode`で制御される指定された確率に基づいて、画像内または画像間でオブジェクトをコピーします。`copy_paste`ハイパーパラメータは変換を適用する確率を定義し、`copy_paste=1.0` はすべての画像がコピーされることを保証し、`copy_paste=0.0` は変換を無効にします。例えば、`copy_paste=0.5` の場合、各画像が別の画像からオブジェクトをコピーされる確率は50%です。
+  * **目的** : インスタンスセグメンテーションタスクや希少なオブジェクトクラスに特に役立ちます。例えば、欠陥の種類がまれにしか現れない工業的な欠陥検出において、Copy-Paste拡張はそれらをある画像から別の画像へコピーすることで、これらの希少な欠陥の出現頻度を人工的に増やし、追加の欠陥サンプルを必要とせずにモデルがこれらの過小評価されているケースをより良く学習できるようにします。
+  * **Ultralyticsの実装** : [CopyPaste](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.CopyPaste)
+  * **注** : 
+    * 下のGIFに示されているように、`copy_paste`拡張は、ある画像から別の画像へオブジェクトをコピーするために使用できます。
+    * オブジェクトがコピーされると、`copy_paste_mode`にかかわらず、そのIntersection over Area (IoA)がソース画像のすべてのオブジェクトで計算されます。すべてのIoAが`0.3`（30%）未満であれば、オブジェクトはターゲット画像に貼り付けられます。IoAが1つでも`0.3`を超えている場合、オブジェクトはターゲット画像に貼り付けられません。
+    * IoA閾値は現在の実装では変更できず、デフォルトで`0.3`に設定されています。
+
+
+
+**`copy_paste` 無効**| **`copy_paste` 有効 (`copy_paste_mode=flip`)**| `copy_paste`プロセスの可視化  
+---|---|---  
+![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_copy_paste_off.avif)| ![Copy-paste augmentation enabled](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_copy_paste_on.avif)| ![Copy-paste augmentation animated demo](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_copy_paste_demo.avif)  
+  
+### Link to this sectionCopy-Pasteモード (`copy_paste_mode`)#
+
+  * **オプション** : `'flip'`, `'mixup'`
+  * **デフォルト** : `'flip'`
+  * **使用方法** : copy-paste拡張に使用される手法を決定します。`'flip'`に設定すると、オブジェクトは同じ画像から取得されますが、`'mixup'`では異なる画像からオブジェクトをコピーできます。
+  * **目的** : コピーされたオブジェクトをターゲット画像に統合する方法に柔軟性を持たせます。
+  * **Ultralyticsの実装** : [CopyPaste](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.CopyPaste)
+  * **注** : 
+    * IoAの原則は両方の`copy_paste_mode`で同じですが、オブジェクトがコピーされる方法は異なります。
+    * 画像サイズによっては、オブジェクトが部分的に、あるいは完全にフレームの外側にコピーされることがあります。
+    * ポリゴンアノテーションの品質によっては、コピーされたオブジェクトが元のオブジェクトと比較して形状にわずかな変化が生じることがあります。
+
+
+
+**参照画像**| **`copy_paste`に選択された画像**| **`copy_paste` 有効 (`copy_paste_mode=mixup`)**  
+---|---|---  
+![Second image for MixUp blending](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_mixup_identity_2.avif)| ![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_copy_paste_off.avif)| ![Copy-paste with MixUp mode](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_copy_paste_mixup.avif)  
+  
+## Link to this section分類特有の拡張#
+
+### Link to this sectionAuto Augment (`auto_augment`)#
+
+  * **オプション** : `'randaugment'`, `'autoaugment'`, `'augmix'`, `None`
+  * **デフォルト** : `'randaugment'`
+  * **使用方法** : 分類（Classification）用に自動データ拡張ポリシーを適用します。`'randaugment'`オプションはRandAugmentを使用し、`'autoaugment'`はAutoAugmentを、`'augmix'`はAugMixを使用します。`None`に設定すると自動データ拡張は無効になります。
+  * **目的** : 分類タスクにおいて、データ拡張戦略を自動的に最適化します。それぞれの違いは以下の通りです。 
+    * **AutoAugment** : このモードは、ImageNet、CIFAR10、SVHNなどのデータセットから学習された事前定義済みの拡張ポリシーを適用します。ユーザーは既存のポリシーを選択できますが、Torchvision内で新しいポリシーを学習させることはできません。特定のデータセットに対して最適な拡張戦略を見つけるには、外部ライブラリやカスタム実装が必要になります。[AutoAugmentの論文](https://arxiv.org/abs/1805.09501)を参照してください。
+    * **RandAugment** : 一定の強さでランダムに変換を選択・適用します。この手法は広範な探索フェーズの必要性を減らし、計算効率を高めつつモデルの堅牢性を向上させます。[RandAugmentの論文](https://arxiv.org/abs/1909.13719)を参照してください。
+    * **AugMix** : AugMixは、単純な変換をランダムに組み合わせて多様な画像バリエーションを作成することで、モデルの堅牢性を高めるデータ拡張手法です。[AugMixの論文](https://arxiv.org/abs/1912.02781)を参照してください。
+  * **Ultralyticsの実装** : [classify_augmentations()](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.classify_augmentations)
+  * **注** : 
+    * 要するに、これら3つの手法の主な違いは、拡張ポリシーの定義方法と適用方法にあります。
+    * これら3つの手法を詳細に比較している[こちらの記事](https://sebastianraschka.com/blog/2023/data-augmentation-pytorch.html)を参照してください。
+
+
+
+### Link to this sectionRandom Erasing (`erasing`)#
+
+  * **範囲** : `0.0` \- `0.9`
+  * **デフォルト** : `0.4`
+  * **使用方法** : 分類学習中に画像の一部をランダムに消去します。`erasing`ハイパーパラメータは変換を適用する確率を定義します。`erasing=0.9`はほぼすべての画像が消去されることを保証し、`erasing=0.0`は変換を無効にします。例えば、`erasing=0.5`の場合、各画像で50%の確率で一部が消去されます。
+  * **目的** : モデルが堅牢な特徴を学習し、特定の画像領域への過度な依存を防ぐのに役立ちます。例えば、顔認識システムにおいて、Random Erasingはサングラスやマスク、顔の一部を隠す可能性のある他の物体といった部分的遮蔽に対してモデルをより堅牢にします。これにより、顔の特徴の一部が隠れていても、他の複数の特徴を使用して個人を識別するようにモデルを強制することで、実世界でのパフォーマンスが向上します。
+  * **Ultralyticsの実装** : [classify_augmentations()](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.classify_augmentations)
+  * **注** : 
+    * The `erasing` augmentation comes with a `scale`, `ratio`, and `value` hyperparameters that cannot be changed with the [current implementation](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py). Their default values are `(0.02, 0.33)`, `(0.3, 3.3)`, and `0`, respectively, as stated in the PyTorch [documentation](https://docs.pytorch.org/vision/main/generated/torchvision.transforms.RandomErasing.html).
+    * `erasing`ハイパーパラメータの上限は、すべての画像に変換が適用されることを避けるために`0.9`に設定されています。
+
+
+
+**`erasing`オフ**| **`erasing`オン（例1）**| **`erasing`オン（例2）**| **`erasing`オン（例3）**  
+---|---|---|---  
+![Original image without augmentation](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_identity.avif)| ![Random erasing example 1](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_erasing_ex1.avif)| ![Random erasing example 2](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_erasing_ex2.avif)| ![Random erasing example 3](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/augmentation_erasing_ex3.avif)  
+  
+## Link to this section高度なデータ拡張機能#
+
+### Link to this sectionカスタムAlbumentations変換 (`augmentations`)#
+
+  * **型** : Albumentations変換の`list`
+  * **デフォルト** : `None`
+  * **使用方法** : Python APIを使用して、データ拡張用のカスタム[Albumentations](https://albumentations.ai/)変換を提供できます。このパラメータは、デフォルトのAlbumentations変換の代わりとして学習中に適用されるAlbumentations変換オブジェクトのリストを受け取ります。
+  * **目的** : 広範なAlbumentations変換ライブラリを活用することで、データ拡張戦略を詳細に制御できます。これは、高度な色調整、ノイズ注入、ドメイン固有の変換など、組み込みのYOLOオプションでは対応できない特殊な拡張が必要な場合に特に便利です。
+  * **Ultralyticsの実装** : [Albumentations](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.Albumentations)
+
+
+
+カスタムAlbumentationsの例
+    
+    
+    import albumentations as A
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Define custom Albumentations transforms
+    custom_transforms = [
+        A.Blur(blur_limit=7, p=0.5),
+        A.GaussNoise(var_limit=(10.0, 50.0), p=0.3),
+        A.CLAHE(clip_limit=4.0, p=0.5),
+        A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+        A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.5),
+    ]
+    
+    # Train with custom Albumentations transforms
+    model.train(
+        data="coco8.yaml",
+        epochs=100,
+        augmentations=custom_transforms,  # Pass custom transforms
+        imgsz=640,
+    )
+
+**ポイント:**
+
+  * **Python APIのみ** : カスタムAlbumentations変換は現在、Python API経由でのみサポートされています。CLIやYAML構成ファイルから指定することはできません。
+  * **デフォルト変換の置き換え** : `augmentations`パラメータを介してカスタム変換を提供すると、それらはデフォルトのAlbumentations変換を完全に置き換えます。**デフォルトのYOLOデータ拡張（`mosaic`、`hsv_h`、`hsv_s`、`degrees`など）は引き続きアクティブであり、個別に適用されます**。
+  * **Bounding Boxの互換性** : 空間的な変換（画像の形状を変更する変換）を使用する際は注意してください。UltralyticsはBounding Boxの調整を自動的に処理しますが、複雑な変換の中には追加の設定が必要なものもあります。
+  * **豊富なライブラリ** : Albumentationsは70種類以上の多様な変換を提供しています。[Albumentationsドキュメント](https://albumentations.ai/docs/)を探索して、利用可能なすべてのオプションを確認してください。
+  * **パフォーマンスへの配慮** : 拡張を過度に追加したり、計算コストの高い変換を使用すると、学習速度が低下する可能性があります。少数のセットから始めて、学習速度を監視してください。
+
+
+
+**一般的な使用例:**
+
+  * **医療画像** : X線やMRI画像の拡張には、弾性変形やグリッド歪みなどの特殊な変換を適用します
+  * **航空/衛星画像** : 真上からの視点に最適化された変換を使用します
+  * **低照度条件** : 照明の厳しい状況をシミュレートするために、ノイズや明るさの調整を適用します
+  * **産業用検査** : 品質管理用途向けに、欠陥のようなパターンやテクスチャの変化を追加します
+
+
+
+**互換性に関する注意:**
+
+  * Albumentationsバージョン1.0.3以上が必要です
+  * すべてのYOLO検出およびセグメンテーションタスクと互換性があります
+  * 分類タスクには適用できません（分類では異なる拡張パイプラインを使用するため）
+
+
+
+Albumentationsの詳細および利用可能な変換については、[公式Albumentationsドキュメント](https://albumentations.ai/docs/)をご覧ください。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionデータ拡張の種類が多すぎて何を選べばよいかわかりません。どうすれば判断できますか？#
+
+適切なデータ拡張の選択は、特定のユースケースとデータセットによって異なります。決定の目安となる一般的なガイドラインをいくつか紹介します。
+
+  * 多くの場合、色や明るさのわずかな変化は有益です。`hsv_h`、`hsv_s`、`hsv_v`のデフォルト値は、堅実な出発点となります。
+  * カメラの視点が固定されており、モデルがデプロイされた後も変わらないのであれば、`rotation`、`translation`、`scale`、`shear`、`perspective`といった幾何学的変換はスキップしても問題ありません。しかし、カメラの角度が変わる可能性がある場合や、モデルにより高い堅牢性を求めるのであれば、これらの拡張を保持する方が望ましいです。
+  * `mosaic`拡張は、一部が隠れたオブジェクトや、1画像あたり複数のオブジェクトが存在してもラベルの値が変わらない場合にのみ使用してください。あるいは、`mosaic`を有効にしたまま`close_mosaic`の値を大きくすることで、学習プロセスの後半で無効にすることも可能です。
+
+
+
+要約：シンプルに保ちましょう。まずは少数の拡張セットから開始し、必要に応じて徐々に追加していくのが良いでしょう。目的はモデルの汎用性と堅牢性を高めることであり、学習プロセスを過度に複雑にすることではありません。また、適用するデータ拡張が、モデルが本番環境で直面するデータ分布を反映していることを確認してください。
+
+### Link to this section学習を開始すると、`albumentations: Blur[...]`というリファレンスが表示されます。これはUltralytics YOLOがブラーなどの追加の拡張を実行しているということですか？#
+
+`albumentations`パッケージがインストールされている場合、Ultralyticsはそれを使用して一連の追加画像拡張を自動的に適用します。これらの拡張は内部的に処理されるため、追加の設定は不要です。
+
+適用される変換の全リストは、私たちの[技術ドキュメント](https://docs.ultralytics.com/reference/data/augment#ultralytics.data.augment.Albumentations)および[Albumentations統合ガイド](https://docs.ultralytics.com/integrations/albumentations)で確認できます。確率`p`が`0`より大きい拡張のみがアクティブであることに注意してください。これらは、ブラーやグレースケールといった実世界の視覚的アーティファクトを模倣するために、低い頻度で意図的に適用されます。
+
+Python APIを使用して、独自のカスタムAlbumentations変換を提供することも可能です。詳細については高度なデータ拡張機能セクションを参照してください。
+
+### Link to this section学習を開始しても、albumentationsへのリファレンスが表示されません。なぜですか？#
+
+`albumentations`パッケージがインストールされているか確認してください。インストールされていない場合は、`pip install albumentations`を実行してインストールできます。インストールされると、パッケージは自動的に検出され、Ultralyticsによって使用されます。
+
+### Link to this sectionデータ拡張をカスタマイズするにはどうすればよいですか？#
+
+データ拡張をカスタマイズするには、カスタムのデータセットクラスとトレーナーを作成します。例えば、デフォルトのUltralyticsの分類用拡張を、PyTorchの[torchvision.transforms.Resize](https://docs.pytorch.org/vision/stable/generated/torchvision.transforms.Resize.html)やその他の変換に置き換えることができます。実装の詳細については、分類ドキュメントの[カスタム学習例](/ja/tasks/classify#train)を参照してください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-data-augmentation.md)
+
+[GLglenn-jocher7](https://github.com/glenn-jocher)[PIpicsalex3](https://github.com/picsalex)[RIRizwanMunawar3](https://github.com/RizwanMunawar)RORonald Eddy Jr1[PDpderrenger1](https://github.com/pderrenger)[Y-Y-T-G1](https://github.com/Y-T-G)[ONonuralpszr1](https://github.com/onuralpszr)[MImiles-deans-ultralytics1](https://github.com/miles-deans-ultralytics)[LALaughing-q1](https://github.com/Laughing-q)[ARartzuros1](https://github.com/artzuros)
+
+作成日 2025年4月14日更新日 先週
+
+## コメント
+
+このページの内容
+
+AIで探索

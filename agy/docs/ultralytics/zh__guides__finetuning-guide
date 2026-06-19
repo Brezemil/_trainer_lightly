@@ -1,0 +1,194 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/finetuning-guide
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+# Link to this section如何针对自定义数据集微调 YOLO#
+
+[微调](https://www.ultralytics.com/glossary/fine-tuning)是指通过使用预训练权重而非随机初始化，让预训练模型识别新类别的过程。与其从零开始训练数百个 epoch，微调利用了预训练的 [COCO](/zh/datasets/detect/coco) 特征，能在极短的时间内收敛于自定义数据。
+
+本指南涵盖了在自定义数据集上微调 [YOLO26](/zh/models/yolo26) 的方法，从基础用法到冻结层和两阶段训练等高级技巧。
+
+## Link to this section微调与从零开始训练的区别#
+
+预训练模型已经从数百万张图像中学习到了通用的视觉特征——如边缘检测、纹理识别和形状理解。通过微调进行的[迁移学习](https://www.ultralytics.com/glossary/transfer-learning)复用了这些知识，仅需教授模型新类别看起来是什么样，因此它收敛更快，所需数据更少。从零开始训练则会丢弃所有这些知识，强迫模型从像素级别的模式开始学习一切，这需要消耗更多的资源。
+
+| 微调| 从零开始训练  
+---|---|---  
+**起始权重**|  在 COCO 上预训练（80 个类别）| 随机初始化  
+**命令**| `YOLO("yolo26n.pt")`| `YOLO("yolo26n.yaml")`  
+**收敛速度**|  更快 - 主干网络已经训练过| 更慢 - 所有层从零开始学习  
+**数据需求**|  较低 - 预训练特征弥补了数据的不足| 较高 - 模型必须仅从数据集学习所有特征  
+**何时使用**|  具有自然图像的自定义类别| 与 COCO 领域截然不同的领域（医疗、卫星、雷达）  
+  
+微调无需额外的代码
+
+When a `.pt` file is loaded with `YOLO("yolo26n.pt")`, the pretrained weights are stored in the model. Calling `.train(data="custom.yaml")` after that automatically transfers all compatible weights to the new model architecture, reinitializes any layers that don't match (such as the detection head when the number of classes differs), and begins training. No manual weight loading, layer manipulation, or custom transfer learning code is required.
+
+### Link to this section预训练权重迁移的工作原理#
+
+当在类别数量不同的数据集上微调预训练模型时（例如，从 COCO 的 80 个类别改为 5 个自定义类别），Ultralytics 会执行形状感知权重迁移：
+
+  1. **主干网络和颈部完全迁移** \- 这些层用于提取通用视觉特征，它们的形状与类别数量无关。
+  2. **检测头被部分重新初始化** \- 分类输出层（`cv3`、`one2one_cv3`）的形状与类别计数（80 对比 5）绑定，因此它们无法迁移并被随机初始化。检测头中的边界框回归层（`cv2`、`one2one_cv2`）无论类别数量如何，形状都是固定的，因此它们会正常迁移。
+  3. **绝大多数权重都会迁移** ，即使在更改类别数量时也是如此。仅检测头中的分类专用层会被重新初始化——主干网络、颈部和边界框回归分支保持不变。
+
+
+
+对于类别数量与预训练模型相同的数据集（例如，在另一个 80 类数据集上微调 COCO 预训练权重），包括检测头在内的 100% 权重都会迁移。
+
+## Link to this section基础微调示例#
+
+示例
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load pretrained model
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+
+### Link to this section选择模型大小#
+
+较大的模型容量更大，但需要更新的参数也更多，这在训练数据有限时可能会增加过拟合的风险。从较小的模型（YOLO26n 或 YOLO26s）开始，仅在验证指标平稳时向上扩展，是一种实用的方法。最佳模型大小取决于任务的复杂性、类别的数量、数据集的多样性以及可用于部署的硬件。查看完整的 [YOLO26 模型页面](/zh/models/yolo26) 以了解可用尺寸和性能基准。
+
+## Link to this section优化器和学习率选择#
+
+默认的 `optimizer=auto` 设置会根据总训练迭代次数来选择优化器和学习率：
+
+  * **< 10,000 次迭代**（小型数据集或较少的 epoch）：AdamW，配有较低的自动计算学习率
+  * **> 10,000 次迭代**（大型数据集）：[MuSGD](/reference/optim/muon)（一种混合 Muon+SGD 优化器），lr=0.01
+
+
+
+对于大多数微调任务，默认设置无需任何手动调整即可良好运行。当出现以下情况时，请考虑显式设置优化器：
+
+  * **训练不稳定** （损失峰值或发散）：尝试 `optimizer=AdamW, lr0=0.001` 以实现更稳定的收敛
+  * **在小型数据集上微调大型模型** ：像 `lr0=0.001` 这样较低的学习率有助于保留预训练特征
+
+
+
+自动优化器会覆盖手动设置的 lr0
+
+当 `optimizer=auto` 时，`lr0` 和 `momentum` 值将被忽略。要手动控制学习率，请显式设置优化器：`optimizer=SGD, lr0=0.005`。
+
+## Link to this section冻结层#
+
+冻结可防止特定层在训练期间更新。这可以加快训练速度，并在数据集相对于模型容量较小时减少[过拟合](https://www.ultralytics.com/glossary/overfitting)。
+
+`freeze` 参数接受整数或列表。整数 `freeze=10` 会冻结前 10 层（0 到 9 层，对应 YOLO26 中的主干网络）。列表可以包含层索引（例如 `freeze=[0, 3, 5]`，用于部分冻结主干网络），或者模块名称字符串（例如 `freeze=["23.cv2"]`，用于精细控制层内的特定分支）。
+
+示例
+    
+    
+    model.train(data="custom.yaml", epochs=50, freeze=10)
+
+正确的冻结深度取决于目标领域与预训练数据的相似程度以及可用的训练数据量：
+
+场景| 建议| 理由  
+---|---|---  
+大数据集，相似领域| `freeze=None` (默认)| 有足够的数据在不产生过拟合的情况下调整所有层  
+小数据集，相似领域| `freeze=10`| 保留主干特征，减少可训练参数  
+极小数据集| `freeze=23`| 仅训练检测头，最大限度降低过拟合风险  
+领域远离 COCO| `freeze=None`| 主干特征可能无法很好地迁移，需要重新训练  
+  
+冻结深度也可以视为一个超参数——尝试几个值（0、5、10）并比较验证 mAP 是为特定数据集找到最佳设置的实用方法。
+
+## Link to this section微调的关键超参数#
+
+微调通常比从零开始训练需要更少的超参数调整。最重要的参数是：
+
+  * **`epochs`** ：微调比从零开始训练收敛得更快。从一个中等的值开始，并使用 `patience` 在验证指标趋于平稳时提前停止。
+  * **`patience`** ：默认的 100 是为长周期训练设计的。将其降低到 10-20 可以避免在已经收敛的运行上浪费时间。
+  * **`warmup_epochs`** ：默认预热（3 个 epoch）会从零逐渐增加学习率，这可以防止较大的梯度更新在早期迭代中破坏预训练特征。即使是微调，也建议保持默认值。
+
+
+
+有关训练参数的完整列表，请参阅[训练配置参考](/zh/usage/cfg)。
+
+## Link to this section两阶段微调#
+
+Two-stage fine-tuning splits training into two phases. The first stage freezes the backbone and trains only the neck and head, allowing the detection layers to adapt to the new classes without disrupting pretrained features. The second stage unfreezes all layers and trains the full model with a lower learning rate to refine the backbone for the target domain.
+
+This approach is particularly useful when the target domain differs significantly from COCO (medical images, aerial imagery, microscopy), where the backbone may need adaptation but training everything at once causes instability. For automatic unfreezing with a callback-based approach, see [Freezing and Unfreezing the Backbone](/zh/guides/custom-trainer#freezing-and-unfreezing-the-backbone).
+
+两阶段微调
+    
+    
+    from ultralytics import YOLO
+    
+    # Stage 1: freeze backbone, train head and neck
+    model = YOLO("yolo26n.pt")
+    model.train(data="custom.yaml", epochs=20, freeze=10, name="stage1", exist_ok=True)
+    
+    # Stage 2: unfreeze all, fine-tune with lower lr
+    model = YOLO("runs/detect/stage1/weights/best.pt")
+    model.train(data="custom.yaml", epochs=30, lr0=0.001, name="stage2", exist_ok=True)
+
+## Link to this section常见陷阱#
+
+### Link to this section模型未产生预测#
+
+  * **训练数据不足** ：使用极少量样本进行训练是最常见的原因——模型无法从太少的数据中学习或泛化。在调查其他原因之前，请确保每个类别都有足够的多样化示例。
+  * **检查数据集路径** ：`data.yaml` 中的路径错误会导致静默产生零标签。训练前请运行 `yolo detect val model=yolo26n.pt data=your_data.yaml` 以确认标签加载正确。
+  * **降低置信度阈值** ：如果存在预测但被过滤掉了，请在推理过程中尝试 `conf=0.1`。
+  * **Verify class count** : ensure `nc` in `data.yaml` matches the actual number of classes in the label files.
+
+
+
+### Link to this section验证 mAP 过早趋于平稳#
+
+  * **添加更多数据** ：微调受益于额外的训练数据，尤其是具有不同角度、光照和背景的多样化示例。
+  * **检查类别平衡** ：代表性不足的类别会有较低的 AP。使用 `cls_pw` 来应用反向频率类别加权（中度不平衡从 `cls_pw=0.25` 开始，严重不平衡增加到 `1.0`）。
+  * **减少增强** ：对于极小的数据集，过度增强可能弊大于利。尝试 `mosaic=0.5` 或 `mosaic=0.0`。
+  * **提高分辨率** ：对于具有小对象的数据集，尝试 `imgsz=1280` 以保留细节。
+
+
+
+### Link to this section微调后原始类别性能下降#
+
+这被称为灾难性遗忘——模型在仅针对新数据进行微调时会丢失先前学习到的知识。如果不将原始数据集图像与新数据一起包含，遗忘几乎是不可避免的。要减轻这种情况：
+
+  * **合并数据集** ：在微调期间，将原始类别的示例与新类别一起包含。这是防止遗忘的唯一可靠方法。
+  * **冻结主干和颈部** ：冻结主干和颈部，使只有检测头进行训练，有助于在极低学习率下进行短期的微调运行。
+  * **减少训练 epoch 数** ：模型仅在新数据上训练的时间越长，遗忘就越严重。
+
+
+
+## Link to this section常见问题 (FAQ)#
+
+### Link to this section微调 YOLO 需要多少图像？#
+
+没有固定的最小值——结果取决于任务的复杂性、类别数量以及领域与 COCO 的相似程度。多样化的图像（不同的光照、角度、背景）比原始数量更重要。从你现有的数据开始，如果验证指标不足，再进行扩展。
+
+### Link to this section如何针对自定义数据集微调 YOLO26？#
+
+Load a pretrained `.pt` file and call `.train()` with the path to a custom `data.yaml`. Ultralytics automatically handles [weight transfer](https://www.ultralytics.com/glossary/transfer-learning), detection head reinitialization, and optimizer selection. See the Basic Fine-Tuning section for the complete code example.
+
+### Link to this section为什么我微调的 YOLO 模型什么也没检测到？#
+
+最常见的原因是 `data.yaml` 中的路径错误（这会静默产生零标签）、YAML 中的 `nc` 与实际标签文件不匹配，或者是置信度阈值设置得太高。查看常见陷阱以获取完整的故障排除清单。
+
+### Link to this section在微调时我应该冻结哪些 YOLO 层？#
+
+这取决于数据集大小和领域相似度。对于与 COCO 领域相似的小型数据集，冻结主干网络（`freeze=10`）可以防止过拟合。对于与 COCO 差异很大的领域，保持所有层不冻结（`freeze=None`）可以让主干网络进行适应。查看冻结层以了解详细建议。
+
+### Link to this section在针对新类别微调 YOLO 时，我该如何防止灾难性遗忘？#
+
+在训练数据中将原始类别的示例与新类别一并包含。如果做不到这一点，冻结更多层（`freeze=10` 或更高）并使用较低的学习率有助于保留预训练知识。查看性能在原始类别上下降以获取更多详细信息。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+[RAraimbekovm1](https://github.com/raimbekovm)
+
+已创建 上个月已更新 上个月
+
+## 评论
+
+本页内容
+
+使用 AI 探索

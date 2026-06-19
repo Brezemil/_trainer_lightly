@@ -1,0 +1,455 @@
+---
+source_url: https://docs.ultralytics.com/vi/guides/model-yaml-config
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-yaml-config.md)
+
+# Link to this sectionHướng dẫn Cấu hình Model YAML#
+
+Tệp cấu hình model YAML đóng vai trò là bản thiết kế kiến trúc cho các mạng thần kinh Ultralytics. Nó xác định cách các lớp kết nối, các tham số mà mỗi module sử dụng và cách toàn bộ mạng được mở rộng trên các kích thước model khác nhau.
+
+![Model YAML configuration workflow.](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yaml-configuration-guide.avif)
+
+## Link to this sectionCấu trúc Cấu hình#
+
+Các tệp model YAML được tổ chức thành ba phần chính phối hợp với nhau để định nghĩa kiến trúc.
+
+### Link to this sectionPhần Tham số#
+
+Phần **parameters** chỉ định các đặc tính toàn cục và hành vi mở rộng của model:
+    
+    
+    # Parameters
+    nc: 80 # number of classes
+    scales: # compound scaling constants [depth, width, max_channels]
+        n: [0.50, 0.25, 1024] # nano: shallow layers, narrow channels
+        s: [0.50, 0.50, 1024] # small: shallow depth, standard width
+        m: [0.50, 1.00, 512] # medium: moderate depth, full width
+        l: [1.00, 1.00, 512] # large: full depth and width
+        x: [1.00, 1.50, 512] # extra-large: maximum performance
+    kpt_shape: [17, 3] # pose models only
+
+  * `nc` thiết lập số lượng lớp (classes) mà model dự đoán.
+  * `scales` định nghĩa các hệ số mở rộng tổng hợp để điều chỉnh độ sâu, chiều rộng và số kênh tối đa của model nhằm tạo ra các biến thể kích thước khác nhau (từ nano đến extra-large).
+  * `kpt_shape` áp dụng cho các model pose. Nó có thể là `[N, 2]` cho các điểm keypoint `(x, y)` hoặc `[N, 3]` cho `(x, y, visibility)`.
+
+
+
+Giảm dư thừa với `scales`
+
+Tham số `scales` cho phép bạn tạo ra nhiều kích thước model từ một YAML cơ sở. Ví dụ, khi bạn load `yolo26n.yaml`, Ultralytics sẽ đọc tệp `yolo26.yaml` cơ sở và áp dụng các hệ số mở rộng `n` (`depth=0.50`, `width=0.25`) để xây dựng biến thể nano.
+
+`nc` và `kpt_shape` phụ thuộc vào tập dữ liệu
+
+Nếu tập dữ liệu của bạn chỉ định `nc` hoặc `kpt_shape` khác, Ultralytics sẽ tự động ghi đè cấu hình model tại thời điểm chạy (runtime) để khớp với YAML của tập dữ liệu.
+
+### Link to this sectionKiến trúc Backbone và Head#
+
+Kiến trúc model bao gồm các phần backbone (trích xuất đặc trưng) và head (chuyên biệt cho tác vụ):
+    
+    
+    backbone:
+        # [from, repeats, module, args]
+        - [-1, 1, Conv, [64, 3, 2]] # 0: Initial convolution
+        - [-1, 1, Conv, [128, 3, 2]] # 1: Downsample
+        - [-1, 3, C2f, [128, True]] # 2: Feature processing
+    
+    head:
+        - [-1, 1, nn.Upsample, [None, 2, nearest]] # 6: Upsample
+        - [[-1, 2], 1, Concat, [1]] # 7: Skip connection
+        - [-1, 3, C2f, [256]] # 8: Process features
+        - [[8], 1, Detect, [nc]] # 9: Detection layer
+
+## Link to this sectionĐịnh dạng Đặc tả Lớp#
+
+Mỗi lớp tuân theo mô hình nhất quán: **`[from, repeats, module, args]`**
+
+Thành phần| Mục đích| Ví dụ  
+---|---|---  
+**from**|  Kết nối đầu vào| `-1` (trước đó), `6` (lớp 6), `[4, 6, 8]` (đa đầu vào)  
+**repeats**|  Số lần lặp lại| `1` (đơn), `3` (lặp lại 3 lần)  
+**module**|  Loại module| `Conv`, `C2f`, `TorchVision`, `Detect`  
+**args**|  Đối số của module| `[64, 3, 2]` (channels, kernel, stride)  
+  
+### Link to this sectionCác Mô hình Kết nối#
+
+Trường `from` tạo ra các mô hình luồng dữ liệu linh hoạt trong toàn bộ mạng của bạn:
+    
+    
+    - [-1, 1, Conv, [64, 3, 2]]    # Takes input from previous layer
+
+Đánh chỉ số Lớp
+
+Các lớp được đánh chỉ số bắt đầu từ 0. Các chỉ số âm tham chiếu đến các lớp trước đó (`-1` = lớp trước đó), trong khi các chỉ số dương tham chiếu đến các lớp cụ thể theo vị trí của chúng.
+
+### Link to this sectionLặp lại Module#
+
+Tham số `repeats` tạo ra các phần mạng sâu hơn:
+    
+    
+    - [-1, 3, C2f, [128, True]] # Creates 3 consecutive C2f blocks
+    - [-1, 1, Conv, [64, 3, 2]] # Single convolution layer
+
+Số lần lặp lại thực tế được nhân với hệ số mở rộng độ sâu từ cấu hình kích thước model của bạn.
+
+## Link to this sectionCác Module Khả dụng#
+
+Các module được tổ chức theo chức năng và được định nghĩa trong [Ultralytics modules directory](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules). Các bảng sau đây hiển thị các module thường được sử dụng theo danh mục, với nhiều module khác khả dụng trong mã nguồn:
+
+### Link to this sectionCác Thao tác Cơ bản#
+
+Module| Mục đích| Nguồn| Tham số  
+---|---|---|---  
+`Conv`| Convolution + BatchNorm + Activation| [conv.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/conv.py)| `[out_ch, kernel, stride, pad, groups]`  
+`nn.Upsample`| Upsampling không gian| [PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.nn.Upsample.html)| `[size, scale_factor, mode]`  
+`nn.Identity`| Thao tác truyền qua| [PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.nn.Identity.html)| `[]`  
+  
+### Link to this sectionCác Khối Tổng hợp#
+
+Module| Mục đích| Nguồn| Tham số  
+---|---|---|---  
+`C2f`| CSP bottleneck với 2 convolutions| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, shortcut, expansion]`  
+`SPPF`| Spatial Pyramid Pooling (nhanh)| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, kernel_size]`  
+`Concat`| Nối theo kênh| [conv.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/conv.py)| `[dimension]`  
+  
+### Link to this sectionCác Module Chuyên biệt#
+
+Module| Mục đích| Nguồn| Tham số  
+---|---|---|---  
+`TorchVision`| Load bất kỳ model torchvision nào| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, model_name, weights, unwrap, truncate, split]`  
+`Index`| Trích xuất tensor cụ thể từ danh sách| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, index]`  
+`Detect`| YOLO detection head| [head.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/head.py)| `[nc]`  
+  
+Danh sách Module Hoàn chỉnh
+
+Đây là một tập hợp con các module khả dụng. Để xem danh sách đầy đủ các module và tham số của chúng, hãy khám phá [modules directory](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules).
+
+## Link to this sectionTính năng Nâng cao#
+
+### Link to this sectionTích hợp TorchVision#
+
+Module TorchVision cho phép tích hợp liền mạch bất kỳ [TorchVision model](https://docs.pytorch.org/vision/stable/models.html) nào làm backbone:
+    
+    
+    from ultralytics import YOLO
+    
+    # Model with ConvNeXt backbone
+    model = YOLO("convnext_backbone.yaml")
+    results = model.train(data="coco8.yaml", epochs=100)
+
+Đặc trưng Đa quy mô
+
+Đặt tham số cuối cùng là `True` để lấy các bản đồ đặc trưng trung gian cho việc phát hiện đa quy mô.
+
+### Link to this sectionModule Index để Lựa chọn Đặc trưng#
+
+Khi sử dụng các model xuất ra nhiều bản đồ đặc trưng, module Index sẽ chọn các đầu ra cụ thể:
+    
+    
+    backbone:
+        - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]] # Multi-output
+    head:
+        - [0, 1, Index, [192, 4]] # Select 4th feature map (192 channels)
+        - [0, 1, Index, [384, 6]] # Select 6th feature map (384 channels)
+        - [0, 1, Index, [768, 8]] # Select 8th feature map (768 channels)
+        - [[1, 2, 3], 1, Detect, [nc]] # Multi-scale detection
+
+## Link to this sectionHệ thống Phân giải Module#
+
+Hiểu cách Ultralytics tìm kiếm và import các module là rất quan trọng để tùy chỉnh:
+
+### Link to this sectionQuy trình Tìm kiếm Module#
+
+Ultralytics sử dụng hệ thống ba cấp trong [`parse_model`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py):
+    
+    
+    # Core resolution logic
+    m = (
+        getattr(torch.nn, m[3:])
+        if "nn." in m
+        else getattr(torchvision.ops, m[16:])
+        if "torchvision.ops." in m
+        else globals()[m]
+    )
+
+  1. **Các module PyTorch** : Các tên bắt đầu bằng `'nn.'` → namespace `torch.nn`
+  2. **Các thao tác TorchVision** : Các tên bắt đầu bằng `'torchvision.ops.'` → namespace `torchvision.ops`
+  3. **Các module Ultralytics** : Tất cả các tên khác → namespace toàn cục thông qua các import
+
+
+
+### Link to this sectionChuỗi Import Module#
+
+Các module tiêu chuẩn khả dụng thông qua các import trong [`tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py):
+    
+    
+    from ultralytics.nn.modules import (  # noqa: F401
+        SPPF,
+        C2f,
+        Conv,
+        Detect,
+        # ... many more modules
+        Index,
+        TorchVision,
+    )
+
+## Link to this sectionTích hợp Module Tùy chỉnh#
+
+### Link to this sectionSửa đổi Mã nguồn#
+
+Sửa đổi mã nguồn là cách linh hoạt nhất để tích hợp các module tùy chỉnh của bạn, nhưng có thể sẽ phức tạp. Để định nghĩa và sử dụng một module tùy chỉnh, hãy làm theo các bước sau:
+
+  1. **Cài đặt Ultralytics ở chế độ phát triển (development mode)** bằng phương pháp Git clone từ [Hướng dẫn Bắt đầu Nhanh](https://docs.ultralytics.com/quickstart#git-clone).
+
+  2. **Định nghĩa module của bạn** trong [`ultralytics/nn/modules/block.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py):
+         
+         class CustomBlock(nn.Module):
+             """Custom block with Conv-BatchNorm-ReLU sequence."""
+         
+             def __init__(self, c1, c2):
+                 """Initialize CustomBlock with input and output channels."""
+                 super().__init__()
+                 self.layers = nn.Sequential(nn.Conv2d(c1, c2, 3, 1, 1), nn.BatchNorm2d(c2), nn.ReLU())
+         
+             def forward(self, x):
+                 """Forward pass through the block."""
+                 return self.layers(x)
+
+  3. **Hiển thị module của bạn ở cấp độ gói** trong [`ultralytics/nn/modules/__init__.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/__init__.py):
+         
+         from .block import CustomBlock  # noqa makes CustomBlock available as ultralytics.nn.modules.CustomBlock
+
+  4. **Thêm vào các import** trong [`ultralytics/nn/tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py):
+         
+         from ultralytics.nn.modules import CustomBlock  # noqa
+
+  5. **Xử lý các đối số đặc biệt** (nếu cần) bên trong [`parse_model()`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) tại `ultralytics/nn/tasks.py`:
+         
+         # Add this condition in the parse_model() function
+         if m is CustomBlock:
+             c1, c2 = ch[f], args[0]  # input channels, output channels
+             args = [c1, c2, *args[1:]]
+
+  6. **Sử dụng module** trong YAML mô hình của bạn:
+         
+         # custom_model.yaml
+         nc: 1
+         backbone:
+             - [-1, 1, CustomBlock, [64]]
+         head:
+             - [-1, 1, Classify, [nc]]
+
+  7. **Kiểm tra FLOPs** để đảm bảo quá trình lan truyền tiến (forward pass) hoạt động:
+         
+         from ultralytics import YOLO
+         
+         model = YOLO("custom_model.yaml", task="classify")
+         model.info()  # should print non-zero FLOPs if working
+
+
+
+
+## Link to this sectionVí dụ Cấu hình#
+
+### Link to this sectionMô hình Phát hiện Cơ bản#
+    
+    
+    # Simple YOLO detection model
+    nc: 80
+    scales:
+        n: [0.33, 0.25, 1024]
+    
+    backbone:
+        - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+        - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+        - [-1, 3, C2f, [128, True]] # 2
+        - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+        - [-1, 6, C2f, [256, True]] # 4
+        - [-1, 1, SPPF, [256, 5]] # 5
+    
+    head:
+        - [-1, 1, Conv, [256, 3, 1]] # 6
+        - [[6], 1, Detect, [nc]] # 7
+
+### Link to this sectionMô hình Backbone TorchVision#
+    
+    
+    # ConvNeXt backbone with YOLO head
+    nc: 80
+    
+    backbone:
+        - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]]
+    
+    head:
+        - [0, 1, Index, [192, 4]] # P3 features
+        - [0, 1, Index, [384, 6]] # P4 features
+        - [0, 1, Index, [768, 8]] # P5 features
+        - [[1, 2, 3], 1, Detect, [nc]] # Multi-scale detection
+
+### Link to this sectionMô hình Phân loại#
+    
+    
+    # Simple classification model
+    nc: 1000
+    
+    backbone:
+        - [-1, 1, Conv, [64, 7, 2, 3]]
+        - [-1, 1, nn.MaxPool2d, [3, 2, 1]]
+        - [-1, 4, C2f, [64, True]]
+        - [-1, 1, Conv, [128, 3, 2]]
+        - [-1, 8, C2f, [128, True]]
+        - [-1, 1, nn.AdaptiveAvgPool2d, [1]]
+    
+    head:
+        - [-1, 1, Classify, [nc]]
+
+## Link to this sectionCác phương pháp hay nhất#
+
+### Link to this sectionMẹo Thiết kế Kiến trúc#
+
+**Bắt đầu Đơn giản** : Bắt đầu với các kiến trúc đã được kiểm chứng trước khi tùy chỉnh. Sử dụng các cấu hình YOLO hiện có làm khuôn mẫu và sửa đổi dần dần thay vì xây dựng từ đầu.
+
+**Kiểm tra Từng bước** : Xác thực từng sửa đổi theo từng bước. Thêm một module tùy chỉnh tại một thời điểm và xác minh nó hoạt động trước khi tiếp tục thay đổi tiếp theo.
+
+**Giám sát Kênh (Channels)** : Đảm bảo kích thước kênh khớp giữa các lớp được kết nối. Các kênh đầu ra (`c2`) của một lớp phải khớp với các kênh đầu vào (`c1`) của lớp tiếp theo trong chuỗi.
+
+**Sử dụng Skip Connections** : Tận dụng việc tái sử dụng đặc trưng với các mô hình `[[-1, N], 1, Concat, [1]]`. Các kết nối này hỗ trợ dòng gradient và cho phép mô hình kết hợp các đặc trưng từ các quy mô khác nhau.
+
+**Quy mô Hợp lý** : Chọn quy mô mô hình dựa trên các ràng buộc tính toán của bạn. Sử dụng nano (`n`) cho các thiết bị biên, small (`s`) cho hiệu suất cân bằng, và các quy mô lớn hơn (`m`, `l`, `x`) để đạt độ chính xác tối đa.
+
+### Link to this sectionCác cân nhắc về Hiệu suất#
+
+**Chiều sâu so với Chiều rộng** : Các mạng sâu nắm bắt các đặc trưng phân cấp phức tạp thông qua nhiều lớp biến đổi, trong khi các mạng rộng xử lý nhiều thông tin song song tại mỗi lớp. Cân bằng các yếu tố này dựa trên độ phức tạp của tác vụ.
+
+**Skip Connections** : Cải thiện dòng gradient trong quá trình huấn luyện và cho phép tái sử dụng đặc trưng trên toàn mạng. Chúng đặc biệt quan trọng trong các kiến trúc sâu hơn để ngăn chặn gradient biến mất.
+
+**Bottleneck Blocks** : Giảm chi phí tính toán trong khi vẫn duy trì khả năng biểu diễn của mô hình. Các module như `C2f` sử dụng ít tham số hơn so với các phép tích chập tiêu chuẩn trong khi vẫn bảo toàn khả năng học đặc trưng.
+
+**Đặc trưng Đa quy mô** : Cần thiết để phát hiện các đối tượng có kích thước khác nhau trong cùng một hình ảnh. Sử dụng các mô hình Feature Pyramid Network (FPN) với nhiều đầu phát hiện ở các quy mô khác nhau.
+
+## Link to this sectionKhắc phục sự cố#
+
+### Link to this sectionCác Vấn đề Thường gặp#
+
+Vấn đề| Nguyên nhân| Giải pháp  
+---|---|---  
+`KeyError: 'ModuleName'`| Module chưa được import| Thêm vào các import trong [`tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py)  
+Kích thước kênh không khớp| Đặc tả `args` không chính xác| Xác minh tính tương thích của kênh đầu vào/đầu ra  
+`AttributeError: 'int' object has no attribute`| Sai loại đối số| Kiểm tra tài liệu module để biết các loại đối số chính xác  
+Mô hình không thể xây dựng| Tham chiếu `from` không hợp lệ| Đảm bảo các lớp được tham chiếu tồn tại  
+  
+### Link to this sectionMẹo Gỡ lỗi#
+
+Khi phát triển các kiến trúc tùy chỉnh, việc gỡ lỗi có hệ thống giúp xác định sớm các vấn đề:
+
+**Sử dụng Identity Head để Kiểm tra**
+
+Thay thế các đầu phức tạp bằng `nn.Identity` để cô lập các vấn đề về backbone:
+    
+    
+    nc: 1
+    backbone:
+        - [-1, 1, CustomBlock, [64]]
+    head:
+        - [-1, 1, nn.Identity, []] # Pass-through for debugging
+
+Điều này cho phép kiểm tra trực tiếp các đầu ra của backbone:
+    
+    
+    import torch
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("debug_model.yaml")
+    output = model.model(torch.randn(1, 3, 640, 640))
+    print(f"Output shape: {output.shape}")  # Should match expected dimensions
+
+**Kiểm tra Kiến trúc Mô hình**
+
+Việc kiểm tra số lượng FLOPs và in ra từng lớp cũng có thể giúp gỡ lỗi các vấn đề với cấu hình mô hình tùy chỉnh của bạn. Số lượng FLOPs phải khác không đối với một mô hình hợp lệ. Nếu nó bằng không, thì có khả năng xảy ra vấn đề với quá trình lan truyền tiến. Chạy một quá trình lan truyền tiến đơn giản sẽ cho thấy lỗi chính xác đang gặp phải.
+    
+    
+    from ultralytics import YOLO
+    
+    # Build model with verbose output to see layer details
+    model = YOLO("debug_model.yaml", verbose=True)
+    
+    # Check model FLOPs. Failed forward pass causes 0 FLOPs.
+    model.info()
+    
+    # Inspect individual layers
+    for i, layer in enumerate(model.model.model):
+        print(f"Layer {i}: {layer}")
+
+**Xác thực Từng bước**
+
+  1. **Bắt đầu tối thiểu** : Kiểm tra với kiến trúc đơn giản nhất có thể trước
+  2. **Thêm tăng dần** : Xây dựng độ phức tạp từng lớp một
+  3. **Kiểm tra kích thước** : Xác minh tính tương thích về kênh và kích thước không gian
+  4. **Xác thực quy mô** : Kiểm tra với các quy mô mô hình khác nhau (`n`, `s`, `m`)
+
+
+
+## Link to this sectionCâu hỏi thường gặp#
+
+### Link to this sectionLàm cách nào để thay đổi số lượng lớp trong mô hình của tôi?#
+
+Đặt tham số `nc` ở đầu tệp YAML của bạn để khớp với số lượng lớp của tập dữ liệu.
+    
+    
+    nc: 5 # 5 classes
+
+### Link to this sectionTôi có thể sử dụng backbone tùy chỉnh trong YAML mô hình của mình không?#
+
+Có. Bạn có thể sử dụng bất kỳ module nào được hỗ trợ, bao gồm các backbone TorchVision, hoặc định nghĩa module tùy chỉnh của riêng bạn và import nó như mô tả trong Tích hợp Module Tùy chỉnh.
+
+### Link to this sectionLàm cách nào để điều chỉnh quy mô mô hình của tôi cho các kích thước khác nhau (nano, small, medium, v.v.)?#
+
+Sử dụng phần `scales` section trong YAML của bạn để xác định các hệ số quy mô cho chiều sâu, chiều rộng và kênh tối đa. Mô hình sẽ tự động áp dụng các hệ số này khi bạn tải tệp YAML cơ sở với quy mô được thêm vào tên tệp (ví dụ: `yolo26n.yaml`).
+
+### Link to this sectionĐịnh dạng `[from, repeats, module, args]` có nghĩa là gì?#
+
+Định dạng này chỉ định cách mỗi lớp được xây dựng:
+
+  * `from`: nguồn đầu vào
+  * `repeats`: số lần lặp lại module
+  * `module`: loại lớp
+  * `args`: các đối số cho module
+
+
+
+### Link to this sectionLàm cách nào để khắc phục sự cố không khớp kênh?#
+
+Kiểm tra xem các kênh đầu ra của một lớp có khớp với các kênh đầu vào dự kiến của lớp tiếp theo hay không. Sử dụng `print(model.model.model)` để kiểm tra kiến trúc của mô hình.
+
+### Link to this sectionTôi có thể tìm danh sách các module khả dụng và đối số của chúng ở đâu?#
+
+Kiểm tra mã nguồn trong thư mục [`ultralytics/nn/modules`](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules) để biết tất cả các module khả dụng và đối số của chúng.
+
+### Link to this sectionLàm cách nào để thêm một module tùy chỉnh vào cấu hình YAML của tôi?#
+
+Định nghĩa module của bạn trong mã nguồn, import nó như hiển thị trong Sửa đổi Mã nguồn, và tham chiếu nó theo tên trong tệp YAML của bạn.
+
+### Link to this sectionTôi có thể sử dụng trọng số được huấn luyện trước với một YAML tùy chỉnh không?#
+
+Có, bạn có thể sử dụng `model.load("path/to/weights")` để tải trọng số từ một checkpoint đã được huấn luyện trước. Tuy nhiên, chỉ các trọng số cho các lớp khớp nhau mới được tải thành công.
+
+### Link to this sectionLàm cách nào để xác thực cấu hình mô hình của tôi?#
+
+Sử dụng `model.info()` để kiểm tra xem số lượng FLOPs có khác không hay không. Một mô hình hợp lệ sẽ hiển thị số lượng FLOPs khác không. Nếu nó bằng không, hãy làm theo các gợi ý trong Mẹo Gỡ lỗi để tìm vấn đề.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-yaml-config.md)
+
+[GLglenn-jocher7](https://github.com/glenn-jocher)[Y-Y-T-G2](https://github.com/Y-T-G)[RIRizwanMunawar1](https://github.com/RizwanMunawar)
+
+Đã tạo 16 thg 9, 2025Đã cập nhật 2 tuần trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

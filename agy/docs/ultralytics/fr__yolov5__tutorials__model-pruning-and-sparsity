@@ -1,0 +1,162 @@
+---
+source_url: https://docs.ultralytics.com/fr/yolov5/tutorials/model-pruning-and-sparsity
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-pruning-and-sparsity.md)
+
+# Link to this sectionÉlagage de modèle et parcimonie dans YOLOv5#
+
+📚 Ce guide t'explique comment appliquer l'**élagage** aux modèles YOLOv5 🚀 pour créer des réseaux plus efficaces tout en conservant leurs performances.
+
+## Link to this sectionQu'est-ce que l'élagage de modèle ?#
+
+[L'élagage de modèle](https://www.ultralytics.com/glossary/model-pruning) est une technique utilisée pour réduire la taille et la complexité des réseaux neuronaux en supprimant les paramètres (poids et connexions) les moins importants. Ce processus crée un modèle plus efficace avec plusieurs avantages :
+
+  * Taille de modèle réduite pour un déploiement plus facile sur des appareils aux ressources limitées
+  * Vitesses d'inférence plus rapides avec un impact minimal sur la précision
+  * Consommation de mémoire et d'énergie plus faible
+  * Efficacité globale améliorée pour les applications en temps réel
+
+
+
+L'élagage fonctionne en identifiant et en supprimant les paramètres qui contribuent peu aux performances du modèle, ce qui aboutit à un modèle plus léger avec une précision similaire.
+
+## Link to this sectionAvant de commencer#
+
+Clone le dépôt et installe [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) dans un environnement [**Python >=3.8.0**](https://www.python.org/), y compris [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). Les [modèles](https://github.com/ultralytics/yolov5/tree/master/models) et les [jeux de données](https://github.com/ultralytics/yolov5/tree/master/data) se téléchargent automatiquement depuis la dernière [version](https://github.com/ultralytics/yolov5/releases) de YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+## Link to this sectionTester les performances de référence#
+
+Avant l'élagage, établis une performance de référence pour effectuer une comparaison. Cette commande teste YOLOv5x sur COCO val2017 à une taille d'image de 640 pixels. `yolov5x.pt` est le modèle le plus grand et le plus précis disponible. D'autres options sont `yolov5s.pt`, `yolov5m.pt` et `yolov5l.pt`, ou ton propre point de contrôle issu de l'entraînement sur un jeu de données personnalisé `./weights/best.pt`. Pour plus de détails sur tous les modèles disponibles, consulte le [tableau](https://github.com/ultralytics/yolov5#pretrained-checkpoints) du README.
+    
+    
+    python val.py --weights yolov5x.pt --data coco.yaml --img 640 --half
+
+Sortie :
+    
+    
+    val: data=/content/yolov5/data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, workers=8, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True, dnn=False
+    YOLOv5 🚀 v6.0-224-g4c40933 torch 1.10.0+cu111 CUDA:0 (Tesla V100-SXM2-16GB, 16160MiB)
+    
+    Fusing layers...
+    Model Summary: 444 layers, 86705005 parameters, 0 gradients
+    val: Scanning '/content/datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupt: 100% 5000/5000 [00:00<?, ?it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [01:12<00:00,  2.16it/s]
+                     all       5000      36335      0.732      0.628      0.683      0.496
+    Speed: 0.1ms pre-process, 5.2ms inference, 1.7ms NMS per image at shape (32, 3, 640, 640)  # <--- base speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-2/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.507  # <--- base mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.689
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.552
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.345
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.559
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.652
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.381
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.630
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.682
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.526
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.731
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.829
+    Results saved to runs/val/exp
+
+## Link to this sectionAppliquer l'élagage à YOLOv5x (30% de parcimonie)#
+
+Tu peux appliquer l'élagage au modèle en utilisant la commande `torch_utils.prune()` définie dans `utils/torch_utils.py`. Pour tester un modèle élagué, nous mettons à jour `val.py` pour élaguer YOLOv5x à une parcimonie de 0,3 (30 % des poids mis à zéro) :
+
+![YOLOv5 model pruning to 30% sparsity code](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sparsity-test-yolov5x-coco.avif)
+
+Sortie élaguée à 30 % :
+    
+    
+    val: data=/content/yolov5/data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, workers=8, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True, dnn=False
+    YOLOv5 🚀 v6.0-224-g4c40933 torch 1.10.0+cu111 CUDA:0 (Tesla V100-SXM2-16GB, 16160MiB)
+    
+    Fusing layers...
+    Model Summary: 444 layers, 86705005 parameters, 0 gradients
+    Pruning model...  0.3 global sparsity
+    val: Scanning '/content/datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupt: 100% 5000/5000 [00:00<?, ?it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [01:11<00:00,  2.19it/s]
+                     all       5000      36335      0.724      0.614      0.671      0.478
+    Speed: 0.1ms pre-process, 5.2ms inference, 1.7ms NMS per image at shape (32, 3, 640, 640)  # <--- prune speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-3/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.489  # <--- prune mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.677
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.537
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.334
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.542
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.635
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.370
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.612
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.664
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.496
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.722
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.803
+    Results saved to runs/val/exp-3
+
+## Link to this sectionAnalyse des résultats#
+
+À partir des résultats, nous pouvons observer :
+
+  * **30 % de parcimonie atteints** : 30 % des paramètres de poids du modèle dans les couches `nn.Conv2d` sont maintenant à zéro
+  * **Le temps d'inférence reste inchangé** : Malgré l'élagage, la vitesse de traitement est essentiellement la même
+  * **Impact minimal sur les performances** : Le mAP a légèrement chuté de 0,507 à 0,489 (seulement 3,6 % de réduction)
+  * **Réduction de la taille du modèle** : Le modèle élagué nécessite moins de mémoire pour le stockage
+
+
+
+Cela démontre que l'élagage peut réduire de manière significative la complexité du modèle avec seulement un impact mineur sur les performances, ce qui en fait une technique d'optimisation efficace pour le déploiement dans des environnements aux ressources limitées.
+
+## Link to this sectionAffiner les modèles élagués#
+
+Pour de meilleurs résultats, les modèles élagués doivent être affinés après l'élagage afin de récupérer en précision. Cela peut se faire en :
+
+  1. Appliquant l'élagage avec un niveau de parcimonie souhaité
+  2. Entraînant le modèle élagué pendant quelques époques avec un taux d'apprentissage plus faible
+  3. Évaluant le modèle élagué et affiné par rapport à la référence
+
+
+
+Ce processus aide les paramètres restants à s'adapter pour compenser les connexions supprimées, récupérant souvent la majeure partie ou la totalité de la précision d'origine.
+
+## Link to this sectionEnvironnements pris en charge#
+
+Ultralytics propose une gamme d'environnements prêts à l'emploi, chacun pré-installé avec les dépendances essentielles telles que [CUDA](https://developer.nvidia.com/cuda), [CUDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/) et [PyTorch](https://pytorch.org/), pour lancer tes projets.
+
+  * **Notebooks GPU gratuits** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [Guide de démarrage rapide GCP](/fr/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [Guide de démarrage rapide AWS](/fr/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [Guide de démarrage rapide AzureML](/fr/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Guide de démarrage rapide Docker](/fr/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionStatut du projet#
+
+[![YOLOv5 CI](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+Ce badge indique que tous les tests d'intégration continue (CI) de [GitHub Actions YOLOv5](https://github.com/ultralytics/yolov5/actions) réussissent. Ces tests CI vérifient rigoureusement la fonctionnalité et les performances de YOLOv5 sous divers aspects clés : [entraînement](https://github.com/ultralytics/yolov5/blob/master/train.py), [validation](https://github.com/ultralytics/yolov5/blob/master/val.py), [inférence](https://github.com/ultralytics/yolov5/blob/master/detect.py), [exportation](https://github.com/ultralytics/yolov5/blob/master/export.py) et [benchmarks](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). Ils garantissent un fonctionnement cohérent et fiable sur macOS, Windows et Ubuntu, avec des tests effectués toutes les 24 heures et à chaque nouveau commit.
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-pruning-and-sparsity.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Créé il y a 3 joursMis à jour il y a 3 jours
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

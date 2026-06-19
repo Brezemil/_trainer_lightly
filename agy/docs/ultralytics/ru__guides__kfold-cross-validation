@@ -1,0 +1,332 @@
+---
+source_url: https://docs.ultralytics.com/ru/guides/kfold-cross-validation
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+# Link to this sectionK-Fold кросс-валидация с Ultralytics#
+
+## Link to this sectionВведение#
+
+Это подробное руководство иллюстрирует реализацию K-Fold кросс-валидации для наборов данных [обнаружения объектов](https://www.ultralytics.com/glossary/object-detection) в экосистеме Ultralytics. Мы будем использовать формат обнаружения YOLO и основные библиотеки Python, такие как sklearn, pandas и PyYAML, чтобы провести тебя через необходимую настройку, процесс создания векторов признаков и выполнение разбиения набора данных методом K-Fold.
+
+![K-fold cross validation data splitting](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/k-fold-cross-validation-overview.avif)
+
+Независимо от того, включает ли твой проект набор данных Fruit Detection или собственный источник данных, этот учебник поможет тебе понять и применить K-Fold кросс-валидацию для повышения надежности и устойчивости твоих моделей [машинного обучения](https://www.ultralytics.com/glossary/machine-learning-ml). Хотя в этом руководстве мы используем `k=5` фолдов, помни, что оптимальное количество фолдов может варьироваться в зависимости от твоего набора данных и специфики проекта.
+
+Давай начнем.
+
+## Link to this sectionНастройка#
+
+  * Твои аннотации должны быть в [формате обнаружения YOLO](/ru/datasets/detect).
+
+  * Это руководство предполагает, что файлы аннотаций доступны локально.
+
+  * Для нашей демонстрации мы используем набор данных [Fruit Detection](https://www.kaggle.com/datasets/lakshaytyagi01/fruit-detection/code).
+
+    * Этот набор данных содержит в общей сложности 8479 изображений.
+    * Он включает 6 меток классов, общее количество экземпляров которых приведено ниже.
+
+
+
+Метка класса| Количество экземпляров  
+---|---  
+Apple| 7049  
+Grapes| 7202  
+Pineapple| 1613  
+Orange| 15549  
+Banana| 3536  
+Watermelon| 1976  
+  
+  * Необходимые пакеты Python включают:
+
+    * `ultralytics`
+    * `sklearn`
+    * `pandas`
+    * `pyyaml`
+  * Это руководство работает с `k=5` фолдов. Однако тебе следует определить оптимальное количество фолдов для твоего конкретного набора данных.
+
+
+
+  1. Создай новую виртуальную среду Python (`venv`) для своего проекта и активируй ее. Используй `pip` (или предпочтительный менеджер пакетов) для установки:
+
+     * Библиотека Ultralytics: `pip install -U ultralytics`. Альтернативно, ты можешь клонировать официальный [репозиторий](https://github.com/ultralytics/ultralytics).
+     * Scikit-learn, pandas и PyYAML: `pip install -U scikit-learn pandas pyyaml`.
+  2. Убедись, что твои аннотации находятся в [формате обнаружения YOLO](/ru/datasets/detect).
+
+     * Для этого руководства все файлы аннотаций находятся в каталоге `Fruit-Detection/labels`.
+
+
+
+## Link to this sectionГенерация векторов признаков для набора данных обнаружения объектов#
+
+  1. Начни с создания нового файла Python `example.py` для выполнения следующих шагов.
+
+  2. Приступи к получению всех файлов меток для твоего набора данных.
+         
+         from pathlib import Path
+         
+         dataset_path = Path("./Fruit-detection")  # replace with 'path/to/dataset' for your custom data
+         labels = sorted(dataset_path.rglob("*labels/*.txt"))  # all data in 'labels'
+
+  3. Теперь прочитай содержимое YAML-файла набора данных и извлеки индексы меток классов.
+         
+         import yaml
+         
+         yaml_file = "path/to/data.yaml"  # your data YAML with data directories and names dictionary
+         with open(yaml_file, encoding="utf8") as y:
+             classes = yaml.safe_load(y)["names"]
+         cls_idx = sorted(classes.keys())
+
+  4. Инициализируй пустой DataFrame `pandas`.
+         
+         import pandas as pd
+         
+         index = [label.stem for label in labels]  # uses base filename as ID (no extension)
+         labels_df = pd.DataFrame([], columns=cls_idx, index=index)
+
+  5. Подсчитай экземпляры каждого класса-метки, присутствующего в файлах аннотаций.
+         
+         from collections import Counter
+         
+         for label in labels:
+             lbl_counter = Counter()
+         
+             with open(label) as lf:
+                 lines = lf.readlines()
+         
+             for line in lines:
+                 # classes for YOLO label uses integer at first position of each line
+                 lbl_counter[int(line.split(" ", 1)[0])] += 1
+         
+             labels_df.loc[label.stem] = lbl_counter
+         
+         labels_df = labels_df.fillna(0.0)  # replace `nan` values with `0.0`
+
+  6. Ниже представлен пример заполненного DataFrame:
+         
+         0    1    2    3    4    5
+         '0000a16e4b057580_jpg.rf.00ab48988370f64f5ca8ea4...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.7e6dce029fb67f01eb19aa7...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.bc4d31cdcbe229dd022957a...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '00020ebf74c4881c_jpg.rf.508192a0a97aa6c4a3b6882...'  0.0  0.0  0.0  1.0  0.0  0.0
+         '00020ebf74c4881c_jpg.rf.5af192a2254c8ecc4188a25...'  0.0  0.0  0.0  1.0  0.0  0.0
+          ...                                                  ...  ...  ...  ...  ...  ...
+         'ff4cd45896de38be_jpg.rf.c4b5e967ca10c7ced3b9e97...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff4cd45896de38be_jpg.rf.ea4c1d37d2884b3e3cbce08...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff5fd9c3c624b7dc_jpg.rf.bb519feaa36fc4bf630a033...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'ff5fd9c3c624b7dc_jpg.rf.f0751c9c3aa4519ea3c9d6a...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'fffe28b31f2a70d4_jpg.rf.7ea16bd637ba0711c53b540...'  0.0  6.0  0.0  0.0  0.0  0.0
+
+
+
+
+Строки индексируют файлы меток, каждая из которых соответствует изображению в твоем наборе данных, а столбцы соответствуют твоим индексам меток классов. Каждая строка представляет собой псевдовектор признаков с количеством каждого класса-метки, присутствующего в твоем наборе данных. Эта структура данных позволяет применять [K-Fold кросс-валидацию](https://www.ultralytics.com/glossary/cross-validation) к набору данных обнаружения объектов.
+
+## Link to this sectionРазбиение набора данных методом K-Fold#
+
+  1. Теперь мы будем использовать класс `KFold` из `sklearn.model_selection` для генерации `k` разбиений набора данных.
+
+     * Важно: 
+       * Установка `shuffle=True` обеспечивает рандомизированное распределение классов в твоих разбиениях.
+       * Установив `random_state=M`, где `M` — выбранное целое число, ты сможешь получать повторяемые результаты.
+    
+    import random
+    
+    from sklearn.model_selection import KFold
+    
+    random.seed(0)  # for reproducibility
+    ksplit = 5
+    kf = KFold(n_splits=ksplit, shuffle=True, random_state=20)  # setting random_state for repeatable results
+    
+    kfolds = list(kf.split(labels_df))
+
+  2. Набор данных теперь разделен на `k` фолдов, каждый из которых имеет список индексов `train` и `val`. Мы построим DataFrame, чтобы отобразить эти результаты более наглядно.
+         
+         folds = [f"split_{n}" for n in range(1, ksplit + 1)]
+         folds_df = pd.DataFrame(index=index, columns=folds)
+         
+         for i, (train, val) in enumerate(kfolds, start=1):
+             folds_df[f"split_{i}"].loc[labels_df.iloc[train].index] = "train"
+             folds_df[f"split_{i}"].loc[labels_df.iloc[val].index] = "val"
+
+  3. Теперь мы рассчитаем распределение меток классов для каждого фолда как отношение классов, присутствующих в `val`, к тем, что присутствуют в `train`.
+         
+         fold_lbl_distrb = pd.DataFrame(index=folds, columns=cls_idx)
+         
+         for n, (train_indices, val_indices) in enumerate(kfolds, start=1):
+             train_totals = labels_df.iloc[train_indices].sum()
+             val_totals = labels_df.iloc[val_indices].sum()
+         
+             # To avoid division by zero, we add a small value (1E-7) to the denominator
+             ratio = val_totals / (train_totals + 1e-7)
+             fold_lbl_distrb.loc[f"split_{n}"] = ratio
+
+Идеальный сценарий — это когда все соотношения классов являются достаточно схожими для каждого разбиения и между классами. Однако это будет зависеть от специфики твоего набора данных.
+
+  4. Затем мы создаем каталоги и YAML-файлы набора данных для каждого разбиения.
+         
+         import datetime
+         
+         supported_extensions = [".jpg", ".jpeg", ".png"]
+         
+         # Initialize an empty list to store image file paths
+         images = []
+         
+         # Loop through supported extensions and gather image files
+         for ext in supported_extensions:
+             images.extend(sorted((dataset_path / "images").rglob(f"*{ext}")))
+         
+         # Create the necessary directories and dataset YAML files
+         save_path = Path(dataset_path / f"{datetime.date.today().isoformat()}_{ksplit}-Fold_Cross-val")
+         save_path.mkdir(parents=True, exist_ok=True)
+         ds_yamls = []
+         
+         for split in folds_df.columns:
+             # Create directories
+             split_dir = save_path / split
+             split_dir.mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "labels").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "labels").mkdir(parents=True, exist_ok=True)
+         
+             # Create dataset YAML files
+             dataset_yaml = split_dir / f"{split}_dataset.yaml"
+             ds_yamls.append(dataset_yaml)
+         
+             with open(dataset_yaml, "w") as ds_y:
+                 yaml.safe_dump(
+                     {
+                         "path": split_dir.as_posix(),
+                         "train": "train",
+                         "val": "val",
+                         "names": classes,
+                     },
+                     ds_y,
+                 )
+
+  5. Наконец, скопируй изображения и метки в соответствующий каталог ('train' или 'val') для каждого разбиения.
+
+     * **ПРИМЕЧАНИЕ:** Время, необходимое для этой части кода, будет варьироваться в зависимости от размера твоего набора данных и аппаратного обеспечения системы.
+    
+    import shutil
+    
+    from tqdm import tqdm
+    
+    for image, label in tqdm(zip(images, labels), total=len(images), desc="Copying files"):
+        for split, k_split in folds_df.loc[image.stem].items():
+            # Destination directory
+            img_to_path = save_path / split / k_split / "images"
+            lbl_to_path = save_path / split / k_split / "labels"
+    
+            # Copy image and label files to new directory (SamefileError if file already exists)
+            shutil.copy(image, img_to_path / image.name)
+            shutil.copy(label, lbl_to_path / label.name)
+
+
+
+
+## Link to this sectionСохранение записей (опционально)#
+
+Опционально ты можешь сохранить записи о разбиении K-Fold и DataFrame распределения меток в виде CSV-файлов для дальнейшего использования.
+    
+    
+    folds_df.to_csv(save_path / "kfold_datasplit.csv")
+    fold_lbl_distrb.to_csv(save_path / "kfold_label_distribution.csv")
+
+## Link to this sectionОбучение YOLO с использованием K-Fold разбиений данных#
+
+  1. Сначала загрузи модель YOLO.
+         
+         from ultralytics import YOLO
+         
+         weights_path = "path/to/weights.pt"  # use yolo26n.pt for a small model
+         model = YOLO(weights_path, task="detect")
+
+  2. Затем перебери YAML-файлы набора данных для запуска обучения. Результаты будут сохранены в каталог, указанный аргументами `project` и `name`. По умолчанию этот каталог — 'runs/detect/train#', где # — это целочисленный индекс.
+         
+         results = {}
+         
+         # Define your additional arguments here
+         batch = 16
+         project = "kfold_demo"
+         epochs = 100
+         
+         for k, dataset_yaml in enumerate(ds_yamls):
+             model = YOLO(weights_path, task="detect")
+             results[k] = model.train(
+                 data=dataset_yaml, epochs=epochs, batch=batch, project=project, name=f"fold_{k + 1}"
+             )  # include any additional train arguments
+
+  3. Ты также можешь использовать функцию [Ultralytics data.split.autosplit](https://docs.ultralytics.com/reference/data/split) для автоматического разбиения набора данных:
+         
+         from ultralytics.data.split import autosplit
+         
+         # Automatically split dataset into train/val/test
+         autosplit(path="path/to/images", weights=(0.8, 0.2, 0.0), annotated_only=True)
+
+
+
+
+## Link to this sectionЗаключение#
+
+В этом руководстве мы изучили процесс использования K-Fold кросс-валидации для обучения модели обнаружения объектов YOLO. Мы узнали, как разделить наш набор данных на K разделов, обеспечивая сбалансированное распределение классов по разным фолдам.
+
+Мы также рассмотрели процедуру создания отчетных DataFrame для визуализации разбиений данных и распределения меток по этим разбиениям, что дает нам четкое представление о структуре наших наборов для обучения и валидации.
+
+Опционально мы сохранили наши записи для дальнейшего использования, что может быть особенно полезно в крупномасштабных проектах или при устранении неполадок в работе модели.
+
+Наконец, мы реализовали само обучение модели, используя каждое разбиение в цикле, сохраняя результаты обучения для дальнейшего анализа и сравнения.
+
+Этот метод K-Fold кросс-валидации — надежный способ максимально эффективно использовать доступные данные; он помогает гарантировать, что производительность твоей модели будет надежной и последовательной для разных подмножеств данных. Это приводит к созданию более обобщаемой и надежной модели, которая с меньшей вероятностью будет [переобучаться](https://www.ultralytics.com/glossary/overfitting) на специфических шаблонах данных.
+
+Помни, что, хотя мы использовали YOLO в этом руководстве, эти шаги в основном применимы и к другим моделям машинного обучения. Понимание этих шагов позволит тебе эффективно применять кросс-валидацию в твоих собственных проектах по машинному обучению.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionЧто такое K-Fold кросс-валидация и почему она полезна в обнаружении объектов?#
+
+K-Fold кросс-валидация — это метод, при котором набор данных делится на 'k' подмножеств (фолдов) для более надежной оценки производительности модели. Каждый фолд служит как обучающими, так и [валидационными данными](https://www.ultralytics.com/glossary/validation-data). В контексте обнаружения объектов использование K-Fold кросс-валидации помогает гарантировать, что производительность твоей модели Ultralytics YOLO будет устойчивой и обобщаемой для разных разбиений данных, повышая ее надежность. Подробные инструкции по настройке K-Fold кросс-валидации с Ultralytics YOLO см. в разделе K-Fold кросс-валидация с Ultralytics.
+
+### Link to this sectionКак реализовать K-Fold кросс-валидацию с помощью Ultralytics YOLO?#
+
+Чтобы реализовать K-Fold кросс-валидацию с Ultralytics YOLO, тебе нужно выполнить следующие шаги:
+
+  1. Убедись, что аннотации находятся в [формате обнаружения YOLO](/ru/datasets/detect).
+  2. Используй библиотеки Python, такие как `sklearn`, `pandas` и `pyyaml`.
+  3. Создай векторы признаков из твоего набора данных.
+  4. Раздели свой набор данных с помощью `KFold` из `sklearn.model_selection`.
+  5. Обучи модель YOLO на каждом разбиении.
+
+
+
+Для получения полного руководства см. раздел Разбиение набора данных методом K-Fold в нашей документации.
+
+### Link to this sectionПочему мне следует использовать Ultralytics YOLO для обнаружения объектов?#
+
+Ultralytics YOLO предлагает современные, работающие в реальном времени решения для обнаружения объектов с высокой [точностью](https://www.ultralytics.com/glossary/accuracy) и эффективностью. Это универсальный инструмент, поддерживающий множество задач [компьютерного зрения](https://www.ultralytics.com/glossary/computer-vision-cv), таких как [обнаружение](/ru/tasks/detect), [сегментация экземпляров](/ru/tasks/segment), [семантическая сегментация](/ru/tasks/semantic) и [классификация](/ru/tasks/classify). Кроме того, он легко интегрируется с такими инструментами, как [Платформа Ultralytics](https://docs.ultralytics.com/platform) для обучения и развертывания моделей без написания кода. Для получения более подробной информации изучи преимущества и функции на нашей [странице Ultralytics YOLO](https://www.ultralytics.com/yolo).
+
+### Link to this sectionКак убедиться, что мои аннотации в правильном формате для Ultralytics YOLO?#
+
+Твои аннотации должны соответствовать формату обнаружения YOLO. Каждый файл аннотации должен содержать класс объекта, а также координаты его [ограничивающей рамки](https://www.ultralytics.com/glossary/bounding-box) на изображении. Формат YOLO обеспечивает оптимизированную и стандартизированную обработку данных для обучения моделей обнаружения объектов. Для получения дополнительной информации о правильном форматировании аннотаций посети [руководство по формату обнаружения YOLO](/ru/datasets/detect).
+
+### Link to this sectionМогу ли я использовать K-Fold кросс-валидацию с собственными наборами данных, отличными от Fruit Detection?#
+
+Да, ты можешь использовать K-Fold кросс-валидацию с любым собственным набором данных, если аннотации представлены в формате обнаружения YOLO. Замени пути к набору данных и метки классов на специфичные для твоего набора данных. Эта гибкость гарантирует, что любой проект по обнаружению объектов может получить преимущество от надежной оценки модели с использованием K-Fold кросс-валидации. Практический пример можно найти в нашем разделе Генерация векторов признаков.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+[GLglenn-jocher21](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[AMambitious-octopus1](https://github.com/ambitious-octopus)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[BUBurhan-Q1](https://github.com/Burhan-Q)[M-M-Amrollahi1](https://github.com/M-Amrollahi)[IVIvorZhu3311](https://github.com/IvorZhu331)
+
+Создано 12 нояб. 2023 г.Обновлено 2 недели назад
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

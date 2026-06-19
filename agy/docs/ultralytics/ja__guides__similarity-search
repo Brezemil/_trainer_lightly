@@ -1,0 +1,175 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/similarity-search
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/similarity-search.md)
+
+# Link to this sectionOpenAI CLIPとMeta FAISSを使用してセマンティック画像検索を構築する方法#
+
+このガイドでは、[OpenAI CLIP](https://openai.com/index/clip/)、[Meta FAISS](https://github.com/facebookresearch/faiss)、および[Flask](https://flask.palletsprojects.com/en/stable/)を使用して**セマンティック画像検索** エンジンを構築する方法を解説します。CLIPのビジュアルと言語を組み合わせた[embeddings](https://developers.openai.com/api/docs/guides/embeddings)と、FAISSの効率的な近傍探索を組み合わせることで、ラベルやカテゴリを必要とせず、自然言語のクエリから関連画像を取得するWebインターフェースを作成できます。
+
+  
+
+
+  
+**Watch:** How Similarity Search Works | Visual Search Using OpenAI CLIP, META FAISS and Ultralytics Package 🎉 
+
+![セマンティック検索結果を表示するFlask Webページの概要](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/flask-ui.avif)
+
+Ultralytics Pythonパッケージは、このパイプライン全体を2つのクラスにラップしているため、数行のコードで検索アプリを起動したり、プログラムからクエリを実行したりできます。このガイドでは、セマンティック検索が有用な理由、仕組み、Webアプリの実行、プログラムによる検索、およびパラメータの設定について解説します。
+
+## Link to this sectionセマンティック画像検索を使用する理由#
+
+CLIPとFAISSを使用して独自のセマンティック画像検索システムを構築することには、いくつかの魅力的な利点があります。
+
+  * **ゼロショット機能：** データセットで学習させる必要はありません。CLIPの[ゼロショット学習](https://www.ultralytics.com/glossary/zero-shot-learning)により、自由形式の自然言語を使用して任意の画像コレクションを検索できるため、時間とリソースを節約できます。
+  * **人間のような理解：** キーワード検索とは異なり、CLIPはセマンティックなコンテキストを理解し、「自然の中で遊ぶ幸せそうな子供」や「夜の未来的な都市のスカイライン」といった抽象的、感情的、または関係性に基づくクエリから画像を検索できます。
+  * **ラベルやメタデータが不要：** このアプローチには生画像のみが必要です。CLIPは手動の注釈なしでエンベディングを生成します。
+  * **柔軟でスケーラブルな検索：** FAISSは大規模なデータセットでも高速な近傍探索を実現し、数千から数百万のエンベディングに対してリアルタイムで応答します。
+  * **ドメイン横断的なアプリケーション：** 個人の写真アーカイブ、クリエイティブなインスピレーションツール、製品検索エンジン、アート推奨システムのいずれを構築する場合でも、最小限の調整で同じスタックを適用できます。
+
+
+
+## Link to this sectionセマンティック画像検索の仕組み#
+
+このパイプラインは3つのコンポーネントを組み合わせたもので、各コンポーネントが画像とテキストをランク付けされた結果に変換する各ステージを処理します。
+
+  * **CLIP** は、画像にはビジョンエンコーダー（ResNetやViTなど）、言語にはテキストエンコーダー（Transformerベース）を使用し、両方を同じマルチモーダルエンベディング空間に投影します。これにより、[コサイン類似度](https://en.wikipedia.org/wiki/Cosine_similarity)を使用してテキストと画像を直接比較できます。
+  * **FAISS** （Facebook AI Similarity Search）は、画像エンベディングのインデックスを構築し、特定のクエリに対して最も近いベクトルを高速かつスケーラブルに取得できるようにします。
+  * **Flask** は、自然言語クエリを送信し、インデックスからセマンティックに一致した画像を表示するためのシンプルなWebインターフェースを提供します。
+
+
+
+![OpenAI CLIP画像取得ワークフロー](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/clip-image-retrieval.avif)
+
+画像とテキストの両方が同じベクトル空間に存在するため、取得はゼロショットで行われます。ラベルやカテゴリは不要で、画像データと適切なプロンプトさえあれば可能です。
+
+![Meta FAISSエンベディングベクトル構築ワークフロー](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/faiss-indexing-workflow.avif)
+
+## Link to this sectionセマンティック検索Webアプリの実行#
+
+`SearchApp`クラスは完全なFlaskインターフェースを起動します。初回実行時にサンプル画像セットをダウンロードし、FAISSインデックスを構築して、クエリを入力してランク付けされた結果を表示できるページを提供します。
+
+画像パスに関する警告
+
+独自の画像を使用する場合は、画像ディレクトリへの絶対パスを指定するようにしてください。Flaskのファイル提供制限により、画像がWebページに表示されない可能性があります。
+    
+    
+    from ultralytics import solutions
+    
+    app = solutions.SearchApp(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    app.run(debug=False)  # You can also use `debug=True` argument for testing
+
+## Link to this sectionプログラムによる画像検索#
+
+`VisualAISearch`クラスは、Webレイヤーなしで全てのバックエンド操作を実行します。
+
+  * ローカル画像からFAISSインデックスをロードまたは構築します。
+  * CLIPを使用して画像とテキストの[embeddings](https://developers.openai.com/api/docs/guides/embeddings)を抽出します。
+  * コサイン類似度を使用して類似性検索を実行します。
+
+
+
+自然言語クエリで検索関数を呼び出し、類似度でランク付けされた一致する画像のファイル名リストを取得します。
+    
+    
+    from ultralytics import solutions
+    
+    searcher = solutions.VisualAISearch(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    results = searcher("a dog sitting on a bench")
+    
+    # Ranked Results:
+    #     - 000000546829.jpg | Similarity: 0.3269
+    #     - 000000549220.jpg | Similarity: 0.2899
+    #     - 000000517069.jpg | Similarity: 0.2761
+    #     - 000000029393.jpg | Similarity: 0.2742
+    #     - 000000534270.jpg | Similarity: 0.2680
+
+## Link to this sectionVisualAISearchパラメータの設定#
+
+以下の表は、`VisualAISearch`で使用可能なパラメータの概要です。
+
+引数| タイプ| デフォルト| 説明  
+---|---|---|---  
+`data`| `str`| `'images'`| 類似検索に使用される画像ディレクトリへのパス。  
+  
+引数| タイプ| デフォルト| 説明  
+---|---|---|---  
+`device`| `str`| `None`| 推論に使用するデバイスを指定します（例：`cpu`、`cuda:0`、または `0`）。CPU、特定のGPU、その他の演算デバイスをモデル実行用に選択できます。  
+  
+クラウドでのデータ管理
+
+ローカルファイルを管理せずに本番環境の規模で画像コレクションを検索するには、[Ultralytics Platform](/ja/platform/data)で画像を整理・バージョン管理してから、CLIPとFAISSでインデックス化することができます。
+
+## Link to this section結論#
+
+CLIP、FAISS、およびUltralytics Pythonパッケージを使用すれば、Flask Webアプリまたはプログラム可能な検索バックエンドとして、わずか数行のコードでゼロショットのセマンティック画像検索エンジンを構築できます。ここから、自身の画像ディレクトリに`data`を指定してインデックス化し、他の[Ultralytics Solutions](/ja/solutions)を調査して、コンピュータビジョンワークフローをさらに拡張してください。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionCLIPはどのようにして画像とテキストの両方を理解するのですか？#
+
+[CLIP](https://github.com/openai/CLIP)（Contrastive Language Image Pretraining）は、視覚情報と言語情報の関連付けを学習する[OpenAI](https://openai.com/)によって開発されたモデルです。自然言語のキャプションとペアになった膨大な画像データセットで学習されており、この学習により、画像とテキストの両方を共有エンベディング空間にマッピングし、ベクトル類似度を使用して直接比較することが可能になります。
+
+### Link to this sectionなぜCLIPはAIタスクにおいて強力だと見なされているのですか？#
+
+CLIPの際立った特徴は、その汎化能力です。特定のラベルやタスク専用にトレーニングされるのではなく、自然言語そのものから学習します。これにより、「ジェットスキーに乗る男性」や「超現実的な夢の風景」といった柔軟なクエリを処理できるため、再学習なしで、分類からクリエイティブなセマンティック検索まで幅広く活用できます。
+
+### Link to this sectionこのプロジェクト（セマンティック検索）において、FAISSは具体的に何をしますか？#
+
+[FAISS](https://engineering.fb.com/2017/03/29/data-infrastructure/faiss-a-library-for-efficient-similarity-search/)（Facebook AI Similarity Search）は、高次元ベクトルを非常に効率的に検索するためのツールキットです。CLIPが画像をエンベディングに変換した後、FAISSはテキストクエリに最も近い一致を高速かつ容易に見つけることを可能にし、リアルタイムの画像取得に最適です。
+
+### Link to this sectionCLIPとFAISSがOpenAIとMetaのものであるなら、なぜ[Ultralytics](https://www.ultralytics.com/)[Pythonパッケージ](https://github.com/ultralytics/ultralytics/)を使用するのですか？#
+
+CLIPとFAISSはそれぞれOpenAIとMetaによって開発されていますが、[Ultralytics Pythonパッケージ](https://pypi.org/project/ultralytics/)は、両者を統合し、すぐに動作する数行のコードの背後にある完全なセマンティック画像検索パイプラインとしてラップしています。
+    
+    
+    from ultralytics import solutions
+    
+    searcher = solutions.VisualAISearch(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    results = searcher("a dog sitting on a bench")
+
+この高レベルな実装は以下を処理します：
+
+  * CLIPベースの画像およびテキストエンベディング生成。
+  * FAISSインデックスの作成と管理。
+  * コサイン類似度による効率的なセマンティック検索。
+  * ディレクトリベースの画像読み込みおよび[可視化](https://www.ultralytics.com/glossary/data-visualization)。
+
+
+
+### Link to this sectionこのアプリのフロントエンドをカスタマイズできますか？#
+
+はい。現在の構成ではFlaskと基本的なHTMLフロントエンドを使用していますが、独自のHTMLに置き換えたり、React、Vue、その他のフロントエンドフレームワークを使用してより動的なUIを構築したりすることも可能です。Flaskは、カスタムインターフェースのバックエンドAPIとして機能させることができます。
+
+### Link to this section静止画ではなく動画を検索することは可能ですか？#
+
+直接的にはできません。簡単な回避策として、動画から個々のフレーム（例：1秒ごとに1フレーム）を抽出し、それらを独立した画像として扱ってシステムに読み込ませる方法があります。これにより、検索エンジンは動画内の視覚的な瞬間をセマンティックにインデックス化できます。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/similarity-search.md)
+
+[GLglenn-jocher4](https://github.com/glenn-jocher)[RIRizwanMunawar3](https://github.com/RizwanMunawar)[RAraimbekovm1](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)
+
+作成日 2025年5月4日更新日 5 日前
+
+## コメント
+
+このページの内容
+
+AIで探索

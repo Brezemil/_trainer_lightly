@@ -1,0 +1,190 @@
+---
+source_url: https://docs.ultralytics.com/ko/yolov5/tutorials/model-ensembling
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-ensembling.md)
+
+# Link to this sectionYOLOv5 모델 앙상블#
+
+📚 이 가이드는 mAP 및 [Recall](https://www.ultralytics.com/glossary/recall) 향상을 위해 테스트 및 추론 과정에서 Ultralytics YOLOv5 🚀 **모델 앙상블** 을 사용하는 방법을 설명합니다.
+
+[앙상블 학습](https://en.wikipedia.org/wiki/Ensemble_learning)이란:
+
+> 앙상블 모델링은 여러 개의 다양한 모델을 생성하여 결과를 예측하는 과정으로, 서로 다른 모델링 알고리즘을 사용하거나 서로 다른 [학습 데이터](https://www.ultralytics.com/glossary/training-data) 세트를 사용합니다. 그런 다음 앙상블 모델은 각 기본 모델의 예측을 집계하여 학습되지 않은 데이터에 대한 최종 결과를 도출합니다. 앙상블 모델을 사용하는 이유는 예측의 일반화 오류를 줄이기 위해서입니다. 기본 모델들이 다양하고 독립적일수록 앙상블 접근 방식을 사용할 때 모델의 예측 오류는 감소합니다. 이 방식은 예측을 할 때 '군중의 지혜'를 활용하고자 합니다. 앙상블 모델은 내부에 여러 기본 모델을 포함하고 있음에도 불구하고 마치 하나의 모델처럼 작동하고 수행합니다.
+
+## Link to this section시작하기 전에#
+
+Clone repo and install [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) in a [**Python >=3.8.0**](https://www.python.org/) environment, including [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). [Models](https://github.com/ultralytics/yolov5/tree/master/models) and [datasets](https://github.com/ultralytics/yolov5/tree/master/data) download automatically from the latest YOLOv5 [release](https://github.com/ultralytics/yolov5/releases).
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+## Link to this section일반 테스트 수행#
+
+앙상블을 수행하기 전에 단일 모델의 기준 성능을 설정하십시오. 이 명령어는 640픽셀 이미지 크기에서 COCO val2017 데이터셋으로 YOLOv5x를 테스트합니다. `yolov5x.pt`는 사용 가능한 가장 크고 정확한 모델입니다. 그 외 선택지로 `yolov5s.pt`, `yolov5m.pt`, `yolov5l.pt`가 있으며, 사용자 지정 데이터셋을 학습하여 생성한 체크포인트인 `./weights/best.pt`를 사용할 수도 있습니다. 사용 가능한 모든 모델에 대한 자세한 내용은 [사전 학습된 체크포인트 테이블](https://docs.ultralytics.com/models/yolov5)을 참조하십시오.
+    
+    
+    python val.py --weights yolov5x.pt --data coco.yaml --img 640 --half
+
+출력:
+    
+    
+    val: data=./data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients
+    
+    val: Scanning '../datasets/coco/val2017' images and labels...4952 found, 48 missing, 0 empty, 0 corrupted: 100% 5000/5000 [00:01<00:00, 2846.03it/s]
+    val: New cache created: ../datasets/coco/val2017.cache
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [02:30<00:00,  1.05it/s]
+                     all       5000      36335      0.746      0.626       0.68       0.49
+    Speed: 0.1ms pre-process, 22.4ms inference, 1.4ms NMS per image at shape (32, 3, 640, 640)  # <--- baseline speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.504  # <--- baseline mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.688
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.546
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.351
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.551
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.644
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.382
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.628
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.681  # <--- baseline mAR
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.524
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.735
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.826
+
+## Link to this section앙상블 테스트#
+
+기존의 모든 val.py 또는 detect.py 명령어에서 `--weights` 인수에 추가 모델을 추가하면 테스트 및 추론 시점에 여러 사전 학습된 모델을 간단히 앙상블할 수 있습니다. 다음 예시는 2개의 모델을 앙상블하여 테스트하는 방법입니다:
+
+  * YOLOv5x
+  * YOLOv5l6
+
+
+    
+    
+    python val.py --weights yolov5x.pt yolov5l6.pt --data coco.yaml --img 640 --half
+
+`runs/train/exp-5/weights/best.pt`와 같은 사용자 지정 가중치를 포함하여 원하는 만큼 체크포인트를 나열할 수 있습니다. YOLOv5는 자동으로 각 모델을 실행하고 이미지별로 예측을 정렬한 뒤, NMS를 수행하기 전에 출력 결과를 평균화합니다.
+
+출력:
+    
+    
+    val: data=./data/coco.yaml, weights=['yolov5x.pt', 'yolov5l6.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.6, task=val, device=, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients  # Model 1
+    Fusing layers...
+    Model Summary: 501 layers, 77218620 parameters, 0 gradients  # Model 2
+    Ensemble created with ['yolov5x.pt', 'yolov5l6.pt']  # Ensemble notice
+    
+    val: Scanning '../datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupted: 100% 5000/5000 [00:00<00:00, 49695545.02it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [03:58<00:00,  1.52s/it]
+                     all       5000      36335      0.747      0.637      0.692      0.502
+    Speed: 0.1ms pre-process, 39.5ms inference, 2.0ms NMS per image at shape (32, 3, 640, 640)  # <--- ensemble speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-3/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.515  # <--- ensemble mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.699
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.557
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.356
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.563
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.668
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.387
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.638
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.689  # <--- ensemble mAR
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.526
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.743
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.844
+
+## Link to this section앙상블 추론#
+
+앙상블 추론을 실행하려면 `--weights` 인수에 추가 모델을 추가하십시오:
+    
+    
+    python detect.py --weights yolov5x.pt yolov5l6.pt --img 640 --source data/images
+
+출력:
+    
+    
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients
+    Fusing layers...
+    Model Summary: 501 layers, 77218620 parameters, 0 gradients
+    Ensemble created with ['yolov5x.pt', 'yolov5l6.pt']
+    
+    image 1/2 /content/yolov5/data/images/bus.jpg: 640x512 4 persons, 1 bus, 1 tie, Done. (0.063s)
+    image 2/2 /content/yolov5/data/images/zidane.jpg: 384x640 3 persons, 2 ties, Done. (0.056s)
+    Results saved to runs/detect/exp-2
+    Done. (0.223s)
+
+![YOLO inference result](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolo-inference-result.avif)
+
+## Link to this section모델 앙상블의 이점#
+
+YOLOv5를 사용한 모델 앙상블은 다음과 같은 여러 가지 이점을 제공합니다:
+
+  1. **정확도 향상** : 위 예시에서 보듯이 여러 모델을 앙상블하면 mAP가 0.504에서 0.515로, mAR이 0.681에서 0.689로 증가합니다.
+  2. **더 나은 일반화** : 다양한 모델을 결합하면 과적합을 줄이고 다양한 데이터에 대한 성능을 향상시키는 데 도움이 됩니다.
+  3. **강화된 견고성** : 앙상블은 일반적으로 데이터의 노이즈와 이상치에 더 강합니다.
+  4. **상호 보완적인 강점** : 각 모델은 서로 다른 유형의 객체를 감지하거나 서로 다른 환경 조건에서 더 뛰어난 성능을 발휘할 수 있습니다.
+
+
+
+주요 단점은 속도 측정치(단일 모델 22.4ms vs 앙상블 39.5ms)에서 볼 수 있듯이 추론 시간이 증가한다는 것입니다.
+
+## Link to this section모델 앙상블 사용 시기#
+
+다음과 같은 상황에서 모델 앙상블 사용을 고려하십시오:
+
+  * 추론 속도보다 정확도가 더 중요할 때
+  * 거짓 음성(false negatives)을 최소화해야 하는 중요한 애플리케이션의 경우
+  * 다양한 조명, 가림 현상, 또는 스케일을 가진 까다로운 이미지를 처리할 때
+  * 최대 성능이 요구되는 대회나 벤치마킹 시
+
+
+
+엄격한 지연 시간 요구 사항이 있는 실시간 애플리케이션의 경우, 단일 모델 추론이 더 적합할 수 있습니다.
+
+## Link to this section지원되는 환경#
+
+Ultralytics는 프로젝트를 신속하게 시작할 수 있도록 [CUDA](https://developer.nvidia.com/cuda), [CUDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/), [PyTorch](https://pytorch.org/)와 같은 필수 의존성이 미리 설치된 다양한 환경을 제공합니다.
+
+  * **무료 GPU 노트북** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [GCP 시작 가이드](/ko/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [AWS 퀵스타트 가이드](/ko/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [AzureML 퀵스타트 가이드](/ko/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Docker 퀵스타트 가이드](/ko/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this section프로젝트 상태#
+
+[![YOLOv5 CI](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+이 배지는 모든 [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) CI(Continuous Integration) 테스트가 성공적으로 통과했음을 나타냅니다. 이러한 CI 테스트는 [학습](https://github.com/ultralytics/yolov5/blob/master/train.py), [검증](https://github.com/ultralytics/yolov5/blob/master/val.py), [추론](https://github.com/ultralytics/yolov5/blob/master/detect.py), [내보내기](https://github.com/ultralytics/yolov5/blob/master/export.py) 및 [벤치마크](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py)와 같은 YOLOv5의 기능 및 성능을 다양한 관점에서 엄격하게 점검합니다. 24시간마다 그리고 새로운 커밋이 발생할 때마다 테스트를 수행하여 macOS, Windows 및 Ubuntu 환경에서 일관되고 안정적인 작동을 보장합니다.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-ensembling.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+생성됨 3일 전업데이트됨 3일 전
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

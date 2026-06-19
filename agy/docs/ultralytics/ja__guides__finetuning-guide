@@ -1,0 +1,194 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/finetuning-guide
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+# Link to this sectionYOLOをカスタムデータセットでファインチューニングする方法#
+
+[ファインチューニング](https://www.ultralytics.com/glossary/fine-tuning)とは、学習済みの重みから開始することで、新しいクラスを認識できるように事前学習済みモデルを適応させる手法です。最初から何百ものエポックをかけてトレーニングする代わりに、ファインチューニングでは事前学習済みの [COCO](/ja/datasets/detect/coco) 特徴量を活用し、短時間でカスタムデータに収束させることができます。
+
+This guide covers fine-tuning [YOLO26](/ja/models/yolo26) on custom datasets, from basic usage to advanced techniques like layer freezing and two-stage training.
+
+## Link to this sectionファインチューニングとゼロからのトレーニングの比較#
+
+事前学習済みモデルは、数百万枚の画像からエッジ検出、テクスチャ認識、形状理解といった一般的な視覚的特徴をすでに学習しています。ファインチューニングを通じた[転移学習](https://www.ultralytics.com/glossary/transfer-learning)はその知識を再利用し、新しいクラスがどのように見えるかだけをモデルに教えるため、収束が速く、少ないデータで済みます。ゼロからのトレーニングではそのすべてを破棄し、ピクセルレベルのパターンからすべてを学習させる必要があるため、大幅に多くのリソースを消費します。
+
+| ファインチューニング| ゼロからのトレーニング  
+---|---|---  
+**開始時の重み**|  COCOで事前学習済み (80クラス)| ランダム初期化  
+**コマンド**| `YOLO("yolo26n.pt")`| `YOLO("yolo26n.yaml")`  
+**収束**|  高速 - バックボーンが学習済みであるため| 低速 - すべてのレイヤーをゼロから学習するため  
+**データの要件**|  より少ない - 事前学習済みの特徴量がデータ不足を補うため| より多い - モデルがデータセットのみからすべての特徴を学習する必要があるため  
+**使用場面**|  自然画像を用いたカスタムクラス| COCOと根本的に異なるドメイン (医療、衛星、レーダーなど)  
+  
+ファインチューニングには追加のコードは不要です
+
+When a `.pt` file is loaded with `YOLO("yolo26n.pt")`, the pretrained weights are stored in the model. Calling `.train(data="custom.yaml")` after that automatically transfers all compatible weights to the new model architecture, reinitializes any layers that don't match (such as the detection head when the number of classes differs), and begins training. No manual weight loading, layer manipulation, or custom transfer learning code is required.
+
+### Link to this section事前学習済みの重み転送の仕組み#
+
+事前学習済みモデルをクラス数の異なるデータセット（例: COCOの80クラスから5つのカスタムクラスへ）でファインチューニングする場合、Ultralyticsは形状を考慮した重み転送を実行します。
+
+  1. **バックボーンとネックは完全に転送** \- これらのレイヤーは一般的な視覚的特徴を抽出し、その形状はクラス数に依存しないためです。
+  2. **検出ヘッドは部分的に再初期化** \- 分類出力レイヤー（`cv3`、`one2one_cv3`）はクラス数（80対5）に依存する形状を持つため、転送できずランダムに初期化されます。ヘッド内のボックス回帰レイヤー（`cv2`、`one2one_cv2`）はクラス数に関係なく固定形状を持つため、通常通り転送されます。
+  3. クラス数を変更しても、**重みの大部分は転送されます** 。検出ヘッド内の分類固有レイヤーのみが再初期化され、バックボーン、ネック、およびボックス回帰のブランチはそのまま維持されます。
+
+
+
+事前学習済みモデルと同じクラス数のデータセット（例: COCO事前学習済みの重みを別の80クラスデータセットでファインチューニングする場合）では、検出ヘッドを含む100%の重みが転送されます。
+
+## Link to this section基本的なファインチューニングの例#
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load pretrained model
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+
+### Link to this sectionモデルサイズの選択#
+
+大型モデルは容量が大きい一方で更新すべきパラメータも多く、トレーニングデータが限られている場合には過学習のリスクが高まる可能性があります。まずは小型モデル（YOLO26nやYOLO26s）から始め、検証メトリクスが頭打ちになった場合にのみモデルを大きくしていくのが実用的なアプローチです。最適なモデルサイズは、タスクの複雑さ、クラス数、データセットの多様性、およびデプロイ環境のハードウェアによって決まります。利用可能なサイズとパフォーマンスベンチマークについては、[YOLO26モデルページ](/ja/models/yolo26)全体を参照してください。
+
+## Link to this sectionオプティマイザーと学習率の選択#
+
+デフォルトの`optimizer=auto`設定は、トレーニングの総反復数に基づいてオプティマイザーと学習率を選択します。
+
+  * **10,000回未満の反復** （小規模データセットまたは少ないエポック数）: 自動計算された低い学習率のAdamW
+  * **10,000回以上の反復** （大規模データセット）: [MuSGD](/reference/optim/muon)（Muon+SGDハイブリッドオプティマイザー）、lr=0.01
+
+
+
+ほとんどのファインチューニングタスクでは、手動調整なしでデフォルト設定がうまく機能します。次のような場合は、明示的にオプティマイザーを設定することを検討してください。
+
+  * **トレーニングが不安定な場合** （損失が急上昇または発散する場合）: より安定した収束のために`optimizer=AdamW, lr0=0.001`を試してください
+  * **小規模データセットで大型モデルをファインチューニングする場合** : `lr0=0.001`のような低い学習率が、事前学習済みの特徴を保持するのに役立ちます
+
+
+
+Autoオプティマイザーは手動のlr0を上書きします
+
+`optimizer=auto`の場合、`lr0`と`momentum`の値は無視されます。学習率を手動で制御するには、`optimizer=SGD, lr0=0.005`のようにオプティマイザーを明示的に設定してください。
+
+## Link to this sectionレイヤーの凍結#
+
+凍結は、トレーニング中に特定のレイヤーが更新されないようにする設定です。これによりトレーニングが高速化し、モデル容量に対してデータセットが小さい場合の[過学習](https://www.ultralytics.com/glossary/overfitting)を低減できます。
+
+`freeze`パラメータは整数またはリストを受け取ります。整数`freeze=10`は最初の10レイヤー（0から9まで、YOLO26ではバックボーンに対応）を凍結します。リストには部分的なバックボーン凍結のための`freeze=[0, 3, 5]`のようなレイヤーインデックスや、レイヤー内の特定のブランチをきめ細かく制御するための`freeze=["23.cv2"]`のようなモジュール名文字列を含めることができます。
+
+例
+    
+    
+    model.train(data="custom.yaml", epochs=50, freeze=10)
+
+適切な凍結深度は、ターゲットドメインが事前学習データとどの程度似ているか、また利用可能なトレーニングデータ量に依存します。
+
+シナリオ| 推奨事項| 根拠  
+---|---|---  
+大規模データセット、似たドメイン| `freeze=None` (デフォルト)| 過学習せずにすべてのレイヤーを適応させるのに十分なデータがある場合  
+小規模データセット、似たドメイン| `freeze=10`| バックボーンの特徴を保持し、トレーニング可能なパラメータを削減する  
+非常に小規模なデータセット| `freeze=23`| 検出ヘッドのみをトレーニングし、過学習のリスクを最小限に抑える  
+COCOから遠いドメイン| `freeze=None`| バックボーンの特徴がうまく転送されず、再トレーニングが必要な場合  
+  
+凍結深度はハイパーパラメータとして扱うこともできます。いくつかの値（0, 5, 10）を試して検証mAPを比較することは、特定のデータセットに最適な設定を見つけるための実用的な方法です。
+
+## Link to this sectionファインチューニングにおける主要なハイパーパラメータ#
+
+ファインチューニングは、一般的にゼロからのトレーニングよりも少ないハイパーパラメータ調整で済みます。最も重要なパラメータは以下の通りです。
+
+  * **`epochs`** : ファインチューニングはゼロからのトレーニングよりも速く収束します。中程度の値から開始し、検証メトリクスが頭打ちになったら`patience`を使用して早期終了させてください。
+  * **`patience`** : デフォルトの100は長期トレーニング実行用に設計されています。これを10-20に減らすことで、すでに収束している実行に無駄な時間を使うことを避けられます。
+  * **`warmup_epochs`** : デフォルトのウォームアップ（3エポック）は学習率をゼロから徐々に増加させます。これにより、初期の反復で大きな勾配更新が事前学習済みの特徴を破壊するのを防ぎます。ファインチューニングであってもデフォルトの維持が推奨されます。
+
+
+
+トレーニングパラメータの完全なリストについては、[トレーニング設定リファレンス](/ja/usage/cfg)を参照してください。
+
+## Link to this section2段階ファインチューニング#
+
+2段階ファインチューニングは、トレーニングを2つのフェーズに分けます。第1段階ではバックボーンを凍結し、ネックとヘッドのみをトレーニングすることで、事前学習済みの特徴を損なうことなく検出レイヤーを新しいクラスに適応させます。第2段階ではすべてのレイヤーの凍結を解除し、低い学習率でモデル全体をトレーニングしてターゲットドメイン向けにバックボーンを洗練させます。
+
+このアプローチは、ターゲットドメインがCOCOと大きく異なる場合（医療画像、航空画像、顕微鏡画像など）に特に有用です。バックボーンの適応が必要でありながら、一度にすべてトレーニングすると不安定になる場合に有効です。コールバックベースの自動凍結解除については、[バックボーンの凍結と凍結解除](/ja/guides/custom-trainer#freezing-and-unfreezing-the-backbone)を参照してください。
+
+2段階ファインチューニング
+    
+    
+    from ultralytics import YOLO
+    
+    # Stage 1: freeze backbone, train head and neck
+    model = YOLO("yolo26n.pt")
+    model.train(data="custom.yaml", epochs=20, freeze=10, name="stage1", exist_ok=True)
+    
+    # Stage 2: unfreeze all, fine-tune with lower lr
+    model = YOLO("runs/detect/stage1/weights/best.pt")
+    model.train(data="custom.yaml", epochs=30, lr0=0.001, name="stage2", exist_ok=True)
+
+## Link to this section一般的な落とし穴#
+
+### Link to this sectionモデルが予測を出力しない#
+
+  * **不十分なトレーニングデータ** : サンプル数が非常に少ない状態でトレーニングすることが最も一般的な原因です。モデルはデータが少なすぎると学習や一般化ができません。他の原因を調査する前に、クラスごとに十分な多様性のある例が存在することを確認してください。
+  * **データセットパスを確認** : `data.yaml`内のパスが正しくないと、ラベルがゼロになることがあります。トレーニング前に`yolo detect val model=yolo26n.pt data=your_data.yaml`を実行し、ラベルが正しく読み込まれるか確認してください。
+  * **信頼度しきい値を下げる** : 予測は存在するもののフィルタリングされている場合は、推論時に`conf=0.1`を試してください。
+  * **Verify class count** : ensure `nc` in `data.yaml` matches the actual number of classes in the label files.
+
+
+
+### Link to this section検証mAPが早期に頭打ちになる#
+
+  * **データを追加** : ファインチューニングでは、特に角度、照明、背景が異なる多様な例などの追加トレーニングデータが非常に効果的です。
+  * **クラスバランスを確認** : 代表性の低いクラスはAPが低くなります。`cls_pw`を使用して逆頻度クラス重み付けを適用してください（中程度の不均衡には`cls_pw=0.25`から開始し、深刻な不均衡には`1.0`まで増やします）。
+  * **オーギュメンテーションを減らす** : 非常に小さなデータセットでは、過度のオーギュメンテーションが逆効果になることがあります。`mosaic=0.5`または`mosaic=0.0`を試してください。
+  * **解像度を上げる** : 小さなオブジェクトがあるデータセットでは、詳細を保持するために`imgsz=1280`を試してください。
+
+
+
+### Link to this sectionファインチューニング後に元のクラスでのパフォーマンスが低下する#
+
+これは破滅的忘却として知られており、新しいデータのみでファインチューニングされると、モデルは以前に学習した知識を失います。新しいデータとともに元のデータセットの画像を含めない限り、忘却はほぼ避けられません。これを緩和するには以下を行います。
+
+  * **データセットを統合** : ファインチューニング中に、新しいクラスに加えて元のクラスの例を含めます。これが忘却を防ぐ唯一の信頼できる方法です。
+  * **バックボーンとネックを凍結** : バックボーンとネックの両方を凍結し、検出ヘッドのみをトレーニングすることで、非常に低い学習率での短いファインチューニング実行が助けになります。
+  * **エポック数を減らしてトレーニング** : 新しいデータのみでトレーニングする時間が長いほど、忘却は増加します。
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionYOLOのファインチューニングには何枚の画像が必要ですか？#
+
+固定された最小値はありません。結果はタスクの複雑さ、クラス数、ドメインがCOCOとどの程度似ているかに依存します。純粋な量よりも、多様な画像（照明、角度、背景の変化）の方が重要です。まずは手元にあるデータで開始し、検証メトリクスが不十分であれば増やしてください。
+
+### Link to this sectionカスタムデータセットでYOLO26をファインチューニングするにはどうすればよいですか？#
+
+Load a pretrained `.pt` file and call `.train()` with the path to a custom `data.yaml`. Ultralytics automatically handles [weight transfer](https://www.ultralytics.com/glossary/transfer-learning), detection head reinitialization, and optimizer selection. See the Basic Fine-Tuning section for the complete code example.
+
+### Link to this sectionファインチューニングしたYOLOモデルが何も検出しないのはなぜですか？#
+
+最も一般的な原因は、`data.yaml`のパスが正しくない（ラベルがゼロになる）、YAMLの`nc`と実際のラベルファイルが一致していない、または信頼度しきい値が高すぎることです。完全なトラブルシューティングチェックリストについては、一般的な落とし穴を参照してください。
+
+### Link to this sectionファインチューニングのためにどのYOLOレイヤーを凍結すべきですか？#
+
+データセットのサイズとドメインの類似性によって異なります。COCOとドメインが似ている小さなデータセットの場合、バックボーンの凍結（`freeze=10`）が過学習を防ぎます。COCOと非常に異なるドメインの場合は、すべてのレイヤーを凍結解除（`freeze=None`）にすることで、バックボーンを適応させることができます。推奨事項の詳細については、レイヤーの凍結を参照してください。
+
+### Link to this sectionYOLOを新しいクラスでファインチューニングする際、破滅的忘却を防ぐにはどうすればよいですか？#
+
+新しいデータセットに、元のクラスの例を新しいクラスと一緒に含めてください。それが不可能な場合は、より多くのレイヤーを凍結（`freeze=10`以上）し、低い学習率を使用することで、事前学習済みの知識を保持しやすくなります。詳細については、元のクラスでのパフォーマンス低下を参照してください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+[RAraimbekovm1](https://github.com/raimbekovm)
+
+作成日 先月更新日 先月
+
+## コメント
+
+このページの内容
+
+AIで探索

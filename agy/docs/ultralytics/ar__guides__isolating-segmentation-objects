@@ -1,0 +1,349 @@
+---
+source_url: https://docs.ultralytics.com/ar/guides/isolating-segmentation-objects
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/isolating-segmentation-objects.md)
+
+# Link to this sectionعزل كائنات التجزئة (Segmentation Objects)#
+
+بعد تنفيذ [مهمة التجزئة](/ar/tasks/segment)، من المرغوب فيه أحياناً استخراج الكائنات المعزولة من نتائج الاستدلال (inference). يقدم هذا الدليل وصفة عامة لكيفية تحقيق ذلك باستخدام [وضع التنبؤ](/ar/modes/predict) في Ultralytics.
+
+  
+
+
+  
+**Watch:** How to Remove Background and Isolate Objects with Ultralytics YOLO Segmentation & OpenCV in Python 🚀 
+
+## Link to this sectionشرح الوصفة#
+
+  1. راجع [قسم التثبيت السريع لـ Ultralytics](/ar/quickstart) للحصول على دليل سريع حول تثبيت المكتبات المطلوبة.
+
+* * *
+
+  2. تحميل نموذج وتشغيل طريقة `predict()` على مصدر ما.
+         
+         from ultralytics import YOLO
+         
+         # Load a model
+         model = YOLO("yolo26n-seg.pt")
+         
+         # Run inference
+         results = model.predict()
+
+
+
+
+لا توجد وسائط (Arguments) للتنبؤ؟
+
+بدون تحديد مصدر، سيتم استخدام صور الأمثلة من المكتبة:
+    
+    
+    'ultralytics/assets/bus.jpg'
+    'ultralytics/assets/zidane.jpg'
+
+هذا مفيد للاختبار السريع باستخدام طريقة `predict()`.
+
+للحصول على معلومات إضافية حول نماذج التجزئة، قم بزيارة صفحة [مهمة التجزئة](/ar/tasks/segment#models). لمعرفة المزيد حول طريقة `predict()`، راجع قسم [وضع التنبؤ](/ar/modes/predict) في التوثيق.
+
+`*** `
+
+الآن قم بالتكرار عبر النتائج والخطوط الكنتورية (contours). بالنسبة لسير العمل الذي يرغب في حفظ صورة في ملف، يتم استرداد `base-name` للصورة المصدر و `class-label` للاكتشاف لاستخدامه لاحقاً (اختياري).
+    
+    
+    ```{ .py .annotate }
+    from pathlib import Path
+    
+    import numpy as np
+    
+    # (2) Iterate detection results (helpful for multiple images)
+    for r in results:
+        img = np.copy(r.orig_img)
+        img_name = Path(r.path).stem  # source image base-name
+    
+        # Iterate each object contour (multiple detections)
+        for ci, c in enumerate(r):
+            # (1) Get detection class name
+            label = c.names[c.boxes.cls.tolist().pop()]
+    ```
+    
+    1. To learn more about working with detection results, see [Boxes Section for Predict Mode](../modes/predict.md#boxes).
+    2. To learn more about `predict()` results see [Working with Results for Predict Mode](../modes/predict.md#working-with-results)
+
+حلقة التكرار (For-Loop)
+
+صورة واحدة ستكرر الحلقة الأولى مرة واحدة فقط. صورة واحدة تحتوي على اكتشاف واحد فقط ستكرر كل حلقة _مرة واحدة فقط_.
+
+* * *
+
+  4. ابدأ بإنشاء قناع ثنائي (binary mask) من الصورة المصدر ثم ارسم خطاً كنتورياً مملوءاً على القناع. سيسمح هذا بعزل الكائن عن الأجزاء الأخرى من الصورة. يظهر على اليمين مثال من `bus.jpg` لأحد كائنات فئة `person` التي تم اكتشافها.
+
+![صورة القناع الثنائي](https://github.com/ultralytics/ultralytics/assets/62214284/59bce684-fdda-4b17-8104-0b4b51149aca){ width="240", align="right" }
+         
+         import cv2
+         
+         # Create binary mask
+         b_mask = np.zeros(img.shape[:2], np.uint8)
+         
+         # (1) Extract contour result
+         contour = c.masks.xy.pop()
+         # (2) Changing the type
+         contour = contour.astype(np.int32)
+         # (3) Reshaping
+         contour = contour.reshape(-1, 1, 2)
+         
+         # Draw contour onto mask
+         _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+
+     1. لمزيد من المعلومات حول `c.masks.xy` راجع [قسم الأقنعة من وضع التنبؤ](/ar/modes/predict#masks).
+
+     2. هنا يتم تحويل القيم إلى `np.int32` للتوافق مع وظيفة `drawContours()` من [OpenCV](https://www.ultralytics.com/glossary/opencv).
+
+     3. تتوقع وظيفة `drawContours()` في OpenCV أن تكون للخطوط الكنتورية شكل `[N, 1, 2]`، قم بتوسيع القسم أدناه لمزيد من التفاصيل.
+
+Expand to understand what is happening when defining the `contour` variable.
+
+\- `c.masks.xy` :: Provides the coordinates of the mask contour points in the format `(x, y)`. For more details, refer to the [Masks Section from Predict Mode](../modes/predict.md#masks). \- `.pop()` :: As `masks.xy` is a list containing a single element, this element is extracted using the `pop()` method. \- `.astype(np.int32)` :: Using `masks.xy` will return with a data type of `float32`, but this won't be compatible with the OpenCV `drawContours()` function, so this will change the data type to `int32` for compatibility. \- `.reshape(-1, 1, 2)` :: Reformats the data into the required shape of `[N, 1, 2]` where `N` is the number of contour points, with each point represented by a single entry `1`, and the entry is composed of `2` values. The `-1` denotes that the number of values along this dimension is flexible. 
+
+Expand for an explanation of the `drawContours()` configuration.
+
+\- Encapsulating the `contour` variable within square brackets, `[contour]`, was found to effectively generate the desired contour mask during testing. \- The value `-1` specified for the `drawContours()` parameter instructs the function to draw all contours present in the image. \- The `tuple` `(255, 255, 255)` represents the color white, which is the desired color for drawing the contour in this binary mask. \- The addition of `cv2.FILLED` will color all pixels enclosed by the contour boundary the same, in this case, all enclosed pixels will be white. \- See [OpenCV Documentation on `drawContours()`](https://docs.opencv.org/4.8.0/d6/d6e/group__imgproc__draw.html#ga746c0625f1781f1ffc9056259103edbc) for more information. 
+
+* * *
+
+  5. بعد ذلك، هناك خياران لكيفية المضي قدماً في الصورة من هذه النقطة، وخيار لاحق لكل منهما.
+
+### Link to this sectionخيارات عزل الكائنات#
+
+
+
+
+مثال
+    
+    
+    # Create 3-channel mask
+    mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+    
+    # Isolate object with binary mask
+    isolated = cv2.bitwise_and(mask3ch, img)
+
+كيف يعمل هذا؟
+
+  * أولاً، يتم تحويل القناع الثنائي من صورة أحادية القناة إلى صورة ثلاثية القنوات. هذا التحويل ضروري للخطوة اللاحقة حيث يتم دمج القناع والصورة الأصلية. يجب أن تحتوي كلتا الصورتين على نفس عدد القنوات لتكونا متوافقتين مع عملية المزج.
+
+  * يتم دمج الصورة الأصلية والقناع الثنائي ثلاثي القنوات باستخدام وظيفة `bitwise_and()` في OpenCV. تحتفظ هذه العملية _فقط_ بقيم البكسل التي تزيد عن صفر `(> 0)` من كلتا الصورتين. نظراً لأن بكسلات القناع أكبر من صفر `(> 0)` _فقط_ داخل منطقة الخط الكنتوري، فإن البكسلات المتبقية من الصورة الأصلية هي تلك التي تتداخل مع الخط الكنتوري.
+
+
+
+
+### Link to this sectionالعزل ببكسلات سوداء: خيارات فرعية#
+
+صورة بالحجم الكامل
+
+لا توجد خطوات إضافية مطلوبة في حالة الاحتفاظ بالصورة بالحجم الكامل.
+
+![Example Full size Isolated Object Image Black Background](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/full-size-isolated-object-black-background.avif){ width=240 } Example full-size output
+
+صورة الكائن المقصوصة
+
+مطلوب خطوات إضافية لقص الصورة بحيث تشمل فقط منطقة الكائن.
+
+![مثال صورة كائن مقصوص ومعزول بخلفية سوداء](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/example-crop-isolated-object-image-black-background.avif){ align="right" }
+    
+    
+    # (1) Bounding box coordinates
+    x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+    # Crop image to object region
+    iso_crop = isolated[y1:y2, x1:x2]
+
+  1. لمزيد من المعلومات حول نتائج [صندوق الإحاطة](https://www.ultralytics.com/glossary/bounding-box)، راجع [قسم الصناديق من وضع التنبؤ](/ar/modes/predict#boxes)
+
+ماذا يفعل هذا الكود؟
+
+  * يقوم استدعاء `c.boxes.xyxy.cpu().numpy()` باسترداد صناديق الإحاطة كمصفوفة NumPy بتنسيق `xyxy`، حيث تمثل `xmin` و `ymin` و `xmax` و `ymax` إحداثيات مستطيل صندوق الإحاطة. راجع [قسم الصناديق من وضع التنبؤ](/ar/modes/predict#boxes) لمزيد من التفاصيل.
+
+  * تقوم عملية `squeeze()` بإزالة أي أبعاد غير ضرورية من مصفوفة NumPy، مما يضمن حصولها على الشكل المتوقع.
+
+  * تحويل قيم الإحداثيات باستخدام `.astype(np.int32)` يغير نوع بيانات إحداثيات الصندوق من `float32` إلى `int32`، مما يجعلها متوافقة لقص الصورة باستخدام شرائح الفهرس (index slices).
+
+  * أخيراً، يتم قص منطقة صندوق الإحاطة من الصورة باستخدام شرائح الفهرس. يتم تحديد الحدود بواسطة إحداثيات `[ymin:ymax, xmin:xmax]` لصندوق إحاطة الاكتشاف.
+
+
+
+
+ماذا لو أردت الكائن المقصوص **بما في ذلك** الخلفية؟
+
+هذه ميزة مدمجة في مكتبة Ultralytics. راجع وسيط `save_crop` لـ [وسائط استدلال وضع التنبؤ](/ar/modes/predict#inference-arguments) للحصول على التفاصيل.
+
+* * *
+
+  6. _ما يجب فعله بعد ذلك متروك لك تماماً كمطور._ تم عرض مثال أساسي لخطوة تالية محتملة (حفظ الصورة في ملف للاستخدام المستقبلي). 
+     * **ملاحظة:** هذه الخطوة اختيارية ويمكن تخطيها إذا لم تكن مطلوبة لحالة استخدامك المحددة.
+
+مثال على الخطوة النهائية
+    
+    
+    # Save isolated object to file
+    _ = cv2.imwrite(f"{img_name}_{label}-{ci}.png", iso_crop)
+
+  * في هذا المثال، `img_name` هو الاسم الأساسي لملف الصورة المصدر، و `label` هو اسم الفئة المكتشفة، و `ci` هو فهرس [اكتشاف الكائن](https://www.ultralytics.com/glossary/object-detection) (في حالة وجود حالات متعددة بنفس اسم الفئة).
+
+
+
+## Link to this sectionكود المثال الكامل#
+
+هنا، يتم دمج جميع الخطوات من القسم السابق في كتلة واحدة من الكود. للاستخدام المتكرر، سيكون من الأمثل تحديد وظيفة للقيام ببعض أو كل الأوامر الواردة في حلقات `for`، ولكن هذا تمرين متروك للقارئ.
+    
+    
+    from pathlib import Path
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    m = YOLO("yolo26n-seg.pt")  # (4)!
+    res = m.predict(source="path/to/image.jpg")  # (3)!
+    
+    # Iterate detection results (5)
+    for r in res:
+        img = np.copy(r.orig_img)
+        img_name = Path(r.path).stem
+    
+        # Iterate each object contour (6)
+        for ci, c in enumerate(r):
+            label = c.names[c.boxes.cls.tolist().pop()]
+    
+            b_mask = np.zeros(img.shape[:2], np.uint8)
+    
+            # Create contour mask (1)
+            contour = c.masks.xy.pop().astype(np.int32).reshape(-1, 1, 2)
+            _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+    
+            # Choose one:
+    
+            # OPTION-1: Isolate object with black background
+            mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+            isolated = cv2.bitwise_and(mask3ch, img)
+    
+            # OPTION-2: Isolate object with transparent background (when saved as PNG)
+            isolated = np.dstack([img, b_mask])
+    
+            # OPTIONAL: detection crop (from either OPT1 or OPT2)
+            x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+            iso_crop = isolated[y1:y2, x1:x2]
+    
+            # Add your custom post-processing here (2)
+
+  1. السطر الذي يملأ `contour` مدمج في سطر واحد هنا، حيث تم تقسيمه إلى عدة أسطر أعلاه.
+  2. {==ما يحدث هنا متروك لك!==}
+  3. راجع [وضع التنبؤ](/ar/modes/predict) لمزيد من المعلومات.
+  4. راجع [مهمة التجزئة](/ar/tasks/segment#models) لمزيد من المعلومات.
+  5. تعرف على المزيد حول [العمل مع النتائج](/ar/modes/predict#working-with-results)
+  6. تعرف على المزيد حول [نتائج أقنعة التجزئة](/ar/modes/predict#masks)
+
+
+
+## Link to this sectionالأسئلة الشائعة#
+
+### Link to this sectionكيف يمكنني عزل الكائنات باستخدام Ultralytics YOLO26 لمهام التجزئة؟#
+
+لعزل الكائنات باستخدام Ultralytics YOLO26، اتبع الخطوات التالية:
+
+  1. **تحميل النموذج وتشغيل الاستدلال:**
+         
+         from ultralytics import YOLO
+         
+         model = YOLO("yolo26n-seg.pt")
+         results = model.predict(source="path/to/your/image.jpg")
+
+  2. **إنشاء قناع ثنائي ورسم الخطوط الكنتورية:**
+         
+         import cv2
+         import numpy as np
+         
+         img = np.copy(results[0].orig_img)
+         b_mask = np.zeros(img.shape[:2], np.uint8)
+         contour = results[0].masks.xy[0].astype(np.int32).reshape(-1, 1, 2)
+         cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+
+  3. **عزل الكائن باستخدام القناع الثنائي:**
+         
+         mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+         isolated = cv2.bitwise_and(mask3ch, img)
+
+
+
+
+راجع الدليل الخاص بـ [وضع التنبؤ](/ar/modes/predict) و [مهمة التجزئة](/ar/tasks/segment) لمزيد من المعلومات.
+
+### Link to this sectionما هي الخيارات المتاحة لحفظ الكائنات المعزولة بعد التجزئة؟#
+
+يوفر Ultralytics YOLO26 خيارين رئيسيين لحفظ الكائنات المعزولة:
+
+  1. **مع خلفية سوداء:**
+         
+         mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+         isolated = cv2.bitwise_and(mask3ch, img)
+
+  2. **مع خلفية شفافة:**
+         
+         isolated = np.dstack([img, b_mask])
+
+
+
+
+لمزيد من التفاصيل، قم بزيارة قسم [وضع التنبؤ](/ar/modes/predict).
+
+### Link to this sectionكيف يمكنني قص الكائنات المعزولة إلى صناديق إحاطتها باستخدام Ultralytics YOLO26؟#
+
+لقص الكائنات المعزولة إلى صناديق إحاطتها:
+
+  1. **استرداد إحداثيات صندوق الإحاطة:**
+         
+         x1, y1, x2, y2 = results[0].boxes.xyxy[0].cpu().numpy().astype(np.int32)
+
+  2. **قص الصورة المعزولة:**
+         
+         iso_crop = isolated[y1:y2, x1:x2]
+
+
+
+
+تعرف على المزيد حول نتائج صناديق الإحاطة في توثيق [وضع التنبؤ](/ar/modes/predict#boxes).
+
+### Link to this sectionلماذا يجب أن أستخدم Ultralytics YOLO26 لعزل الكائنات في مهام التجزئة؟#
+
+يوفر Ultralytics YOLO26:
+
+  * **سرعة عالية** في اكتشاف الكائنات وتجزئتها في الوقت الفعلي.
+  * **دقة عالية في توليد صندوق الإحاطة والقناع** لعزل دقيق للكائن.
+  * **توثيق شامل** وواجهة برمجة تطبيقات (API) سهلة الاستخدام من أجل تطوير فعال.
+
+
+
+استكشف فوائد استخدام YOLO في [توثيق مهمة التجزئة](/ar/tasks/segment).
+
+### Link to this sectionهل يمكنني حفظ الكائنات المعزولة بما في ذلك الخلفية باستخدام Ultralytics YOLO26؟#
+
+نعم، هذه ميزة مدمجة في Ultralytics YOLO26. استخدم وسيط `save_crop` في طريقة `predict()`. على سبيل المثال:
+    
+    
+    results = model.predict(source="path/to/your/image.jpg", save_crop=True)
+
+اقرأ المزيد حول وسيط `save_crop` في قسم [وسائط استدلال وضع التنبؤ](/ar/modes/predict#inference-arguments).
+
+المساهمون
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/isolating-segmentation-objects.md)
+
+[GLglenn-jocher16](https://github.com/glenn-jocher)[RIRizwanMunawar6](https://github.com/RizwanMunawar)[JKjk4e2](https://github.com/jk4e)[PDpderrenger1](https://github.com/pderrenger)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[IVIvorZhu3311](https://github.com/IvorZhu331)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+تم الإنشاء 27 نوفمبر 2023تم التحديث قبل 4 أشهر
+
+## التعليقات
+
+في هذه الصفحة
+
+استكشف باستخدام الذكاء الاصطناعي

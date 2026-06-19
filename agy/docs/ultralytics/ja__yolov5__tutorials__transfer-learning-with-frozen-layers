@@ -1,0 +1,175 @@
+---
+source_url: https://docs.ultralytics.com/ja/yolov5/tutorials/transfer-learning-with-frozen-layers
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/transfer-learning-with-frozen-layers.md)
+
+# Link to this sectionYOLOv5における凍結層を用いた転移学習#
+
+📚 This guide explains how to **freeze** [YOLOv5](https://github.com/ultralytics/yolov5) 🚀 layers when implementing [transfer learning](https://www.ultralytics.com/glossary/transfer-learning). Transfer learning is a powerful [machine learning (ML)](https://www.ultralytics.com/glossary/machine-learning-ml) technique that allows you to quickly retrain a model on new data without retraining the entire network from scratch. By freezing the weights of initial layers and only updating the parameters of later layers, you can significantly reduce computational resource requirements and training time. However, this approach might slightly impact the final model [accuracy](https://www.ultralytics.com/glossary/accuracy).
+
+## Link to this section始める前に#
+
+まず、YOLOv5リポジトリをクローンし、[`requirements.txt`](https://github.com/ultralytics/yolov5/blob/master/requirements.txt)に記載されている必要な依存関係をインストールします。[**Python >=3.8.0**](https://www.python.org/)環境と[**PyTorch >=1.8**](https://pytorch.org/get-started/locally/)がインストールされていることを確認してください。事前学習済み[モデル](https://github.com/ultralytics/yolov5/tree/master/models)および必要な[データセット](https://github.com/ultralytics/yolov5/tree/master/data)は、最新のYOLOv5[リリース](https://github.com/ultralytics/yolov5/releases)から自動的にダウンロードされます。
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone repository
+    cd yolov5
+    pip install -r requirements.txt # install dependencies
+
+## Link to this section層の凍結の仕組み#
+
+[ニューラルネットワーク](https://www.ultralytics.com/glossary/neural-network-nn)で層を凍結すると、学習プロセス中にそのパラメータ（重みとバイアス）が更新されなくなります。PyTorchでは、層のテンソルの`requires_grad`属性を`False`に設定することでこれを実現します。その結果、[逆伝播](https://www.ultralytics.com/glossary/backpropagation)中にこれらの層の勾配が計算されなくなり、計算量とメモリが節約されます。
+
+YOLOv5が[学習スクリプト](https://github.com/ultralytics/yolov5/blob/master/train.py)で層の凍結を実装する方法は以下の通りです：
+    
+    
+    # Freeze specified layers
+    freeze = [f"model.{x}." for x in range(freeze)]  # Define layers to freeze based on module index
+    for k, v in model.named_parameters():
+        v.requires_grad = True  # Ensure all parameters are initially trainable
+        if any(x in k for x in freeze):
+            print(f"Freezing layer: {k}")
+            v.requires_grad = False  # Disable gradient calculation for frozen layers
+
+## Link to this sectionモデルアーキテクチャの調査#
+
+どの層を凍結するかを決定するには、YOLOv5モデルの構造を理解することが不可欠です。以下のPythonスニペットを使用して、すべてのモジュールとそのパラメータの名前を検査できます：
+    
+    
+    # Assuming 'model' is your loaded YOLOv5 model instance
+    for name, param in model.named_parameters():
+        print(name)
+    
+    """
+    Example Output:
+    model.0.conv.conv.weight
+    model.0.conv.bn.weight
+    model.0.conv.bn.bias
+    model.1.conv.weight
+    model.1.bn.weight
+    model.1.bn.bias
+    model.2.cv1.conv.weight
+    model.2.cv1.bn.weight
+    ...
+    """
+
+The YOLOv5 architecture typically consists of a [backbone](https://www.ultralytics.com/glossary/backbone) (layers 0-9 in standard configurations like YOLOv5s/m/l/x) responsible for [feature extraction](https://www.ultralytics.com/glossary/feature-extraction), and a head (the remaining layers) which performs [object detection](https://www.ultralytics.com/glossary/object-detection).
+    
+    
+    # Example YOLOv5 v6.0 backbone structure
+    backbone:
+        # [from, number, module, args]
+        - [-1, 1, Conv, [64, 6, 2, 2]]  # Layer 0: Initial convolution (P1/2 stride)
+        - [-1, 1, Conv, [128, 3, 2]] # Layer 1: Downsampling convolution (P2/4 stride)
+        - [-1, 3, C3, [128]]          # Layer 2: C3 module
+        - [-1, 1, Conv, [256, 3, 2]] # Layer 3: Downsampling convolution (P3/8 stride)
+        - [-1, 6, C3, [256]]          # Layer 4: C3 module
+        - [-1, 1, Conv, [512, 3, 2]] # Layer 5: Downsampling convolution (P4/16 stride)
+        - [-1, 9, C3, [512]]          # Layer 6: C3 module
+        - [-1, 1, Conv, [1024, 3, 2]]# Layer 7: Downsampling convolution (P5/32 stride)
+        - [-1, 3, C3, [1024]]         # Layer 8: C3 module
+        - [-1, 1, SPPF, [1024, 5]]    # Layer 9: Spatial Pyramid Pooling Fast
+    
+    # Example YOLOv5 v6.0 head structure
+    head:
+        - [-1, 1, Conv, [512, 1, 1]] # Layer 10
+        - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # Layer 11
+        - [[-1, 6], 1, Concat, [1]] # Layer 12: Concatenate with backbone P4 (from layer 6)
+        - [-1, 3, C3, [512, False]] # Layer 13: C3 module
+        # ... subsequent head layers for feature fusion and detection
+
+## Link to this section凍結のオプション#
+
+学習コマンドの`--freeze`引数を使用して、どの層を凍結するかを制御できます。この引数は _凍結しない_ 最初のモジュールのインデックスを指定します。このインデックスより前のすべてのモジュールの重みが凍結されます。特定のインデックスがどのブロックに対応するかを確認する必要がある場合は、`model.model`（`nn.Sequential`型）を使用してモジュールの順序を検査してください。
+
+### Link to this sectionバックボーンのみの凍結#
+
+[COCO](https://docs.ultralytics.com/datasets/detect/coco)のような大規模なデータセットから学習した一般的な特徴抽出能力を保持しつつ、新しい物体クラスにモデルを適応させる場合に一般的な、バックボーン全体（層0から9まで）を凍結する方法：
+    
+    
+    python train.py --weights yolov5m.pt --data your_dataset.yaml --freeze 10
+
+この戦略は、ターゲットとなるデータセットが、元の学習データ（例：COCO）と類似した低レベルの視覚的特徴（エッジ、テクスチャ）を共有しているものの、異なる物体カテゴリを含んでいる場合に有効です。
+
+### Link to this section最終検出層を除くすべてを凍結#
+
+ネットワークのほぼ全体を凍結し、最終的な出力畳み込み層（`Detect`モジュールの一部、通常は最後のモジュール。例：YOLOv5sではモジュール24）のみを学習可能にする方法：
+    
+    
+    python train.py --weights yolov5m.pt --data your_dataset.yaml --freeze 24
+
+このアプローチは、学習済みの特徴の大部分を維持しながら、モデルを出力クラスの数に合わせて調整する必要がある場合に有用です。[ファインチューニング](https://www.ultralytics.com/glossary/fine-tuning)において最も計算リソースを抑えることができます。
+
+## Link to this sectionパフォーマンスの比較#
+
+To illustrate the effects of freezing layers, we trained YOLOv5m on the [Pascal VOC dataset](https://docs.ultralytics.com/datasets/detect/voc) for 50 [epochs](https://www.ultralytics.com/glossary/epoch), starting from the official COCO pretrained [weights](https://www.ultralytics.com/glossary/model-weights) (`yolov5m.pt`). We compared three scenarios: training all layers (`--freeze 0`), freezing the backbone (`--freeze 10`), and freezing all but the final detection layers (`--freeze 24`).
+    
+    
+    # Example command for training with backbone frozen
+    python train.py --batch 48 --weights yolov5m.pt --data voc.yaml --epochs 50 --cache --img 512 --hyp data/hyps/hyp.VOC.yaml --freeze 10
+
+### Link to this section精度の結果#
+
+結果から、層を凍結することで学習は大幅に加速しますが、最終的な[mAP (mean Average Precision)](https://www.ultralytics.com/glossary/mean-average-precision-map)がわずかに低下する可能性があることがわかります。通常、全層を学習させると最高の精度が得られ、より多くの層を凍結すると、パフォーマンスが低下する可能性と引き換えに学習が高速化します。
+
+![異なる凍結戦略を比較した学習mAP50の結果](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/freezing-training-map50-results.avif) _学習中のmAP50の比較_
+
+![異なる凍結戦略を比較した学習mAP50-95の結果](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/freezing-training-map50-95-results.avif) _学習中のmAP50-95の比較_
+
+![YOLOv5 frozen layer training performance](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/table-results.avif) *Summary table of performance metrics* 
+
+### Link to this sectionリソースの利用#
+
+より多くの層を凍結することで、[GPU](https://www.ultralytics.com/glossary/gpu-graphics-processing-unit)メモリの要件と全体的な利用率が大幅に削減されます。これにより、ハードウェアリソースが限られている環境で転移学習を行う際に、凍結層を利用する選択肢が魅力的となり、通常よりも大きなモデルの学習や、大きな画像サイズの取り扱いが可能になります。
+
+![学習中に割り当てられたGPUメモリの割合](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/training-gpu-memory-allocated-percent.avif) _GPUメモリ割り当て量 (%)_
+
+![学習中のGPUメモリ利用率の割合](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/training-gpu-memory-utilization-percent.avif) _GPU利用率 (%)_
+
+## Link to this section層の凍結を利用すべき場面#
+
+転移学習中に層を凍結することは、いくつかの状況で特に有利です：
+
+  1. **計算リソースが限られている場合** : GPUメモリや処理能力に制約がある場合。
+  2. **小さなデータセット** : ターゲットデータセットが元の事前学習データセットよりも大幅に小さい場合、凍結することで[過学習](https://www.ultralytics.com/glossary/overfitting)を防ぐのに役立ちます。
+  3. **迅速なプロトタイピング** : 既存のモデルを新しいタスクやドメインに素早く適応させて初期評価を行う必要がある場合。
+  4. **類似した特徴ドメイン** : 新しいデータセットの低レベルな特徴が、モデルが事前学習されたデータセットの特徴と非常に似ている場合。
+
+
+
+転移学習のニュアンスについての詳細は、[用語集の項目](https://www.ultralytics.com/glossary/transfer-learning)をご覧ください。また、パフォーマンスを最適化するために[ハイパーパラメータチューニング](https://docs.ultralytics.com/guides/hyperparameter-tuning)のような技術も検討してください。
+
+## Link to this sectionサポートされている環境#
+
+Ultralyticsは、[CUDA](https://developer.nvidia.com/cuda)、[CuDNN](https://developer.nvidia.com/cudnn)、[Python](https://www.python.org/)、[PyTorch](https://pytorch.org/)といった必須の依存関係がプリインストールされた、すぐに使える様々な環境を提供しています。
+
+  * **無料GPUノートブック** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [GCP クイックスタートガイド](/ja/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [AWSクイックスタートガイド](/ja/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [AzureMLクイックスタートガイド](/ja/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Dockerクイックスタートガイド](/ja/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionプロジェクトの状態#
+
+[![YOLOv5 Continuous Integration Status](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+このバッジは、すべての[YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions)継続的インテグレーション（CI）テストが正常に通過していることを示しています。これらのCIテストは、[学習](https://github.com/ultralytics/yolov5/blob/master/train.py)、[検証](https://github.com/ultralytics/yolov5/blob/master/val.py)、[推論](https://github.com/ultralytics/yolov5/blob/master/detect.py)、[エクスポート](https://github.com/ultralytics/yolov5/blob/master/export.py)、および[ベンチマーク](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py)といった主要な操作全般にわたって、YOLOv5の機能性とパフォーマンスを厳格に評価します。これにより、24時間ごとに自動実行され、新しいコードがコミットされるたびに、macOS、Windows、Ubuntu上での一貫した信頼性の高い動作が保証されます。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/transfer-learning-with-frozen-layers.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+作成日 3 日前更新日 3 日前
+
+## コメント
+
+このページの内容
+
+AIで探索

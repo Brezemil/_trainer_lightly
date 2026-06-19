@@ -1,0 +1,188 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/optimizing-openvino-latency-vs-throughput-modes
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+# Link to this sectionYOLO için OpenVINO Çıkarım Optimizasyonu#
+
+![OpenVINO Ecosystem](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/openvino-ecosystem.avif)
+
+## Link to this sectionGiriş#
+
+[Derin öğrenme](https://www.ultralytics.com/glossary/deep-learning-dl) modellerini, özellikle de Ultralytics YOLO modelleri gibi [nesne algılama](https://www.ultralytics.com/glossary/object-detection) modellerini dağıtırken, optimum performansa ulaşmak çok önemlidir. Bu kılavuz, çıkarımı optimize etmek için [Intel'in OpenVINO araç setinden](https://docs.ultralytics.com/integrations/openvino) yararlanmayı, gecikme süresi ve iş hacmine odaklanarak inceliyor. İster tüketici sınıfı uygulamalar üzerinde çalışıyor olun ister büyük ölçekli dağıtımlar yapıyor olun, bu optimizasyon stratejilerini anlamak ve uygulamak, modellerinin çeşitli cihazlarda verimli bir şekilde çalışmasını sağlayacaktır.
+
+## Link to this sectionGecikme Süresi için Optimizasyon#
+
+Gecikme optimizasyonu, tüketici senaryolarında tipik olduğu üzere, tek bir giriş için tek bir modelden anında yanıt gerektiren uygulamalar için hayati önem taşır. Amaç, giriş ile çıkarım sonucu arasındaki gecikmeyi en aza indirmektir. Ancak, düşük gecikme süresi elde etmek, özellikle eş zamanlı çıkarımlar yaparken veya birden fazla modeli yönetirken dikkatli bir değerlendirme gerektirir.
+
+### Link to this sectionGecikme Optimizasyonu için Temel Stratejiler:#
+
+  * **Cihaz Başına Tek Çıkarım:** Düşük gecikme süresi elde etmenin en basit yolu, cihaz başına aynı anda tek bir çıkarımla sınırlamaktır. Ek eş zamanlılık genellikle gecikmenin artmasına neden olur.
+  * **Alt Cihazlardan Yararlanma:** Çok soketli CPU'lar veya çok bölmeli GPU'lar gibi cihazlar, dahili alt cihazlarını kullanarak minimum gecikme artışıyla birden fazla isteği yürütebilir.
+  * **OpenVINO Performance Hints:** Utilizing OpenVINO's `ov::LATENCY` for the `ov::performance_mode` property during model compilation simplifies performance tuning, offering a device-agnostic and future-proof approach.
+
+
+
+### Link to this sectionİlk Çıkarım Gecikmesini Yönetme:#
+
+  * **Model Önbelleğe Alma:** Model yükleme ve derleme sürelerinin gecikmeyi etkilemesini azaltmak için mümkün olduğunda model önbelleğe almayı kullan. Önbelleğe almanın uygun olmadığı senaryolarda, CPU'lar genellikle en hızlı model yükleme sürelerini sunar.
+  * **Model Eşleme vs. Okuma:** Yükleme sürelerini azaltmak için OpenVINO, model okuma işlemini eşleme ile değiştirdi. Ancak, model çıkarılabilir bir sürücüde veya ağ sürücüsündeyse, okumaya geri dönmek için `ov::enable_mmap(false)` kullanmayı düşün.
+  * **AUTO Cihaz Seçimi:** Bu mod, çıkarımı CPU üzerinde başlatır ve hazır olduğunda bir hızlandırıcıya geçiş yaparak ilk çıkarım gecikmesini sorunsuz bir şekilde azaltır.
+
+
+
+## Link to this sectionİş Hacmi için Optimizasyon#
+
+İş hacmi optimizasyonu, aynı anda çok sayıda çıkarım isteğine hizmet veren senaryolar için çok önemlidir ve bireysel istek performansından önemli ölçüde ödün vermeden [kaynak kullanımını](https://www.ultralytics.com/blog/measuring-ai-performance-to-weigh-the-impact-of-your-innovations) en üst düzeye çıkarır.
+
+### Link to this sectionİş Hacmi Optimizasyonuna Yaklaşımlar:#
+
+  1. **OpenVINO Performans İpuçları:** Performans ipuçlarını kullanarak cihazlar genelinde iş hacmini artırmak için yüksek seviyeli, geleceğe dönük bir yöntem.
+         
+         import openvino.properties.hint as hints
+         
+         config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+         compiled_model = core.compile_model(model, "GPU", config)
+
+  2. **Açık Toplu İşleme ve Akışlar:** Gelişmiş performans ayarı için açık toplu işlemeyi ve akışların kullanımını içeren daha ayrıntılı bir yaklaşım.
+
+
+
+
+### Link to this sectionİş Hacmi Odaklı Uygulamalar Tasarlama:#
+
+İş hacmini en üst düzeye çıkarmak için uygulamaların şunları yapması gerekir:
+
+  * Girdileri paralel olarak işleyerek cihazın yeteneklerinden tam olarak yararlanmalıdır.
+  * Veri akışını, paralel yürütme için zamanlanmış eş zamanlı çıkarım isteklerine ayırmalıdır.
+  * Verimliliği korumak ve cihazın boş kalmasını önlemek için geri çağırmalarla birlikte Async API'yi kullanmalıdır.
+
+
+
+### Link to this sectionÇoklu Cihaz Yürütme:#
+
+OpenVINO'nun çoklu cihaz modu, uygulama düzeyinde cihaz yönetimi gerektirmeden çıkarım isteklerini cihazlar arasında otomatik olarak dengeleyerek iş hacmini ölçeklendirmeyi basitleştirir.
+
+## Link to this sectionGerçek Dünya Performans Kazanımları#
+
+Ultralytics YOLO modelleriyle OpenVINO optimizasyonlarını uygulamak, önemli performans iyileştirmeleri sağlayabilir. [Kıyaslamalarda](https://docs.ultralytics.com/integrations/openvino#openvino-yolov8-benchmarks) gösterildiği gibi, kullanıcılar Intel CPU'larda 3 kata kadar daha hızlı çıkarım hızları deneyimleyebilir ve entegre GPU'lar, özel GPU'lar ve VPU'lar dahil olmak üzere Intel'in donanım yelpazesinde daha da büyük hızlanmalar elde edebilirler.
+
+Örneğin, YOLOv8 modellerini Intel Xeon CPU'larda çalıştırırken, OpenVINO ile optimize edilmiş sürümler, [doğruluktan](https://www.ultralytics.com/glossary/accuracy) ödün vermeden, görüntü başına çıkarım süresi açısından PyTorch karşılıklarından sürekli olarak daha iyi performans gösterir.
+
+## Link to this sectionPratik Uygulama#
+
+Ultralytics YOLO modelini OpenVINO için dışa aktarmak ve optimize etmek üzere [dışa aktarma](https://docs.ultralytics.com/modes/export) işlevini kullanabilirsin:
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to OpenVINO format
+    model.export(format="openvino", half=True)  # Export with FP16 precision
+
+Dışa aktardıktan sonra, optimize edilmiş modelle çıkarım çalıştırabilirsin:
+    
+    
+    # Load the OpenVINO model
+    ov_model = YOLO("yolo26n_openvino_model/")
+    
+    # Run inference with performance hints for latency
+    results = ov_model("path/to/image.jpg", verbose=True)
+
+## Link to this sectionSonuç#
+
+Ultralytics YOLO modellerini OpenVINO ile gecikme ve iş hacmi için optimize etmek, uygulamanın performansını önemli ölçüde artırabilir. Bu kılavuzda belirtilen stratejileri dikkatlice uygulayarak, modellerinin verimli bir şekilde çalıştığından ve çeşitli dağıtım senaryolarının taleplerini karşıladığından emin olabilirsin. Gecikme süresi veya iş hacmi için optimize etme arasındaki seçimin, özel uygulama ihtiyaçlarına ve dağıtım ortamının özelliklerine bağlı olduğunu unutma.
+
+Daha ayrıntılı teknik bilgi ve en son güncellemeler için [OpenVINO belgelerine](https://docs.openvino.ai/2024/index.html) ve [Ultralytics YOLO deposuna](https://github.com/ultralytics/ultralytics) başvur. Bu kaynaklar, derin öğrenme modellerinden en iyi şekilde yararlanmana yardımcı olacak derinlemesine kılavuzlar, eğitimler ve topluluk desteği sağlar.
+
+* * *
+
+Modellerinin optimum performansa ulaşmasını sağlamak sadece yapılandırmaları değiştirmekle ilgili değildir; uygulamanın ihtiyaçlarını anlamak ve bilinçli kararlar vermekle ilgilidir. İster [gerçek zamanlı yanıtlar](https://www.ultralytics.com/blog/real-time-inferences-in-vision-ai-solutions-are-making-an-impact) için optimize ediyor ol, ister büyük ölçekli işleme için iş hacmini en üst düzeye çıkarıyor ol, Ultralytics YOLO modelleri ve OpenVINO kombinasyonu, geliştiricilerin yüksek performanslı yapay zeka çözümleri dağıtması için güçlü bir araç seti sunar.
+
+## Link to this sectionSSS#
+
+### Link to this sectionOpenVINO kullanarak Ultralytics YOLO modellerini düşük gecikme süresi için nasıl optimize edebilirim?#
+
+Ultralytics YOLO modellerini düşük gecikme süresi için optimize etmek birkaç temel strateji içerir:
+
+  1. **Cihaz Başına Tek Çıkarım:** Gecikmeleri en aza indirmek için çıkarımları cihaz başına aynı anda bir taneyle sınırla.
+  2. **Alt Cihazlardan Yararlanma:** Birden fazla isteği minimum gecikme artışıyla işleyebilen çok soketli CPU'lar veya çok bölmeli GPU'lar gibi cihazları kullan.
+  3. **OpenVINO Performans İpuçları:** Basitleştirilmiş, cihazdan bağımsız ayarlama için model derleme sırasında OpenVINO'nun `ov::LATENCY` değerini kullan.
+
+
+
+Gecikmeyi optimize etmeye yönelik daha pratik ipuçları için kılavuzumuzun Gecikme Optimizasyonu bölümüne göz at.
+
+### Link to this sectionUltralytics YOLO iş hacmini optimize etmek için neden OpenVINO kullanmalıyım?#
+
+OpenVINO, performanstan ödün vermeden cihaz kaynak kullanımını en üst düzeye çıkararak Ultralytics YOLO model iş hacmini artırır. Temel avantajlar şunlardır:
+
+  * **Performans İpuçları:** Cihazlar arasında basit, üst düzey performans ayarı.
+  * **Açık Toplu İşleme ve Akışlar:** Gelişmiş performans için ince ayar.
+  * **Çoklu Cihaz Yürütme:** Uygulama düzeyindeki yönetimi kolaylaştıran otomatik çıkarım yük dengelemesi.
+
+
+
+Örnek yapılandırma:
+    
+    
+    import openvino.properties.hint as hints
+    
+    config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+    compiled_model = core.compile_model(model, "GPU", config)
+
+İş hacmi optimizasyonu hakkında daha fazla bilgiyi ayrıntılı kılavuzumuzun İş Hacmi Optimizasyonu bölümünde bulabilirsin.
+
+### Link to this sectionOpenVINO'da ilk çıkarım gecikmesini azaltmak için en iyi uygulama nedir?#
+
+İlk çıkarım gecikmesini azaltmak için şu uygulamaları değerlendir:
+
+  1. **Model Önbelleğe Alma:** Yükleme ve derleme sürelerini kısaltmak için model önbelleğe almayı kullan.
+  2. **Model Eşleme vs. Okuma:** Varsayılan olarak eşlemeyi (`ov::enable_mmap(true)`) kullan ancak model çıkarılabilir bir sürücüde veya ağ sürücüsündeyse okumaya (`ov::enable_mmap(false)`) geç.
+  3. **AUTO Cihaz Seçimi:** CPU çıkarımıyla başlamak ve sorunsuz bir şekilde hızlandırıcıya geçiş yapmak için AUTO modundan yararlan.
+
+
+
+İlk çıkarım gecikmesini yönetmeye yönelik ayrıntılı stratejiler için İlk Çıkarım Gecikmesini Yönetme bölümüne başvur.
+
+### Link to this sectionUltralytics YOLO ve OpenVINO ile gecikme ve iş hacmi optimizasyonunu nasıl dengeleyebilirim?#
+
+Gecikme ve iş hacmi optimizasyonunu dengelemek, uygulama ihtiyaçlarını anlamayı gerektirir:
+
+  * **Gecikme Optimizasyonu:** Anında yanıt gerektiren gerçek zamanlı uygulamalar (örneğin, tüketici sınıfı uygulamalar) için idealdir.
+  * **İş Hacmi Optimizasyonu:** Birçok eş zamanlı çıkarımın olduğu senaryolar için en iyisidir, kaynak kullanımını en üst düzeye çıkarır (örneğin, büyük ölçekli dağıtımlar).
+
+
+
+OpenVINO'nun üst düzey performans ipuçlarını ve çoklu cihaz modlarını kullanmak doğru dengeyi kurmana yardımcı olabilir. Özel gereksinimlerine göre uygun [OpenVINO Performans ipuçlarını](https://docs.ultralytics.com/integrations/openvino#openvino-performance-hints) seç.
+
+### Link to this sectionUltralytics YOLO modellerini OpenVINO dışında başka yapay zeka çerçeveleriyle kullanabilir miyim?#
+
+Evet, Ultralytics YOLO modelleri son derece çok yönlüdür ve çeşitli yapay zeka çerçeveleriyle entegre edilebilir. Seçenekler şunlardır:
+
+  * **TensorRT:** NVIDIA GPU optimizasyonu için [TensorRT entegrasyon kılavuzunu](https://docs.ultralytics.com/integrations/tensorrt) takip et.
+  * **CoreML:** Apple cihazları için [CoreML dışa aktarma talimatlarımıza](https://docs.ultralytics.com/integrations/coreml) başvur.
+  * **[TensorFlow](https://www.ultralytics.com/glossary/tensorflow).js:** Web ve Node.js uygulamaları için [TF.js dönüştürme kılavuzuna](https://docs.ultralytics.com/integrations/tfjs) bak.
+
+
+
+Daha fazla entegrasyonu [Ultralytics Entegrasyonlar sayfasında](https://docs.ultralytics.com/integrations) keşfet.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+Oluşturulma 17 Mar 2024Güncellenme geçen ay
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

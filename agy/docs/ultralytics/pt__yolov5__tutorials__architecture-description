@@ -1,0 +1,244 @@
+---
+source_url: https://docs.ultralytics.com/pt/yolov5/tutorials/architecture-description
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/architecture-description.md)
+
+# Link to this sectionArquitetura do Ultralytics YOLOv5#
+
+O YOLOv5 (v6.0/6.1) é um algoritmo de detecção de objetos poderoso desenvolvido pela Ultralytics. Este artigo mergulha profundamente na arquitetura do YOLOv5, estratégias de [data augmentation](https://www.ultralytics.com/glossary/data-augmentation), metodologias de treinamento e técnicas de cálculo de perda. Esta compreensão abrangente ajudará a melhorar sua aplicação prática de detecção de objetos em vários campos, incluindo vigilância, veículos autônomos e [reconhecimento de imagem](https://www.ultralytics.com/glossary/image-recognition).
+
+## Link to this sectionEstrutura do Modelo#
+
+A arquitetura do YOLOv5 consiste em três partes principais:
+
+  * **Backbone** : Este é o corpo principal da rede. Para o YOLOv5, o backbone é projetado usando a estrutura `CSPDarknet53`, uma modificação da arquitetura Darknet usada em versões anteriores.
+  * **Neck** : Esta parte conecta o backbone e a head. No YOLOv5, são utilizadas as estruturas `SPPF` (Spatial Pyramid Pooling - Fast) e `PANet` (Path Aggregation Network).
+  * **Head** : Esta parte é responsável por gerar a saída final. O YOLOv5 usa a `YOLOv3 Head` para esse propósito.
+
+
+
+A estrutura do modelo é retratada na imagem abaixo. Os detalhes da estrutura do modelo podem ser encontrados em [`models/yolov5l.yaml`](https://github.com/ultralytics/yolov5/blob/master/models/yolov5l.yaml).
+
+![Arquitetura do YOLOv5 mostrando backbone, neck e head](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-model-structure.avif)
+
+O YOLOv5 introduz algumas melhorias notáveis em comparação com seus predecessores:
+
+  1. A estrutura `Focus`, encontrada em versões anteriores, foi substituída por uma estrutura `6x6 Conv2d`. Essa mudança aumenta a eficiência [#4825](https://github.com/ultralytics/yolov5/issues/4825).
+  2. A estrutura `SPP` foi substituída pela `SPPF`. Essa alteração mais do que dobra a velocidade de processamento enquanto mantém a mesma saída.
+
+
+
+Para testar a velocidade de `SPP` e `SPPF`, o seguinte código pode ser usado:
+
+SPP vs SPPF speed profiling example (click to open)
+    
+    
+    import time
+    
+    import torch
+    import torch.nn as nn
+    
+    class SPP(nn.Module):
+        def __init__(self):
+            """Initializes an SPP module with three different sizes of max pooling layers."""
+            super().__init__()
+            self.maxpool1 = nn.MaxPool2d(5, 1, padding=2)
+            self.maxpool2 = nn.MaxPool2d(9, 1, padding=4)
+            self.maxpool3 = nn.MaxPool2d(13, 1, padding=6)
+    
+        def forward(self, x):
+            """Applies three max pooling layers on input `x` and concatenates results along channel dimension."""
+            o1 = self.maxpool1(x)
+            o2 = self.maxpool2(x)
+            o3 = self.maxpool3(x)
+            return torch.cat([x, o1, o2, o3], dim=1)
+    
+    class SPPF(nn.Module):
+        def __init__(self):
+            """Initializes an SPPF module with a specific configuration of MaxPool2d layer."""
+            super().__init__()
+            self.maxpool = nn.MaxPool2d(5, 1, padding=2)
+    
+        def forward(self, x):
+            """Applies sequential max pooling and concatenates results with input tensor."""
+            o1 = self.maxpool(x)
+            o2 = self.maxpool(o1)
+            o3 = self.maxpool(o2)
+            return torch.cat([x, o1, o2, o3], dim=1)
+    
+    def main():
+        """Compares outputs and performance of SPP and SPPF on a random tensor (8, 32, 16, 16)."""
+        input_tensor = torch.rand(8, 32, 16, 16)
+        spp = SPP()
+        sppf = SPPF()
+        output1 = spp(input_tensor)
+        output2 = sppf(input_tensor)
+    
+        print(torch.equal(output1, output2))
+    
+        t_start = time.time()
+        for _ in range(100):
+            spp(input_tensor)
+        print(f"SPP time: {time.time() - t_start}")
+    
+        t_start = time.time()
+        for _ in range(100):
+            sppf(input_tensor)
+        print(f"SPPF time: {time.time() - t_start}")
+    
+    if __name__ == "__main__":
+        main()
+
+resultado:
+    
+    
+    True
+    SPP time: 0.5373051166534424
+    SPPF time: 0.20780706405639648
+
+## Link to this sectionTécnicas de Data Augmentation#
+
+O YOLOv5 emprega várias técnicas de data augmentation para melhorar a capacidade do modelo de generalizar e reduzir [overfitting](https://www.ultralytics.com/glossary/overfitting). Essas técnicas incluem:
+
+  * **Mosaic Augmentation** : Uma técnica de processamento de imagem que combina quatro imagens de treinamento em uma, de maneiras que incentivam os modelos de [detecção de objetos](https://www.ultralytics.com/glossary/object-detection) a lidar melhor com várias escalas e translações de objetos.
+
+![Data augmentation Mosaic do YOLOv5 combinando quatro imagens](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/mosaic-augmentation.avif)
+
+  * **Copy-Paste Augmentation** : Um método inovador de data augmentation que copia patches aleatórios de uma imagem e os cola em outra imagem escolhida aleatoriamente, gerando efetivamente uma nova amostra de treinamento.
+
+![Augmentation Copy-Paste do YOLOv5 para segmentação de instâncias](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/copy-paste.avif)
+
+  * **Random Affine Transformations** : Isso inclui rotação, escala, translação e cisalhamento aleatórios das imagens.
+
+![Transformações afins aleatórias do YOLOv5 para treinamento](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/random-affine-transformations.avif)
+
+  * **MixUp Augmentation** : Um método que cria imagens compostas ao tomar uma combinação linear de duas imagens e seus rótulos associados.
+
+![Data augmentation MixUp do YOLOv5 misturando duas imagens](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/mixup.avif)
+
+  * **Albumentations** : Uma biblioteca poderosa de augmentation de imagens que suporta uma ampla variedade de técnicas de augmentation. Saiba mais sobre [usar augmentations do Albumentations](https://www.ultralytics.com/blog/using-albumentations-augmentations-to-diversify-your-data).
+
+  * **HSV Augmentation** : Mudanças aleatórias na Matiz (Hue), Saturação (Saturation) e Valor (Value) das imagens.
+
+![Exemplos de augmentation no espaço de cor HSV do YOLOv5](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/hsv-augmentation.avif)
+
+  * **Random Horizontal Flip** : Um método de augmentation que inverte imagens horizontalmente de forma aleatória.
+
+![Augmentation de inversão horizontal aleatória do YOLOv5](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/random-horizontal-flip.avif)
+
+
+
+
+## Link to this sectionEstratégias de Treinamento#
+
+O YOLOv5 aplica várias estratégias de treinamento sofisticadas para melhorar o desempenho do modelo. Elas incluem:
+
+  * **Multiscale Training** : As imagens de entrada são redimensionadas aleatoriamente dentro de um intervalo de 0,5 a 1,5 vezes o seu tamanho original durante o processo de treinamento.
+  * **AutoAnchor** : Esta estratégia otimiza as caixas âncora prior para corresponder às características estatísticas das caixas de ground truth em seus dados personalizados.
+  * **Warmup and Cosine LR Scheduler** : Um método para ajustar a [taxa de aprendizado](https://www.ultralytics.com/glossary/learning-rate) para melhorar o desempenho do modelo.
+  * **Exponential Moving Average (EMA)** : Uma estratégia que usa a média de parâmetros ao longo de etapas anteriores para estabilizar o processo de treinamento e reduzir o erro de generalização.
+  * **Treinamento em[Mixed Precision](https://www.ultralytics.com/glossary/mixed-precision)**: Um método para realizar operações em formato de meia-[precisão](https://www.ultralytics.com/glossary/precision), reduzindo o uso de memória e aumentando a velocidade computacional.
+  * **Hyperparameter Evolution** : Uma estratégia para ajustar automaticamente os hiperparâmetros para obter o desempenho ideal. Saiba mais sobre [ajuste de hiperparâmetros](https://docs.ultralytics.com/guides/hyperparameter-tuning).
+
+
+
+## Link to this sectionRecursos Adicionais#
+
+### Link to this section4.1 Calcular Perdas (Compute Losses)#
+
+A perda no YOLOv5 é calculada como uma combinação de três componentes de perda individuais:
+
+  * **Classes Loss (BCE Loss)** : Perda de Entropia Cruzada Binária, mede o erro para a tarefa de classificação.
+  * **Objectness Loss (BCE Loss)** : Outra perda de Entropia Cruzada Binária, calcula o erro na detecção se um objeto está presente ou não em uma célula de grade específica.
+  * **Location Loss (CIoU Loss)** : Perda Complete IoU, mede o erro na localização do objeto dentro da célula da grade.
+
+
+
+A [função de perda](https://www.ultralytics.com/glossary/loss-function) geral é representada por:
+
+![Fórmula da função de perda total do YOLOv5](https://latex.codecogs.com/svg.image?Loss=%5Clambda_1L_%7Bcls%7D+%5Clambda_2L_%7Bobj%7D+%5Clambda_3L_%7Bloc%7D)
+
+### Link to this section4.2 Balancear Perdas#
+
+As perdas de objectness das três camadas de previsão (`P3`, `P4`, `P5`) são ponderadas de forma diferente. Os pesos de equilíbrio são `[4.0, 1.0, 0.4]` respectivamente. Essa abordagem garante que as previsões em diferentes escalas contribuam adequadamente para a perda total.
+
+![Fórmula de equilíbrio de perda de objectness do YOLOv5](https://latex.codecogs.com/svg.image?L_%7Bobj%7D=4.0%5Ccdot&space;L_%7Bobj%7D%5E%7Bsmall%7D+1.0%5Ccdot&space;L_%7Bobj%7D%5E%7Bmedium%7D+0.4%5Ccdot&space;L_%7Bobj%7D%5E%7Blarge%7D)
+
+### Link to this section4.3 Eliminar Sensibilidade da Grade#
+
+A arquitetura do YOLOv5 faz algumas mudanças importantes na estratégia de previsão de caixa em comparação com as versões anteriores do YOLO. No YOLOv2 e YOLOv3, as coordenadas da caixa eram previstas diretamente usando a ativação da última camada.
+
+![Fórmula de previsão da coordenada x da caixa delimitadora](https://latex.codecogs.com/svg.image?b_x=%5Csigma\(t_x\)+c_x) ![Fórmula de previsão da coordenada y da caixa delimitadora](https://latex.codecogs.com/svg.image?b_y=%5Csigma\(t_y\)+c_y) ![Fórmula de previsão da largura da caixa delimitadora](https://latex.codecogs.com/svg.image?b_w=p_w%5Ccdot&space;e%5E%7Bt_w%7D) ![Fórmula de previsão da altura da caixa delimitadora](https://latex.codecogs.com/svg.image?b_h=p_h%5Ccdot&space;e%5E%7Bt_h%7D)
+
+![YOLOv5 grid computation](https://user-images.githubusercontent.com/31005897/158508027-8bf63c28-8290-467b-8a3e-4ad09235001a.png#pic_center)
+
+No entanto, no YOLOv5, a fórmula para prever as coordenadas da caixa foi atualizada para reduzir a sensibilidade da grade e evitar que o modelo preveja dimensões de caixa ilimitadas.
+
+As fórmulas revisadas para calcular a [caixa delimitadora](https://www.ultralytics.com/glossary/bounding-box) prevista são as seguintes:
+
+![Fórmula revisada da coordenada x da caixa delimitadora do YOLOv5](https://latex.codecogs.com/svg.image?b_x=\(2%5Ccdot%5Csigma\(t_x\)-0.5\)+c_x) ![Fórmula revisada da coordenada y da caixa delimitadora do YOLOv5](https://latex.codecogs.com/svg.image?b_y=\(2%5Ccdot%5Csigma\(t_y\)-0.5\)+c_y) ![Fórmula revisada da largura da caixa delimitadora do YOLOv5](https://latex.codecogs.com/svg.image?b_w=p_w%5Ccdot\(2%5Ccdot%5Csigma\(t_w\)\)%5E2) ![Fórmula revisada da altura da caixa delimitadora do YOLOv5](https://latex.codecogs.com/svg.image?b_h=p_h%5Ccdot\(2%5Ccdot%5Csigma\(t_h\)\)%5E2)
+
+Compare o deslocamento do ponto central antes e depois do escalonamento. O intervalo de deslocamento do ponto central é ajustado de (0, 1) para (-0,5, 1,5). Portanto, o deslocamento pode facilmente obter 0 ou 1.
+
+![YOLOv5 grid scaling](https://user-images.githubusercontent.com/31005897/158508052-c24bc5e8-05c1-4154-ac97-2e1ec71f582e.png#pic_center)
+
+Compare a taxa de escalonamento de altura e largura (em relação à âncora) antes e depois do ajuste. As equações originais de caixa do yolo/darknet possuem uma falha grave. Largura e Altura são completamente ilimitadas, pois são simplesmente out=exp(in), o que é perigoso, pois pode levar a gradientes descontrolados, instabilidades, perdas NaN e, finalmente, uma perda completa do treinamento. [Consulte este problema](https://github.com/ultralytics/yolov5/issues/471#issuecomment-662009779) para obter mais detalhes.
+
+![YOLOv5 unbounded scaling](https://user-images.githubusercontent.com/31005897/158508089-5ac0c7a3-6358-44b7-863e-a6e45babb842.png#pic_center)
+
+### Link to this section4.4 Construir Alvos (Build Targets)#
+
+O processo de build targets no YOLOv5 é fundamental para a eficiência do treinamento e [precisão](https://www.ultralytics.com/glossary/accuracy) do modelo. Envolve atribuir caixas de ground truth às células de grade apropriadas no mapa de saída e combiná-las com as caixas âncora apropriadas.
+
+Este processo segue estas etapas:
+
+  * Calcule a razão entre as dimensões da caixa de ground truth e as dimensões de cada template de âncora.
+
+
+
+![Fórmula da razão entre largura de ground truth e âncora](https://latex.codecogs.com/svg.image?r_w=w_%7Bgt%7D/w_%7Bat%7D)
+
+![Fórmula da razão entre altura de ground truth e âncora](https://latex.codecogs.com/svg.image?r_h=h_%7Bgt%7D/h_%7Bat%7D)
+
+![Fórmula da razão de largura máxima](https://latex.codecogs.com/svg.image?r_w%5E%7Bmax%7D=max\(r_w,1/r_w\))
+
+![Fórmula da razão de altura máxima](https://latex.codecogs.com/svg.image?r_h%5E%7Bmax%7D=max\(r_h,1/r_h\))
+
+![Fórmula da razão máxima geral](https://latex.codecogs.com/svg.image?r%5E%7Bmax%7D=max\(r_w%5E%7Bmax%7D,r_h%5E%7Bmax%7D\))
+
+![Fórmula do limite de correspondência de âncora](https://latex.codecogs.com/svg.image?r%5E%7Bmax%7D%3C%7B%5Crm&space;anchor_t%7D)
+
+![YOLOv5 IoU computation](https://user-images.githubusercontent.com/31005897/158508119-fbb2e483-7b8c-4975-8e1f-f510d367f8ff.png#pic_center)
+
+  * Se a razão calculada estiver dentro do limite, combine a caixa de ground truth com a âncora correspondente.
+
+![YOLOv5 grid overlap](https://user-images.githubusercontent.com/31005897/158508771-b6e7cab4-8de6-47f9-9abf-cdf14c275dfe.png#pic_center)
+
+  * Atribua a âncora correspondente às células apropriadas, lembrando que, devido ao deslocamento do ponto central revisado, uma caixa de ground truth pode ser atribuída a mais de uma âncora porque o intervalo de deslocamento do ponto central é ajustado de (0, 1) para (-0,5, 1,5), tornando possíveis correspondências adicionais.
+
+![YOLOv5 anchor selection](https://user-images.githubusercontent.com/31005897/158508139-9db4e8c2-cf96-47e0-bc80-35d11512f296.png#pic_center)
+
+Dessa forma, o processo de build targets garante que cada objeto de ground truth seja adequadamente atribuído e combinado durante o processo de treinamento, permitindo que o YOLOv5 aprenda a tarefa de detecção de objetos com mais eficácia.
+
+## Link to this sectionConclusão#
+
+O YOLOv5 representa um passo significativo na evolução da detecção de objetos em tempo real. Suas escolhas arquitetônicas, estratégias de treinamento e refinamentos de engenharia entregam um forte desempenho e eficiência em relação às versões anteriores do YOLO.
+
+Os principais aprimoramentos no YOLOv5 incluem o uso de uma arquitetura dinâmica, uma ampla gama de técnicas de data augmentation, estratégias de treinamento inovadoras, bem como ajustes importantes no cálculo de perdas e no processo de build targets. Todas essas inovações melhoram significativamente a precisão e a eficiência da detecção de objetos, mantendo um alto grau de velocidade, que é a marca registrada dos modelos YOLO.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/architecture-description.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Criado há 3 diasAtualizado há 3 dias
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

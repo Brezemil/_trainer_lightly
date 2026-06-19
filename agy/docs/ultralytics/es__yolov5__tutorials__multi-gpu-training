@@ -1,0 +1,210 @@
+---
+source_url: https://docs.ultralytics.com/es/yolov5/tutorials/multi-gpu-training
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/multi-gpu-training.md)
+
+# Link to this sectionEntrenamiento con varias GPU con YOLOv5#
+
+Esta guía explica cómo entrenar YOLOv5 con **varias** GPU en una sola máquina o en múltiples máquinas.
+
+## Link to this sectionAntes de empezar#
+
+Clona el repositorio e instala [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) en un entorno [**Python >=3.8.0**](https://www.python.org/), incluido [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). Los [modelos](https://github.com/ultralytics/yolov5/tree/master/models) y los [conjuntos de datos](https://github.com/ultralytics/yolov5/tree/master/data) se descargan automáticamente desde la última [versión](https://github.com/ultralytics/yolov5/releases) de YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+Usa Docker
+
+Se recomienda la **imagen de Docker de Ultralytics** para todas las ejecuciones de entrenamiento multi-GPU. Consulta la [Guía de inicio rápido de Docker](/es/yolov5/environments/docker-image-quickstart-tutorial). [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+PyTorch >= 1.9
+
+`torch.distributed.run` reemplaza a `torch.distributed.launch` en **[PyTorch](https://www.ultralytics.com/glossary/pytorch) >= 1.9**. Consulta la [documentación de distribución de PyTorch](https://docs.pytorch.org/docs/stable/distributed.html) para obtener detalles.
+
+## Link to this sectionEntrenamiento#
+
+Selecciona un modelo preentrenado para comenzar a entrenar. Aquí seleccionamos [YOLOv5s](https://github.com/ultralytics/yolov5/blob/master/models/yolov5s.yaml), un modelo pequeño y rápido. Consulta la [tabla](https://github.com/ultralytics/yolov5#pretrained-checkpoints) de nuestro archivo README para ver una comparativa completa de todos los modelos. Entrenaremos este modelo con varias GPU en el conjunto de datos [COCO](https://github.com/ultralytics/yolov5/blob/master/data/scripts/get_coco.sh).
+
+![YOLOv5 Models](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-model-comparison.avif)
+
+### Link to this sectionUna sola GPU#
+    
+    
+    python train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0
+
+### Link to this sectionModo [DataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.DataParallel) con varias GPU (⚠️ no recomendado)#
+
+Pasa varios ID de GPU a `--device` para habilitar el modo DataParallel:
+    
+    
+    python train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0,1
+
+DataParallel es lento y apenas acelera el entrenamiento en comparación con el uso de una sola GPU.
+
+### Link to this sectionModo [DistributedDataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.parallel.DistributedDataParallel) con varias GPU (✅ recomendado)#
+
+Antepón al comando de entrenamiento `python -m torch.distributed.run --nproc_per_node`, luego pasa los argumentos habituales:
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0,1
+
+  * `--nproc_per_node` es el número de GPU a utilizar. En el ejemplo anterior, es `2`.
+  * `--batch` es el tamaño total del lote, dividido uniformemente entre cada GPU. En el ejemplo anterior, es `64 / 2 = 32` por GPU.
+
+
+
+El comando anterior utiliza las GPU `0...(N-1)`. Para controlar la visibilidad del dispositivo mediante variables de entorno en su lugar, configura `CUDA_VISIBLE_DEVICES=2,3` (o cualquier otra lista) antes de ejecutarlo.
+
+Use specific GPUs (click to expand)
+
+Pasa `--device` seguido de los ID de GPU específicos. El ejemplo siguiente utiliza las GPU `2,3`.
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights '' --device 2,3
+
+Use SyncBatchNorm (click to expand)
+
+[SyncBatchNorm](https://docs.pytorch.org/docs/master/generated/torch.nn.SyncBatchNorm.html) puede aumentar la [precisión](https://www.ultralytics.com/glossary/accuracy) para el entrenamiento con varias GPU, pero ralentiza significativamente el entrenamiento. **Solo** está disponible para el entrenamiento DistributedDataParallel con varias GPU.
+
+Se utiliza mejor cuando el tamaño del lote en **cada** GPU es pequeño (`<= 8`).
+
+Para habilitar SyncBatchNorm, pasa `--sync-bn`:
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights '' --sync-bn
+
+Use Multiple machines (click to expand)
+
+Esto **solo** está disponible para el entrenamiento DistributedDataParallel con varias GPU.
+
+Antes de continuar, asegúrate de que el conjunto de datos, la base de código y cualquier otra dependencia coincidan en todas las máquinas, luego verifica que las máquinas puedan alcanzarse entre sí en la red.
+
+Elige una máquina maestra (a la que se conectarán las demás), anota su dirección (`master_addr`) y elige un puerto (`master_port`). El siguiente ejemplo utiliza `master_addr = 192.168.1.1` y `master_port = 1234`.
+
+Luego ejecuta:
+    
+    
+    # On master machine 0
+    python -m torch.distributed.run --nproc_per_node G --nnodes N --node_rank 0 --master_addr "192.168.1.1" --master_port 1234 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights ''
+    
+    
+    # On machine R
+    python -m torch.distributed.run --nproc_per_node G --nnodes N --node_rank R --master_addr "192.168.1.1" --master_port 1234 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights ''
+
+donde `G` es el número de GPU por máquina, `N` es el número de máquinas y `R` es el rango de la máquina en `0...(N-1)`. Por ejemplo, con dos máquinas y dos GPU cada una, configura `G = 2`, `N = 2` y `R = 1` en la segunda máquina.
+
+El entrenamiento no comienza hasta que **todas** las `N` máquinas estén conectadas. La salida solo se muestra en la máquina maestra.
+
+### Link to this sectionNotas#
+
+  * El soporte para Windows no está probado; se recomienda Linux.
+
+  * `--batch` debe ser un múltiplo del número de GPU.
+
+  * La GPU 0 utiliza un poco más de memoria que las demás porque mantiene la EMA y gestiona los puntos de control (checkpoints).
+
+  * Si recibes `RuntimeError: Address already in use`, generalmente significa que varias ejecuciones de entrenamiento están usando el mismo puerto. Especifica un puerto diferente con `--master_port`:
+        
+        python -m torch.distributed.run --master_port 1234 --nproc_per_node 2 ...
+
+
+
+
+## Link to this sectionResultados#
+
+Resultados de perfilado DDP en una [instancia AWS EC2 P4d](/es/yolov5/environments/aws-quickstart-tutorial) con 8x A100 SXM4-40GB para YOLOv5l durante 1 [época](https://www.ultralytics.com/glossary/epoch) de COCO.
+
+Profiling code
+    
+    
+    # prepare
+    t=ultralytics/yolov5:latest && sudo docker pull $t && sudo docker run -it --runtime=nvidia --ipc=host --gpus all -v "$(pwd)"/coco:/usr/src/coco $t
+    pip3 install torch==1.9.0+cu111 torchvision==0.10.0+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+    cd .. && rm -rf app && git clone https://github.com/ultralytics/yolov5 -b master app && cd app
+    cp data/coco.yaml data/coco_profile.yaml
+    
+    # profile
+    python train.py --batch-size 16 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch-size 32 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1
+    python -m torch.distributed.run --nproc_per_node 4 train.py --batch-size 64 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1,2,3
+    python -m torch.distributed.run --nproc_per_node 8 train.py --batch-size 128 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1,2,3,4,5,6,7
+
+GPU  
+A100| tamaño del lote| Memoria CUDA  
+dispositivo0 (G)| COCO  
+entrenar| COCO  
+val  
+---|---|---|---|---  
+1x| 16| 26GB| 20:39| 0:55  
+2x| 32| 26GB| 11:43| 0:57  
+4x| 64| 26GB| 5:57| 0:55  
+8x| 128| 26GB| 3:09| 0:57  
+  
+Como se muestra en los resultados, el uso de [DistributedDataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.parallel.DistributedDataParallel) con varias GPU proporciona un escalado casi lineal en la velocidad de entrenamiento. Con 8 GPU, el entrenamiento se completa aproximadamente 6,5 veces más rápido que con una sola GPU, manteniendo el mismo uso de memoria por dispositivo.
+
+## Link to this sectionFAQ#
+
+Lee la siguiente lista de verificación antes de abrir una incidencia: a menudo ahorra tiempo.
+
+Checklist (click to expand)
+
+  * ¿Has leído esta guía de principio a fin?
+  * ¿Has vuelto a clonar la base de código? El código cambia **diariamente**.
+  * ¿Has buscado el mensaje de error? Es posible que alguien ya haya encontrado el mismo problema y compartido una solución.
+  * ¿Has instalado todos los requisitos (incluidas las versiones correctas de Python y PyTorch)?
+  * ¿Has probado uno de los entornos compatibles que se enumeran a continuación?
+  * ¿Has probado con un conjunto de datos más pequeño, como `coco128` o `coco2017`, para aislar la causa raíz?
+
+
+
+Si todo lo anterior está verificado, abre una incidencia con tantos detalles como sea posible, siguiendo la plantilla.
+
+## Link to this sectionEntornos admitidos#
+
+Ultralytics ofrece una gama de entornos listos para usar, cada uno preinstalado con dependencias esenciales como [CUDA](https://developer.nvidia.com/cuda), [CUDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/) y [PyTorch](https://pytorch.org/), para poner en marcha tus proyectos.
+
+  * **Notebooks con GPU gratuita** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [Guía de inicio rápido de GCP](/es/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [Guía de inicio rápido de AWS](/es/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [Guía de inicio rápido de AzureML](/es/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Guía de inicio rápido de Docker](/es/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionEstado del proyecto#
+
+[![CI de YOLOv5](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+Esta insignia indica que todas las pruebas de Integración Continua (CI) de [GitHub Actions de YOLOv5](https://github.com/ultralytics/yolov5/actions) se están superando correctamente. Estas pruebas de CI verifican rigurosamente la funcionalidad y el rendimiento de YOLOv5 en varios aspectos clave: [entrenamiento](https://github.com/ultralytics/yolov5/blob/master/train.py), [validación](https://github.com/ultralytics/yolov5/blob/master/val.py), [inferencia](https://github.com/ultralytics/yolov5/blob/master/detect.py), [exportación](https://github.com/ultralytics/yolov5/blob/master/export.py) y [benchmarks](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). Garantizan un funcionamiento consistente y fiable en macOS, Windows y Ubuntu, con pruebas realizadas cada 24 horas y tras cada nueva confirmación (commit).
+
+## Link to this sectionCréditos#
+
+Nos gustaría agradecer a @MagicFrogSJTU, quien hizo todo el trabajo pesado, y a @glenn-jocher por guiarnos en el camino.
+
+## Link to this sectionVer también#
+
+  * [Modo de entrenamiento](https://docs.ultralytics.com/modes/train) \- Aprende sobre el entrenamiento de modelos YOLO con Ultralytics
+  * [Ajuste de hiperparámetros](https://docs.ultralytics.com/guides/hyperparameter-tuning) \- Optimiza el rendimiento de tu modelo
+  * [Guía de inicio rápido de Docker](https://docs.ultralytics.com/guides/docker-quickstart) \- Configura tu entorno Docker para el entrenamiento
+
+
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/multi-gpu-training.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Creado hace 3 díasActualizado hace 3 días
+
+## Comentarios
+
+En esta página
+
+Explora con IA

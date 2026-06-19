@@ -1,0 +1,377 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/triton-inference-server
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/triton-inference-server.md)
+
+# Link to this sectionUltralytics YOLO26を用いたTriton Inference Server#
+
+[Triton Inference Server](https://developer.nvidia.com/dynamo-triton)（旧称：TensorRT Inference Server）は、NVIDIAが開発したオープンソースのソフトウェアソリューションです。NVIDIA GPU向けに最適化されたクラウド推論ソリューションを提供します。Tritonは、本番環境におけるAIモデルの大規模なデプロイを簡素化します。[Ultralytics YOLO26](/ja/models/yolo26)をTriton Inference Serverと統合することで、スケーラブルで高性能な[ディープラーニング](https://www.ultralytics.com/glossary/deep-learning-dl)推論ワークロードをデプロイできます。本ガイドでは、この統合の設定とテストの手順を説明します。
+
+  
+
+
+  
+**Watch:** Getting Started with NVIDIA Triton Inference Server. 
+
+## Link to this sectionTriton Inference Serverとは？#
+
+Triton Inference Server is designed to deploy a variety of AI models in production. It supports a wide range of deep learning and [machine learning](https://www.ultralytics.com/glossary/machine-learning-ml) frameworks, including [PyTorch](https://www.ultralytics.com/glossary/pytorch), [TensorFlow](/ja/integrations/tf-savedmodel), [ONNX](/ja/integrations/onnx), [OpenVINO](/ja/integrations/openvino), [TensorRT](/ja/integrations/tensorrt) and many others. Its primary use cases are:
+
+  * 単一のサーバーインスタンスから複数のモデルを提供
+  * サーバーを再起動せずにモデルを動的にロードおよびアンロード
+  * アンサンブル推論（複数のモデルを組み合わせて結果を得ることが可能）
+  * A/Bテストやローリングアップデートのためのモデルバージョニング
+
+
+
+## Link to this sectionTriton Inference Serverの主な利点#
+
+Triton Inference Serverと[Ultralytics YOLO26](/ja/models/yolo26)を併用することで、いくつかの利点が得られます。
+
+  * **自動バッチ処理** : 処理前に複数のAIリクエストをグループ化することで、レイテンシを削減し、推論速度を向上させます
+  * **Kubernetes統合** : クラウドネイティブな設計により、Kubernetesとシームレスに連携し、AIアプリケーションの管理とスケーリングを可能にします
+  * **ハードウェア固有の最適化** : NVIDIA GPUの性能を最大限に活用します
+  * **フレームワークの柔軟性** : [PyTorch](https://www.ultralytics.com/glossary/pytorch)、[TensorFlow](/ja/integrations/tf-savedmodel)、[ONNX](/ja/integrations/onnx)、[OpenVINO](/ja/integrations/openvino)、[TensorRT](/ja/integrations/tensorrt)を含む複数のAIフレームワークをサポートしています
+  * **オープンソースでカスタマイズ可能** : 特定のニーズに合わせて修正できるため、様々なAIアプリケーションに対応する柔軟性を備えています
+
+
+
+## Link to this section前提条件#
+
+開始する前に、以下の前提条件が満たされていることを確認してください。
+
+  * マシンにDockerまたはPodmanがインストールされていること
+  * `ultralytics`をインストールします。 
+        
+        pip install ultralytics
+
+  * `tritonclient`をインストールします。 
+        
+        pip install tritonclient[all]
+
+
+
+
+## Link to this sectionTriton Inference Serverの設定#
+
+このフルセットアップブロックを実行して[Ultralytics YOLO26](/ja/models/yolo26)を[ONNX](/ja/integrations/onnx)にエクスポートし、Tritonモデルリポジトリをビルドして、Triton Inference Serverを起動します。
+
+注意
+
+スクリプト内の`runtime`スイッチを使用して、コンテナエンジンを選択します。
+
+  * Dockerの場合は`runtime = "docker"`に設定します
+  * Podmanの場合は`runtime = "podman"`に設定します
+
+
+    
+    
+    import contextlib
+    import subprocess
+    import time
+    from pathlib import Path
+    
+    from tritonclient.http import InferenceServerClient
+    
+    from ultralytics import YOLO
+    
+    runtime = "docker"  # set to "podman" to use Podman
+    
+    # 1) Exporting YOLO26 to ONNX Format
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")  # load an official model
+    
+    # Retrieve metadata during export. Metadata needs to be added to config.pbtxt. See next section.
+    metadata = []
+    
+    def export_cb(exporter):
+        metadata.append(exporter.metadata)
+    
+    model.add_callback("on_export_end", export_cb)
+    
+    # Export the model
+    onnx_file = model.export(format="onnx", dynamic=True)
+    
+    # 2) Setting Up Triton Model Repository
+    
+    # Define paths
+    model_name = "yolo"
+    triton_repo_path = Path("tmp") / "triton_repo"
+    triton_model_path = triton_repo_path / model_name
+    
+    # Create directories
+    (triton_model_path / "1").mkdir(parents=True, exist_ok=True)
+    
+    # Move ONNX model to Triton Model path
+    Path(onnx_file).rename(triton_model_path / "1" / "model.onnx")
+    
+    # Create config file
+    (triton_model_path / "config.pbtxt").touch()
+    
+    data = """
+    # Add metadata
+    parameters {
+      key: "metadata"
+      value {
+        string_value: "%s"
+      }
+    }
+    
+    # (Optional) Enable TensorRT for GPU inference
+    # First run will be slow due to TensorRT engine conversion
+    optimization {
+      execution_accelerators {
+        gpu_execution_accelerator {
+          name: "tensorrt"
+          parameters {
+            key: "precision_mode"
+            value: "FP16"
+          }
+          parameters {
+            key: "max_workspace_size_bytes"
+            value: "3221225472"
+          }
+          parameters {
+            key: "trt_engine_cache_enable"
+            value: "1"
+          }
+          parameters {
+            key: "trt_engine_cache_path"
+            value: "/models/yolo/1"
+          }
+        }
+      }
+    }
+    """ % metadata[0]  # noqa
+    
+    with open(triton_model_path / "config.pbtxt", "w") as f:
+        f.write(data)
+    
+    # 3) Running Triton Inference Server
+    
+    # Define image https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tritonserver
+    tag = "nvcr.io/nvidia/tritonserver:26.02-py3"  # 16.17 GB (Compressed Size)
+    
+    subprocess.call(f"{runtime} pull {tag}", shell=True)
+    
+    # GPU flags differ between Docker and Podman
+    gpu_flags = "--device nvidia.com/gpu=all" if runtime == "podman" else "--runtime=nvidia --gpus all"
+    
+    container_name = "triton_server"
+    
+    # Note: The :z flag on the volume mount is necessary for systems with SELinux (like Fedora/RHEL)
+    subprocess.call(
+        f"{runtime} run -d --rm --name {container_name} {gpu_flags} -v {triton_repo_path.absolute()}:/models:z -p 8000:8000 {tag} tritonserver --model-repository=/models",
+        shell=True,
+    )
+    
+    # Wait for the Triton server to start
+    triton_client = InferenceServerClient(url="127.0.0.1:8000", verbose=False, ssl=False)
+    
+    # Wait until model is ready
+    for _ in range(10):
+        with contextlib.suppress(Exception):
+            assert triton_client.is_model_ready(model_name)
+            break
+        time.sleep(1)
+
+## Link to this section推論の実行#
+
+Triton Serverモデルを使用して推論を実行します。
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the Triton Server model
+    model = YOLO("http://127.0.0.1:8000/yolo", task="detect")
+    
+    # Run inference on the server
+    results = model("path/to/image.jpg")
+
+コンテナをクリーンアップします（`runtime`と`container_name`は上記のセットアップブロックで定義されています）。
+    
+    
+    import subprocess
+    
+    runtime = "docker"  # set to "podman" to use Podman
+    container_name = "triton_server"  # Kill the named container
+    subprocess.call(f"{runtime} kill {container_name}", shell=True)
+
+## Link to this sectionTensorRT最適化（オプション）#
+
+さらに高いパフォーマンスを得るために、Triton Inference Serverで[TensorRT](/ja/integrations/tensorrt)を使用できます。TensorRTはNVIDIA GPU向けに構築された高性能なディープラーニング最適化ツールであり、推論速度を大幅に向上させることができます。
+
+Tritonで[TensorRT](/ja/integrations/tensorrt)を使用する主な利点は以下の通りです。
+
+  * 最適化されていないモデルと比較して、最大36倍の推論速度を実現
+  * GPU利用率を最大化するためのハードウェア固有の最適化
+  * 精度を維持しながら、低精度フォーマット（INT8、FP16）をサポート
+  * 計算オーバーヘッドを削減するレイヤー融合
+
+
+
+TensorRTを直接使用するには、[Ultralytics YOLO26](/ja/models/yolo26)モデルをTensorRT形式にエクスポートします。
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to TensorRT format
+    model.export(format="engine")  # creates 'yolo26n.engine'
+
+TensorRT最適化の詳細については、[TensorRT統合ガイド](/ja/integrations/tensorrt)を参照してください。
+
+* * *
+
+上記の手順に従うことで、[Ultralytics YOLO26](/ja/models/yolo26)モデルをTriton Inference Server上で効率的にデプロイおよび実行でき、ディープラーニング推論タスクのためのスケーラブルで高性能なソリューションを提供できます。問題が発生した場合や、さらに質問がある場合は、[Triton公式ドキュメント](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/index.html)を参照するか、Ultralyticsコミュニティにお問い合わせください。
+
+## Link to this sectionFAQ#
+
+### Link to this sectionUltralytics YOLO26とNVIDIA Triton Inference Serverをセットアップするにはどうすればよいですか？#
+
+[Ultralytics YOLO26](/ja/models/yolo26)と[NVIDIA Triton Inference Server](https://developer.nvidia.com/dynamo-triton)のセットアップには、いくつかの重要な手順が必要です。
+
+  1. **YOLO26をONNX形式にエクスポートする** :
+         
+         from ultralytics import YOLO
+         
+         # Load a model
+         model = YOLO("yolo26n.pt")  # load an official model
+         
+         # Export the model to ONNX format
+         onnx_file = model.export(format="onnx", dynamic=True)
+
+  2. **Tritonモデルリポジトリをセットアップする** :
+         
+         from pathlib import Path
+         
+         # Define paths
+         model_name = "yolo"
+         triton_repo_path = Path("tmp") / "triton_repo"
+         triton_model_path = triton_repo_path / model_name
+         
+         # Create directories
+         (triton_model_path / "1").mkdir(parents=True, exist_ok=True)
+         Path(onnx_file).rename(triton_model_path / "1" / "model.onnx")
+         (triton_model_path / "config.pbtxt").touch()
+
+  3. **Triton Serverを実行する** :
+         
+         import contextlib
+         import subprocess
+         import time
+         
+         from tritonclient.http import InferenceServerClient
+         
+         # Define image https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tritonserver
+         tag = "nvcr.io/nvidia/tritonserver:26.02-py3"
+         
+         runtime = "docker"  # set to "podman" to use Podman
+         subprocess.call(f"{runtime} pull {tag}", shell=True)
+         
+         # GPU flags differ between Docker and Podman
+         gpu_flags = "--device nvidia.com/gpu=all" if runtime == "podman" else "--runtime=nvidia --gpus all"
+         
+         container_name = "triton_server"
+         subprocess.call(
+             f"{runtime} run -d --rm --name {container_name} {gpu_flags} -v {triton_repo_path.absolute()}:/models:z -p 8000:8000 {tag} tritonserver --model-repository=/models",
+             shell=True,
+         )
+         
+         triton_client = InferenceServerClient(url="127.0.0.1:8000", verbose=False, ssl=False)
+         
+         for _ in range(10):
+             with contextlib.suppress(Exception):
+                 assert triton_client.is_model_ready(model_name)
+                 break
+             time.sleep(1)
+
+
+
+
+このセットアップにより、[Ultralytics YOLO26](/ja/models/yolo26)モデルをTriton Inference Server上で大規模に効率よくデプロイし、AIモデル推論の高性能化を実現できます。
+
+### Link to this sectionUltralytics YOLO26をNVIDIA Triton Inference Serverで使用する利点は何ですか？#
+
+[Ultralytics YOLO26](/ja/models/yolo26)と[NVIDIA Triton Inference Server](https://developer.nvidia.com/dynamo-triton)を統合することで、いくつかの利点が得られます。
+
+  * **スケーラブルなAI推論** : Tritonは単一のサーバーインスタンスから複数のモデルを提供でき、動的なモデルのロードとアンロードをサポートしているため、多様なAIワークロードに対して高い拡張性を備えています。
+  * **高性能** : NVIDIA GPU向けに最適化されたTriton Inference Serverは、高速な推論操作を保証し、[物体検出](https://www.ultralytics.com/glossary/object-detection)のようなリアルタイムアプリケーションに最適です。
+  * **アンサンブルとモデルバージョニング** : Tritonのアンサンブルモードでは、複数のモデルを組み合わせて結果を向上させることができ、モデルバージョニングによってA/Bテストやローリングアップデートが可能になります。
+  * **自動バッチ処理** : Tritonは複数の推論リクエストを自動的にグループ化し、スループットを大幅に向上させ、レイテンシを削減します。
+  * **デプロイの簡素化** : システムを全面的に変更することなくAIワークフローを段階的に最適化できるため、効率的なスケーリングが容易になります。
+
+
+
+Tritonで[Ultralytics YOLO26](/ja/models/yolo26)をセットアップおよび実行するための詳細な手順については、「Triton Inference Serverの設定」および「推論の実行」を参照してください。
+
+### Link to this sectionTriton Inference Serverを使用する前に、なぜYOLO26モデルをONNX形式にエクスポートする必要があるのですか？#
+
+Using ONNX (Open Neural Network Exchange) format for your [Ultralytics YOLO26](/ja/models/yolo26) model before deploying it on [NVIDIA Triton Inference Server](https://developer.nvidia.com/dynamo-triton) offers several key benefits:
+
+  * **相互運用性** : ONNX形式は、異なるディープラーニングフレームワーク（PyTorch、TensorFlowなど）間での転送をサポートしており、より幅広い互換性を確保します。
+  * **最適化** : Tritonを含む多くのデプロイ環境はONNX用に最適化されており、推論の高速化とパフォーマンスの向上が可能です。
+  * **デプロイの容易さ** : ONNXはフレームワークやプラットフォーム間で広くサポートされており、様々なオペレーティングシステムやハードウェア構成でのデプロイプロセスを簡素化します。
+  * **フレームワークの独立性** : ONNXに変換すると、モデルは元のフレームワークに依存しなくなるため、ポータビリティが向上します。
+  * **標準化** : ONNXは、異なるAIフレームワーク間の互換性問題を解決する助けとなる標準化された表現を提供します。
+
+
+
+モデルをエクスポートするには、次を使用してください。
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    onnx_file = model.export(format="onnx", dynamic=True)
+
+[ONNX統合ガイド](https://docs.ultralytics.com/integrations/onnx)の手順に従って、プロセスを完了できます。
+
+### Link to this sectionTriton Inference ServerでUltralytics YOLO26モデルを使用して推論を実行できますか？#
+
+はい、[Ultralytics YOLO26](/ja/models/yolo26)モデルを使用して[NVIDIA Triton Inference Server](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/index.html)で推論を実行できます。モデルがTritonモデルリポジトリにセットアップされ、サーバーが実行状態にあれば、以下のようにしてモデルをロードし、推論を実行できます。
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the Triton Server model
+    model = YOLO("http://127.0.0.1:8000/yolo", task="detect")
+    
+    # Run inference on the server
+    results = model("path/to/image.jpg")
+
+このアプローチにより、使い慣れたUltralytics YOLOインターフェースを使用しながら、Tritonの最適化機能を活用できます。
+
+### Link to this sectionデプロイにおいて、Ultralytics YOLO26はTensorFlowやPyTorchモデルと比べてどうですか？#
+
+[Ultralytics YOLO26](/ja/models/yolo26)は、[TensorFlow](https://www.ultralytics.com/glossary/tensorflow)やPyTorchモデルと比較して、デプロイ時にいくつかの独自の利点を提供します。
+
+  * **リアルタイムパフォーマンス** : リアルタイムの物体検出タスク向けに最適化されており、[Ultralytics YOLO26](/ja/models/yolo26)は最先端の[精度](https://www.ultralytics.com/glossary/accuracy)と速度を実現し、ライブビデオ分析を必要とするアプリケーションに最適です。
+  * **使いやすさ** : [Ultralytics YOLO26](/ja/models/yolo26)はTriton Inference Serverとシームレスに統合し、多様なエクスポート形式（[ONNX](/ja/integrations/onnx)、[TensorRT](/ja/integrations/tensorrt)）をサポートしているため、様々なデプロイシナリオに対応できる柔軟性を備えています。
+  * **高度な機能** : [Ultralytics YOLO26](/ja/models/yolo26)には、スケーラブルで信頼性の高いAIデプロイに不可欠な、動的モデルロード、モデルバージョニング、アンサンブル推論といった機能が含まれています。
+  * **簡素化されたAPI** : Ultralytics APIは、異なるデプロイターゲット全体で一貫したインターフェースを提供し、学習曲線と開発期間を短縮します。
+  * **エッジ最適化** : [Ultralytics YOLO26](/ja/models/yolo26)モデルはエッジデプロイを念頭に置いて設計されており、リソースが制限されたデバイス上でも優れたパフォーマンスを発揮します。
+
+
+
+詳細については、[モデルエクスポートガイド](/ja/modes/export)でデプロイオプションを比較してください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/triton-inference-server.md)
+
+[GLglenn-jocher17](https://github.com/glenn-jocher)[Y-Y-T-G4](https://github.com/Y-T-G)[ONonuralpszr2](https://github.com/onuralpszr)[LEleonnil1](https://github.com/leonnil)
+
+作成日 2023年11月12日更新日 先月
+
+## コメント
+
+このページの内容
+
+AIで探索

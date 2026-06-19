@@ -1,0 +1,244 @@
+---
+source_url: https://docs.ultralytics.com/ja/yolov5/tutorials/architecture-description
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/architecture-description.md)
+
+# Link to this sectionUltralytics YOLOv5 アーキテクチャ#
+
+YOLOv5 (v6.0/6.1) は、Ultralytics が開発した強力な物体検出アルゴリズムです。本記事では、YOLOv5 のアーキテクチャ、[データ拡張](https://www.ultralytics.com/glossary/data-augmentation)戦略、学習手法、および損失計算技術について詳細に解説します。この包括的な理解は、監視システム、自動運転車両、[画像認識](https://www.ultralytics.com/glossary/image-recognition)など、さまざまな分野での物体検出の実践的な適用を改善するのに役立ちます。
+
+## Link to this sectionモデル構造#
+
+YOLOv5 のアーキテクチャは主に3つのパーツで構成されています。
+
+  * **Backbone** : ネットワークの主要部分です。YOLOv5 のバックボーンには、以前のバージョンで使用されていた Darknet アーキテクチャを改良した `CSPDarknet53` 構造が採用されています。
+  * **Neck** : バックボーンとヘッドを接続する部分です。YOLOv5 では `SPPF` (Spatial Pyramid Pooling - Fast) および `PANet` (Path Aggregation Network) 構造が活用されています。
+  * **Head** : 最終的な出力を生成する役割を担います。YOLOv5 ではこの目的のために `YOLOv3 Head` が使用されています。
+
+
+
+モデルの構造を下図に示します。モデル構造の詳細は [`models/yolov5l.yaml`](https://github.com/ultralytics/yolov5/blob/master/models/yolov5l.yaml) で確認できます。
+
+![Backbone、Neck、Head を示す YOLOv5 アーキテクチャ](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-model-structure.avif)
+
+YOLOv5 は、以前のモデルと比較して注目すべき改善をいくつか導入しています。
+
+  1. 以前のバージョンにあった `Focus` 構造は、`6x6 Conv2d` 構造に置き換えられました。この変更により効率が向上しています [#4825](https://github.com/ultralytics/yolov5/issues/4825)。
+  2. `SPP` 構造は `SPPF` に置き換えられました。この変更により、同じ出力を維持しながら処理速度が2倍以上になりました。
+
+
+
+`SPP` と `SPPF` の速度をテストするには、以下のコードを使用できます。
+
+SPP vs SPPF speed profiling example (click to open)
+    
+    
+    import time
+    
+    import torch
+    import torch.nn as nn
+    
+    class SPP(nn.Module):
+        def __init__(self):
+            """Initializes an SPP module with three different sizes of max pooling layers."""
+            super().__init__()
+            self.maxpool1 = nn.MaxPool2d(5, 1, padding=2)
+            self.maxpool2 = nn.MaxPool2d(9, 1, padding=4)
+            self.maxpool3 = nn.MaxPool2d(13, 1, padding=6)
+    
+        def forward(self, x):
+            """Applies three max pooling layers on input `x` and concatenates results along channel dimension."""
+            o1 = self.maxpool1(x)
+            o2 = self.maxpool2(x)
+            o3 = self.maxpool3(x)
+            return torch.cat([x, o1, o2, o3], dim=1)
+    
+    class SPPF(nn.Module):
+        def __init__(self):
+            """Initializes an SPPF module with a specific configuration of MaxPool2d layer."""
+            super().__init__()
+            self.maxpool = nn.MaxPool2d(5, 1, padding=2)
+    
+        def forward(self, x):
+            """Applies sequential max pooling and concatenates results with input tensor."""
+            o1 = self.maxpool(x)
+            o2 = self.maxpool(o1)
+            o3 = self.maxpool(o2)
+            return torch.cat([x, o1, o2, o3], dim=1)
+    
+    def main():
+        """Compares outputs and performance of SPP and SPPF on a random tensor (8, 32, 16, 16)."""
+        input_tensor = torch.rand(8, 32, 16, 16)
+        spp = SPP()
+        sppf = SPPF()
+        output1 = spp(input_tensor)
+        output2 = sppf(input_tensor)
+    
+        print(torch.equal(output1, output2))
+    
+        t_start = time.time()
+        for _ in range(100):
+            spp(input_tensor)
+        print(f"SPP time: {time.time() - t_start}")
+    
+        t_start = time.time()
+        for _ in range(100):
+            sppf(input_tensor)
+        print(f"SPPF time: {time.time() - t_start}")
+    
+    if __name__ == "__main__":
+        main()
+
+結果:
+    
+    
+    True
+    SPP time: 0.5373051166534424
+    SPPF time: 0.20780706405639648
+
+## Link to this sectionデータ拡張手法#
+
+YOLOv5 は、モデルの汎化能力を向上させ、[過学習](https://www.ultralytics.com/glossary/overfitting)を低減するために、さまざまなデータ拡張手法を採用しています。これらの手法には以下が含まれます。
+
+  * **Mosaic Augmentation** : 4つの学習画像を1枚に組み合わせる画像処理手法で、[物体検出](https://www.ultralytics.com/glossary/object-detection)モデルがさまざまなオブジェクトのスケールや平行移動にうまく対応できるようにします。
+
+![4枚の画像を組み合わせる YOLOv5 の Mosaic データ拡張](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/mosaic-augmentation.avif)
+
+  * **Copy-Paste Augmentation** : 画像からランダムにパッチをコピーし、別のランダムに選択された画像に貼り付けるという革新的なデータ拡張手法で、効果的に新しい学習サンプルを生成します。
+
+![インスタンスセグメンテーション用の YOLOv5 の Copy-Paste 拡張](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/copy-paste.avif)
+
+  * **Random Affine Transformations** : これには画像のランダムな回転、スケーリング、平行移動、およびせん断が含まれます。
+
+![学習用の YOLOv5 ランダムアフィン変換](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/random-affine-transformations.avif)
+
+  * **MixUp Augmentation** : 2つの画像とそれに関連するラベルの線形結合をとることによって合成画像を作成する手法です。
+
+![2つの画像をブレンドする YOLOv5 の MixUp データ拡張](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/mixup.avif)
+
+  * **Albumentations** : 多様な拡張手法をサポートする強力な画像拡張ライブラリです。[Albumentations による拡張の使用方法](https://www.ultralytics.com/blog/using-albumentations-augmentations-to-diversify-your-data)について詳しく学びましょう。
+
+  * **HSV Augmentation** : 画像の色相 (Hue)、彩度 (Saturation)、明度 (Value) に対するランダムな変更です。
+
+![YOLOv5 の HSV 色空間拡張の例](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/hsv-augmentation.avif)
+
+  * **Random Horizontal Flip** : 画像をランダムに左右反転させる拡張手法です。
+
+![YOLOv5 のランダム水平反転拡張](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/random-horizontal-flip.avif)
+
+
+
+
+## Link to this section学習戦略#
+
+YOLOv5 は、モデルのパフォーマンスを向上させるためにいくつかの洗練された学習戦略を適用しています。これらには以下が含まれます。
+
+  * **Multiscale Training** : 学習プロセス中に、入力画像を元のサイズの 0.5 倍から 1.5 倍の範囲内でランダムにリサイズします。
+  * **AutoAnchor** : この戦略は、カスタムデータの Ground Truth ボックスの統計的特性に合わせて事前定義された Anchor ボックスを最適化します。
+  * **Warmup and Cosine LR Scheduler** : モデルのパフォーマンスを向上させるために[学習率](https://www.ultralytics.com/glossary/learning-rate)を調整する手法です。
+  * **Exponential Moving Average (EMA)** : 過去のステップのパラメータの平均を使用して学習プロセスを安定させ、汎化誤差を低減させる戦略です。
+  * **[Mixed Precision](https://www.ultralytics.com/glossary/mixed-precision) Training**: 半[精度](https://www.ultralytics.com/glossary/precision)フォーマットで演算を実行し、メモリ使用量を削減して計算速度を向上させる手法です。
+  * **Hyperparameter Evolution** : 最適なパフォーマンスを得るためにハイパーパラメータを自動的に調整する戦略です。[ハイパーパラメータのチューニング](https://docs.ultralytics.com/guides/hyperparameter-tuning)について詳しく学びましょう。
+
+
+
+## Link to this sectionその他の機能#
+
+### Link to this section4.1 損失の計算#
+
+YOLOv5 における損失は、3つの個別の損失コンポーネントの組み合わせとして計算されます。
+
+  * **Classes Loss (BCE Loss)** : Binary Cross-Entropy 損失であり、分類タスクの誤差を測定します。
+  * **Objectness Loss (BCE Loss)** : 別の Binary Cross-Entropy 損失であり、特定のグリッドセル内にオブジェクトが存在するかどうかを検出する際の誤差を計算します。
+  * **Location Loss (CIoU Loss)** : Complete IoU 損失であり、グリッドセル内でのオブジェクトの配置誤差を測定します。
+
+
+
+全体的な[損失関数](https://www.ultralytics.com/glossary/loss-function)は以下のように示されます。
+
+![YOLOv5 の合計損失関数の数式](https://latex.codecogs.com/svg.image?Loss=%5Clambda_1L_%7Bcls%7D+%5Clambda_2L_%7Bobj%7D+%5Clambda_3L_%7Bloc%7D)
+
+### Link to this section4.2 損失のバランス調整#
+
+3つの予測レイヤー (`P3`, `P4`, `P5`) の Objectness 損失は、それぞれ異なる重み付けがされています。バランス重みは順に `[4.0, 1.0, 0.4]` です。このアプローチにより、異なるスケールでの予測が合計損失に適切に寄与することが保証されます。
+
+![YOLOv5 の Objectness 損失バランス調整の数式](https://latex.codecogs.com/svg.image?L_%7Bobj%7D=4.0%5Ccdot&space;L_%7Bobj%7D%5E%7Bsmall%7D+1.0%5Ccdot&space;L_%7Bobj%7D%5E%7Bmedium%7D+0.4%5Ccdot&space;L_%7Bobj%7D%5E%7Blarge%7D)
+
+### Link to this section4.3 グリッド感度の排除#
+
+YOLOv5 アーキテクチャは、以前の YOLO バージョンと比較して、ボックス予測戦略にいくつかの重要な変更を加えています。YOLOv2 および YOLOv3 では、ボックスの座標は最終レイヤーの活性化関数を使用して直接予測されていました。
+
+![バウンディングボックスの x 座標予測数式](https://latex.codecogs.com/svg.image?b_x=%5Csigma\(t_x\)+c_x) ![バウンディングボックスの y 座標予測数式](https://latex.codecogs.com/svg.image?b_y=%5Csigma\(t_y\)+c_y) ![バウンディングボックスの幅予測数式](https://latex.codecogs.com/svg.image?b_w=p_w%5Ccdot&space;e%5E%7Bt_w%7D) ![バウンディングボックスの高さ予測数式](https://latex.codecogs.com/svg.image?b_h=p_h%5Ccdot&space;e%5E%7Bt_h%7D)
+
+![YOLOv5 grid computation](https://user-images.githubusercontent.com/31005897/158508027-8bf63c28-8290-467b-8a3e-4ad09235001a.png#pic_center)
+
+しかし、YOLOv5 では、グリッド感度を低減し、モデルが無制限のボックス寸法を予測するのを防ぐために、ボックス座標を予測するための数式が更新されました。
+
+予測される[バウンディングボックス](https://www.ultralytics.com/glossary/bounding-box)を計算するための修正された数式は以下の通りです。
+
+![YOLOv5 の修正されたバウンディングボックス x 座標数式](https://latex.codecogs.com/svg.image?b_x=\(2%5Ccdot%5Csigma\(t_x\)-0.5\)+c_x) ![YOLOv5 の修正されたバウンディングボックス y 座標数式](https://latex.codecogs.com/svg.image?b_y=\(2%5Ccdot%5Csigma\(t_y\)-0.5\)+c_y) ![YOLOv5 の修正されたバウンディングボックス幅数式](https://latex.codecogs.com/svg.image?b_w=p_w%5Ccdot\(2%5Ccdot%5Csigma\(t_w\)\)%5E2) ![YOLOv5 の修正されたバウンディングボックス高さ数式](https://latex.codecogs.com/svg.image?b_h=p_h%5Ccdot\(2%5Ccdot%5Csigma\(t_h\)\)%5E2)
+
+スケーリング前後で中心点のオフセットを比較します。中心点のオフセット範囲は (0, 1) から (-0.5, 1.5) に調整されています。そのため、オフセットは簡単に 0 または 1 になり得ます。
+
+![YOLOv5 grid scaling](https://user-images.githubusercontent.com/31005897/158508052-c24bc5e8-05c1-4154-ac97-2e1ec71f582e.png#pic_center)
+
+調整前後の高さと幅のスケーリング比（アンカーに対する比）を比較してください。元の yolo/darknet のボックス方程式には深刻な欠陥があります。幅と高さが単純に out=exp(in) であり、完全に無制限であるためです。これは危険であり、勾配の爆発、不安定化、NaN 損失、そして最終的には学習の完全な破綻につながる可能性があります。詳細については[この issue](https://github.com/ultralytics/yolov5/issues/471#issuecomment-662009779) を参照してください。
+
+![YOLOv5 unbounded scaling](https://user-images.githubusercontent.com/31005897/158508089-5ac0c7a3-6358-44b7-863e-a6e45babb842.png#pic_center)
+
+### Link to this section4.4 ターゲットの構築#
+
+YOLOv5 におけるターゲット構築プロセスは、学習効率とモデルの[精度](https://www.ultralytics.com/glossary/accuracy)にとって重要です。これには、Ground Truth ボックスを出力マップの適切なグリッドセルに割り当て、適切な Anchor ボックスと照合することが含まれます。
+
+このプロセスは以下の手順に従います。
+
+  * Ground Truth ボックスの寸法と各アンカーテンプレートの寸法の比率を計算します。
+
+
+
+![Ground Truth とアンカーの幅比率数式](https://latex.codecogs.com/svg.image?r_w=w_%7Bgt%7D/w_%7Bat%7D)
+
+![Ground Truth とアンカーの高さ比率数式](https://latex.codecogs.com/svg.image?r_h=h_%7Bgt%7D/h_%7Bat%7D)
+
+![最大幅比率数式](https://latex.codecogs.com/svg.image?r_w%5E%7Bmax%7D=max\(r_w,1/r_w\))
+
+![最大高さ比率数式](https://latex.codecogs.com/svg.image?r_h%5E%7Bmax%7D=max\(r_h,1/r_h\))
+
+![全体的な最大比率数式](https://latex.codecogs.com/svg.image?r%5E%7Bmax%7D=max\(r_w%5E%7Bmax%7D,r_h%5E%7Bmax%7D\))
+
+![アンカー照合しきい値数式](https://latex.codecogs.com/svg.image?r%5E%7Bmax%7D%3C%7B%5Crm&space;anchor_t%7D)
+
+![YOLOv5 IoU computation](https://user-images.githubusercontent.com/31005897/158508119-fbb2e483-7b8c-4975-8e1f-f510d367f8ff.png#pic_center)
+
+  * 計算された比率がしきい値内であれば、Ground Truth ボックスを対応するアンカーと照合します。
+
+![YOLOv5 grid overlap](https://user-images.githubusercontent.com/31005897/158508771-b6e7cab4-8de6-47f9-9abf-cdf14c275dfe.png#pic_center)
+
+  * 照合されたアンカーを適切なセルに割り当てます。その際、修正された中心点オフセットにより、Ground Truth ボックスは複数のアンカーに割り当てられる可能性があることに注意してください。中心点のオフセット範囲が (0, 1) から (-0.5, 1.5) に調整されたことで、追加の照合が可能になりました。
+
+![YOLOv5 anchor selection](https://user-images.githubusercontent.com/31005897/158508139-9db4e8c2-cf96-47e0-bc80-35d11512f296.png#pic_center)
+
+このように、ターゲット構築プロセスは、学習中に各 Ground Truth オブジェクトが適切に割り当てられ照合されることを保証し、YOLOv5 が物体検出タスクをより効果的に学習できるようにします。
+
+## Link to this section結論#
+
+YOLOv5 は、リアルタイム物体検出の進化における有意義な一歩を表しています。そのアーキテクチャの選択、学習戦略、およびエンジニアリングの洗練は、以前の YOLO バージョンと比較して強力なパフォーマンスと効率を提供します。
+
+YOLOv5 における主な強化点には、動的アーキテクチャの使用、幅広いデータ拡張手法、革新的な学習戦略、さらに損失計算やターゲット構築プロセスにおける重要な調整が含まれます。これらの革新のすべてが、YOLO モデルの特徴である高速性を維持しつつ、物体検出の精度と効率を大幅に向上させています。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/architecture-description.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+作成日 3 日前更新日 3 日前
+
+## コメント
+
+このページの内容
+
+AIで探索

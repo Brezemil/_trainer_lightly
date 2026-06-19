@@ -1,0 +1,2062 @@
+---
+source_url: https://docs.ultralytics.com/es/platform/api
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+# Link to this sectionReferencia de la REST API#
+
+[Ultralytics Platform](https://platform.ultralytics.com) ofrece una REST API completa para acceder mediante programación a datasets, modelos, entrenamiento y despliegues.
+
+![Visión general de la REST API de Ultralytics Platform](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/platform/platform-api-overview.avif)
+
+Inicio rápido
+    
+    
+    # List your datasets
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+Documentación interactiva de la API
+
+Explora la referencia completa e interactiva de la API en la [documentación de la REST API de Ultralytics Platform](https://platform.ultralytics.com/api/docs).
+
+## Link to this sectionVisión general de la API#
+
+La API está organizada en torno a los recursos principales de la plataforma:
+    
+    
+    graph LR
+        A[API Key] --> B[Datasets]
+        A --> C[Projects]
+        A --> D[Models]
+        A --> E[Deployments]
+        B -->|train on| D
+        C -->|contains| D
+        D -->|deploy to| E
+        D -->|export| F[Exports]
+        B -->|auto-annotate| B
+
+Recurso| Descripción| Operaciones clave  
+---|---|---  
+[Datasets](/es/platform/data/datasets)| Colecciones de imágenes etiquetadas| CRUD, imágenes, etiquetas, exportar, versiones, clonar  
+[Proyectos](/es/platform/train/projects)| Áreas de trabajo de entrenamiento| CRUD, clonar, icono  
+[Modelos](/es/platform/train/models)| Checkpoints entrenados| CRUD, predecir, descargar, clonar, exportar  
+[Despliegues](/es/platform/deploy/endpoints)| Endpoints de inferencia dedicados| CRUD, iniciar/detener, métricas, logs, estado  
+[Exportaciones](/es/platform/train/models#export-model)| Trabajos de conversión de formato| Crear, estado, descargar  
+[Entrenamiento](/es/platform/train/cloud-training)| Trabajos de entrenamiento en la nube (GPU)| Iniciar, estado, cancelar  
+[Facturación](/es/platform/account/billing)| Créditos y suscripciones| Saldo, recarga, métodos de pago  
+[Equipos](/es/platform/account/teams)| Colaboración en el área de trabajo| Miembros, invitaciones, roles  
+  
+## Link to this sectionAutenticación#
+
+Las APIs de recursos como datasets, proyectos, modelos, entrenamiento, exportaciones y predicciones utilizan autenticación mediante API-key. Los endpoints públicos (listado de datasets, proyectos y modelos públicos) admiten acceso de lectura anónimo sin necesidad de clave. Las rutas orientadas a la cuenta —incluyendo actividad, ajustes, equipos, facturación y flujos de GDPR— requieren actualmente una sesión de navegador autenticada y no están disponibles mediante API-key.
+
+### Link to this sectionObtener API-key#
+
+  1. Ve a `Settings` > `API Keys`
+  2. Haz clic en `Create Key`
+  3. Copia la clave generada
+
+
+
+Consulta [API Keys](/es/platform/account/api-keys) para obtener instrucciones detalladas.
+
+### Link to this sectionCabecera de autorización#
+
+Incluye tu API-key en todas las peticiones:
+    
+    
+    Authorization: Bearer YOUR_API_KEY
+
+Formato de la API-key
+
+Las API-keys utilizan el formato `ul_` seguido de 40 caracteres hexadecimales. Mantén tu clave en secreto; nunca la incluyas en el control de versiones ni la compartas públicamente.
+
+### Link to this sectionEjemplo#
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+## Link to this sectionURL base#
+
+Todos los endpoints de la API utilizan:
+
+`https://platform.ultralytics.com/api `
+
+## Link to this sectionLímites de tasa#
+
+La API aplica límites de tasa por API-key (ventana deslizante, respaldada por Upstash Redis) para proteger contra abusos mientras mantiene el uso legítimo sin restricciones. El tráfico anónimo está protegido adicionalmente por los controles de abuso a nivel de plataforma de Vercel.
+
+Cuando se aplica limitación, la API devuelve `429` con metadatos de reintento:
+    
+    
+    Retry-After: 12
+    X-RateLimit-Reset: 2026-02-21T12:34:56.000Z
+
+### Link to this sectionLímites por API-key#
+
+Los límites de tasa se aplican automáticamente según el endpoint al que se llame. Las operaciones costosas tienen límites más estrictos para evitar abusos, mientras que las operaciones CRUD estándar comparten un generoso valor predeterminado:
+
+Endpoint| Límite| Se aplica a  
+---|---|---  
+**Predeterminado**|  100 peticiones/min| Todos los endpoints no listados a continuación (listar, obtener, crear, actualizar, borrar)  
+**Entrenamiento**|  10 peticiones/min| Iniciar trabajos de entrenamiento en la nube (`POST /api/training/start`)  
+**Subida**|  10 peticiones/min| Subidas de archivos, URLs firmadas e ingesta de datasets  
+**Predicción**|  20 peticiones/min| Inferencia de modelos compartidos (`POST /api/models/{id}/predict`)  
+**Exportar**|  20 peticiones/min| Exportaciones de formato de modelo (`POST /api/exports`), exportaciones NDJSON de datasets y creación de versiones  
+**Descarga**|  30 peticiones/min| Descargas de archivos de pesos del modelo (`GET /api/models/{id}/files`)  
+**Dedicado**| **Ilimitado**| [Endpoints dedicados](/es/platform/deploy/endpoints) — tu propio servicio, sin límites de API  
+  
+Cada categoría tiene un contador independiente por API-key. Por ejemplo, realizar 20 peticiones de predicción no afecta a tu asignación predeterminada de 100 peticiones/min.
+
+### Link to this sectionEndpoints dedicados (ilimitados)#
+
+Los [endpoints dedicados](/es/platform/deploy/endpoints) **no están sujetos a límites de tasa de la API-key**. Cuando despliegas un modelo en un endpoint dedicado, las peticiones a esa URL de endpoint (p. ej., `https://predict-abc123.run.app/predict`) van directamente a tu servicio dedicado sin limitación de tasa por parte de la plataforma. Pagas por la computación, por lo que obtienes un rendimiento basado en la configuración de tu servicio dedicado en lugar de en los límites compartidos de la API.
+
+Gestión de límites de tasa
+
+Cuando recibas un código de estado `429`, espera a que pase el tiempo indicado en `Retry-After` (o hasta `X-RateLimit-Reset`) antes de volver a intentarlo. Consulta las preguntas frecuentes sobre límites de velocidad para ver una implementación de retroceso exponencial.
+
+## Link to this sectionFormato de respuesta#
+
+### Link to this sectionRespuestas de éxito#
+
+Las respuestas devuelven JSON con campos específicos del recurso:
+    
+    
+    {
+        "datasets": [...],
+        "total": 100
+    }
+
+### Link to this sectionRespuestas de error#
+    
+    
+    {
+        "error": "Dataset not found"
+    }
+
+Estado HTTP| Significado  
+---|---  
+`200`| Éxito  
+`201`| Creado  
+`400`| Petición no válida  
+`401`| Autenticación requerida  
+`403`| Permisos insuficientes  
+`404`| Recurso no encontrado  
+`409`| Conflicto (duplicado)  
+`429`| Límite de peticiones excedido  
+`500`| Error del servidor  
+  
+* * *
+
+## Link to this sectionAPI de datasets#
+
+Crea, explora y gestiona datasets de imágenes etiquetadas para entrenar modelos YOLO. Consulta la [documentación de datasets](/es/platform/data/datasets).
+
+### Link to this sectionListar datasets#
+    
+    
+    GET /api/datasets
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`username`| cadena| Filtrar por nombre de usuario  
+`slug`| cadena| Obtener un dataset mediante su slug  
+`limit`| entero| Elementos por página (predeterminado: 1000, máximo: 1000)  
+`owner`| cadena| Nombre de usuario del propietario del espacio de trabajo  
+      
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=10"
+
+**Respuesta:**
+    
+    
+    {
+        "datasets": [
+            {
+                "_id": "dataset_abc123",
+                "name": "my-dataset",
+                "slug": "my-dataset",
+                "task": "detect",
+                "imageCount": 1000,
+                "classCount": 10,
+                "classNames": ["person", "car"],
+                "visibility": "private",
+                "username": "johndoe",
+                "starCount": 3,
+                "isStarred": false,
+                "sampleImages": [
+                    {
+                        "url": "https://storage.example.com/...",
+                        "width": 1920,
+                        "height": 1080,
+                        "labels": [{ "classId": 0, "bbox": [0.5, 0.4, 0.3, 0.6] }]
+                    }
+                ],
+                "createdAt": "2024-01-15T10:00:00Z",
+                "updatedAt": "2024-01-16T08:30:00Z"
+            }
+        ],
+        "total": 1,
+        "region": "us"
+    }
+
+### Link to this sectionObtener dataset#
+    
+    
+    GET /api/datasets/{datasetId}
+
+Devuelve los detalles completos del dataset, incluidos metadatos, nombres de clases y conteos de divisiones.
+
+### Link to this sectionCrear dataset#
+    
+    
+    POST /api/datasets
+
+**Cuerpo:**
+    
+    
+    {
+        "slug": "my-dataset",
+        "name": "My Dataset",
+        "task": "detect",
+        "description": "A custom detection dataset",
+        "visibility": "private",
+        "classNames": ["person", "car"]
+    }
+
+Tareas compatibles
+
+Valores válidos para `task`: `detect`, `segment`, `semantic`, `classify`, `pose`, `obb`.
+
+### Link to this sectionActualizar dataset#
+    
+    
+    PATCH /api/datasets/{datasetId}
+
+**Cuerpo (actualización parcial):**
+    
+    
+    {
+        "name": "Updated Name",
+        "description": "New description",
+        "visibility": "public"
+    }
+
+### Link to this sectionIcono del conjunto de datos#
+
+Sube un icono para el conjunto de datos (formulario multipart con archivo de imagen):
+    
+    
+    POST /api/datasets/{datasetId}/icon
+
+Elimina el icono del conjunto de datos:
+    
+    
+    DELETE /api/datasets/{datasetId}/icon
+
+Ambos requieren una sesión activa en el navegador de la plataforma; no están disponibles mediante clave API.
+
+### Link to this sectionEliminar dataset#
+    
+    
+    DELETE /api/datasets/{datasetId}
+
+Elimina el dataset de forma lógica (movido a la [papelera](/es/platform/account/trash), recuperable durante 30 días).
+
+### Link to this sectionClonar dataset#
+    
+    
+    POST /api/datasets/{datasetId}/clone
+
+Crea una copia del conjunto de datos con todas las imágenes y etiquetas. Solo se pueden clonar conjuntos de datos públicos, propios o editables en el espacio de trabajo. Requiere una sesión activa del navegador en la plataforma; no disponible mediante API key.
+
+**Cuerpo (todos los campos son opcionales):**
+    
+    
+    {
+        "name": "cloned-dataset",
+        "description": "My cloned dataset",
+        "visibility": "private",
+        "owner": "team-username"
+    }
+
+### Link to this sectionExportar dataset#
+    
+    
+    GET /api/datasets/{datasetId}/export
+
+Devuelve una respuesta JSON con una URL de descarga firmada para la exportación más reciente del dataset.
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`v`| entero| Número de versión (indexado desde 1). Si se omite, devuelve la exportación más reciente (sin caché).  
+  
+**Respuesta:**
+    
+    
+    {
+        "downloadUrl": "https://storage.example.com/export.ndjson?signed=...",
+        "cached": true
+    }
+
+### Link to this sectionCrear versión de dataset#
+    
+    
+    POST /api/datasets/{datasetId}/export
+
+Crea una nueva instantánea numerada de la versión del dataset. Solo para el propietario. La versión captura el conteo actual de imágenes, clases, anotaciones y distribución de divisiones, y luego genera y almacena una exportación NDJSON inmutable.
+
+**Cuerpo de la solicitud:**
+    
+    
+    {
+        "description": "Added 500 training images"
+    }
+
+Todos los campos son opcionales. El campo `description` es una etiqueta proporcionada por el usuario para la versión.
+
+**Respuesta:**
+    
+    
+    {
+        "version": 3,
+        "downloadUrl": "https://storage.example.com/v3.ndjson?signed=..."
+    }
+
+### Link to this sectionActualizar descripción de la versión#
+    
+    
+    PATCH /api/datasets/{datasetId}/export
+
+Actualiza la descripción de una versión existente. Solo para el propietario.
+
+**Cuerpo de la solicitud:**
+    
+    
+    {
+        "version": 2,
+        "description": "Fixed mislabeled classes"
+    }
+
+**Respuesta:**
+    
+    
+    {
+        "ok": true
+    }
+
+### Link to this sectionObtener estadísticas de clases#
+    
+    
+    GET /api/datasets/{datasetId}/class-stats
+
+Devuelve la distribución de clases, mapa de calor de ubicación y estadísticas de dimensiones. Los resultados se guardan en caché durante un máximo de 5 minutos.
+
+**Respuesta:**
+    
+    
+    {
+        "classes": [{ "classId": 0, "count": 1500, "imageCount": 450 }],
+        "imageStats": {
+            "widthHistogram": [{ "bin": 640, "count": 120 }],
+            "heightHistogram": [{ "bin": 480, "count": 95 }],
+            "pointsHistogram": [{ "bin": 4, "count": 200 }]
+        },
+        "locationHeatmap": {
+            "bins": [
+                [5, 10],
+                [8, 3]
+            ],
+            "maxCount": 50
+        },
+        "dimensionHeatmap": {
+            "bins": [
+                [2, 5],
+                [3, 1]
+            ],
+            "maxCount": 12,
+            "minWidth": 10,
+            "maxWidth": 1920,
+            "minHeight": 10,
+            "maxHeight": 1080
+        },
+        "classNames": ["person", "car", "dog"],
+        "cached": true,
+        "sampled": false,
+        "sampleSize": 1000
+    }
+
+### Link to this sectionGestionar clases#
+
+Fusionar clases (reasigna anotaciones de clases de origen a una de destino, luego elimina las de origen):
+    
+    
+    POST /api/datasets/{datasetId}/classes/merge
+
+Eliminar clases:
+    
+    
+    POST /api/datasets/{datasetId}/classes/delete
+
+### Link to this sectionRedistribuir divisiones#
+    
+    
+    POST /api/datasets/{datasetId}/splits/redistribute
+
+Reasigna imágenes entre las divisiones de entrenamiento/validación/prueba. Las tres requieren una sesión activa del navegador en la plataforma; no disponible mediante API key.
+
+### Link to this sectionIncrustaciones del conjunto de datos#
+    
+    
+    GET /api/datasets/{datasetId}/embeddings
+    POST /api/datasets/{datasetId}/embeddings
+    DELETE /api/datasets/{datasetId}/embeddings
+
+GET devuelve el resumen actual del análisis UMAP y el estado del trabajo activo; POST pone en cola un trabajo de análisis de incrustaciones; DELETE cancela el trabajo activo.
+
+### Link to this sectionAgrupación de imágenes#
+    
+    
+    GET /api/datasets/{datasetId}/images/clustering
+
+Devuelve el diseño 2D de UMAP y los metadatos por imagen para la vista de dispersión de agrupamiento (paginado y con límite de tasa).
+
+### Link to this sectionObtener modelos entrenados en el dataset#
+    
+    
+    GET /api/datasets/{datasetId}/models
+
+Devuelve los modelos que se entrenaron usando este dataset.
+
+**Respuesta:**
+    
+    
+    {
+        "models": [
+            {
+                "_id": "model_abc123",
+                "name": "experiment-1",
+                "slug": "experiment-1",
+                "status": "completed",
+                "task": "detect",
+                "epochs": 100,
+                "bestEpoch": 87,
+                "projectId": "project_xyz",
+                "projectSlug": "my-project",
+                "projectIconColor": "#3b82f6",
+                "projectIconLetter": "M",
+                "username": "johndoe",
+                "startedAt": "2024-01-14T22:00:00Z",
+                "completedAt": "2024-01-15T10:00:00Z",
+                "createdAt": "2024-01-14T21:55:00Z",
+                "metrics": {
+                    "mAP50": 0.85,
+                    "mAP50-95": 0.72,
+                    "precision": 0.88,
+                    "recall": 0.81
+                }
+            }
+        ],
+        "count": 1
+    }
+
+### Link to this sectionAuto-anotar dataset#
+    
+    
+    POST /api/datasets/{datasetId}/predict
+
+Ejecuta la inferencia de YOLO en las imágenes del dataset para auto-generar anotaciones. Utiliza un modelo seleccionado para predecir etiquetas en imágenes no anotadas.
+
+**Cuerpo:**
+
+Campo| Tipo| Requerido| Descripción  
+---|---|---|---  
+`imageHash`| cadena| Sí| Hash de la imagen a anotar  
+`modelId`| cadena| No| Modelo a utilizar para la inferencia, como un URI `ul://` (por ejemplo, `ul://username/project/model`). Si se omite, se utiliza el modelo predeterminado específico de la tarea del conjunto de datos.  
+`confidence`| float| No| Umbral de confianza (predeterminado: 0.25)  
+`iou`| float| No| Umbral de IoU (predeterminado: 0.7)  
+  
+### Link to this sectionIngesta de dataset#
+    
+    
+    POST /api/datasets/ingest
+
+Crea una tarea de ingesta de dataset para procesar archivos ZIP o TAR cargados, incluyendo `.tar.gz` y `.tgz`, que contengan imágenes y etiquetas.
+
+El cuerpo de la solicitud acepta exactamente uno de `sessionId` (una sesión de carga de un archivo comprimido) o `sourceUrl` (una URL remota de ZIP, TAR, TAR.GZ, TGZ o NDJSON), además de un `targetSplit` opcional (`train`, `val` o `test`) para sobrescribir la estructura de división del archivo.
+    
+    
+    graph LR
+        A[Upload Archive] --> B[POST /api/datasets/ingest]
+        B --> C[Process Archive]
+        C --> D[Extract images]
+        C --> E[Parse labels]
+        C --> F[Generate thumbnails]
+        D & E & F --> G[Dataset ready]
+
+### Link to this sectionImágenes del dataset#
+
+#### Link to this sectionListar imágenes#
+    
+    
+    GET /api/datasets/{datasetId}/images
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`split`| cadena| Filtrar por división: `train`, `val`, `test`  
+`offset`| entero| Desplazamiento de paginación (predeterminado: 0)  
+`limit`| entero| Elementos por página (predeterminado: 50, máximo: 5000)  
+`sort`| cadena| Orden: `newest`, `oldest`, `name-asc`, `name-desc`, `height-asc`, `height-desc`, `width-asc`, `width-desc`, `size-asc`, `size-desc`, `labels-asc`, `labels-desc` (algunos deshabilitados para datasets de más de 100k imágenes)  
+`hasLabel`| cadena| Filtrar por estado de etiqueta (`true` o `false`)  
+`hasError`| cadena| Filtrar por estado de error (`true` o `false`)  
+`search`| cadena| Buscar por nombre de archivo o hash de imagen  
+`classIds`| cadena| IDs de clase separados por comas; devuelve imágenes que contienen cualquiera de las clases especificadas  
+`includeThumbnails`| cadena| Incluir URLs de miniaturas firmadas (predeterminado: `true`)  
+`includeImageUrls`| cadena| Incluir URLs de imágenes completas firmadas (predeterminado: `false`)  
+  
+#### Link to this sectionObtener URLs de imágenes firmadas#
+    
+    
+    POST /api/datasets/{datasetId}/images/urls
+
+Obtener URLs firmadas para un lote de hashes de imagen (para visualización en el navegador).
+
+#### Link to this sectionEliminar imagen#
+    
+    
+    DELETE /api/datasets/{datasetId}/images/{hash}
+
+#### Link to this sectionObtener etiquetas de imagen#
+    
+    
+    GET /api/datasets/{datasetId}/images/{hash}/labels
+
+Devuelve las anotaciones y nombres de clase para una imagen específica.
+
+#### Link to this sectionActualizar etiquetas de imagen#
+    
+    
+    PUT /api/datasets/{datasetId}/images/{hash}/labels
+
+**Cuerpo:**
+    
+    
+    {
+        "labels": [
+            { "classId": 0, "bbox": [0.5, 0.5, 0.2, 0.3] },
+            { "classId": 1, "segments": [0.1, 0.2, 0.3, 0.2, 0.2, 0.4] }
+        ]
+    }
+
+Formato de coordenadas
+
+Las coordenadas de etiqueta utilizan valores normalizados de YOLO entre 0 y 1. Las cajas delimitadoras utilizan `[x_center, y_center, width, height]`. Las etiquetas de segmentación utilizan `segments`, una lista aplanada de vértices de polígono `[x1, y1, x2, y2, ...]`.
+
+#### Link to this sectionOperaciones masivas de imágenes#
+
+Mover imágenes entre divisiones (train/val/test) dentro de un dataset:
+    
+    
+    PATCH /api/datasets/{datasetId}/images/bulk
+
+Eliminar imágenes masivamente:
+    
+    
+    DELETE /api/datasets/{datasetId}/images/bulk
+
+* * *
+
+## Link to this sectionAPI de proyectos#
+
+Organiza tus modelos en proyectos. Cada modelo pertenece a un proyecto. Consulta la [documentación de proyectos](/es/platform/train/projects).
+
+### Link to this sectionListar proyectos#
+    
+    
+    GET /api/projects
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`username`| cadena| Filtrar por nombre de usuario  
+`limit`| entero| Elementos por página  
+`owner`| cadena| Nombre de usuario del propietario del espacio de trabajo  
+  
+### Link to this sectionObtener proyecto#
+    
+    
+    GET /api/projects/{projectId}
+
+### Link to this sectionCrear proyecto#
+    
+    
+    POST /api/projects
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"name": "my-project", "slug": "my-project", "description": "Detection experiments"}' \
+      https://platform.ultralytics.com/api/projects
+
+### Link to this sectionActualizar proyecto#
+    
+    
+    PATCH /api/projects/{projectId}
+
+### Link to this sectionEliminar proyecto#
+    
+    
+    DELETE /api/projects/{projectId}
+
+Elimina el proyecto de forma lógica (movido a la [papelera](/es/platform/account/trash)).
+
+### Link to this sectionClonar proyecto#
+    
+    
+    POST /api/projects/{projectId}/clone
+
+Clona un proyecto público (con todos sus modelos) en tu espacio de trabajo. Requiere una sesión activa en el navegador de la plataforma; no está disponible mediante clave de API.
+
+### Link to this sectionIcono de proyecto#
+
+Cargar un icono de proyecto (formulario multipart con archivo de imagen):
+    
+    
+    POST /api/projects/{projectId}/icon
+
+Eliminar el icono del proyecto:
+    
+    
+    DELETE /api/projects/{projectId}/icon
+
+Ambos requieren una sesión activa en el navegador de la plataforma; no están disponibles mediante clave API.
+
+* * *
+
+## Link to this sectionAPI de modelos#
+
+Gestiona modelos YOLO entrenados: consulta métricas, descarga pesos, ejecuta inferencias y exporta a otros formatos. Consulta la [documentación de modelos](/es/platform/train/models).
+
+### Link to this sectionListar modelos#
+    
+    
+    GET /api/models
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Requerido| Descripción  
+---|---|---|---  
+`projectId`| cadena| Sí| ID del proyecto (obligatorio)  
+`fields`| cadena| No| Conjunto de campos: `summary`, `charts`  
+`ids`| cadena| No| IDs de modelo separados por comas  
+`limit`| entero| No| Resultados máximos (predeterminado 20, máximo 100)  
+  
+### Link to this sectionListar modelos completados#
+    
+    
+    GET /api/models/completed
+
+Devuelve los modelos que han terminado de entrenarse (para su uso en selectores de modelos y despliegue).
+
+### Link to this sectionObtener modelo#
+    
+    
+    GET /api/models/{modelId}
+
+### Link to this sectionCrear modelo#
+    
+    
+    POST /api/models
+
+**Cuerpo JSON:**
+
+Campo| Tipo| Requerido| Descripción  
+---|---|---|---  
+`projectId`| cadena| Sí| ID del proyecto de destino  
+`slug`| cadena| No| Slug de URL (alfanumérico en minúsculas/guiones)  
+`name`| cadena| No| Nombre para mostrar (máx. 100 caracteres)  
+`description`| cadena| No| Descripción del modelo (máx. 1000 caracteres)  
+`task`| cadena| No| Tipo de tarea (detect, segment, semantic, pose, obb, classify)  
+  
+Subida de archivo de modelo
+
+Las subidas de archivos de modelo `.pt` se gestionan por separado. Usa la interfaz de usuario de la plataforma para arrastrar y soltar archivos de modelo en un proyecto.
+
+### Link to this sectionActualizar modelo#
+    
+    
+    PATCH /api/models/{modelId}
+
+### Link to this sectionEliminar modelo#
+    
+    
+    DELETE /api/models/{modelId}
+
+### Link to this sectionDescargar archivos de modelo#
+    
+    
+    GET /api/models/{modelId}/files
+
+Devuelve URLs de descarga firmadas para archivos de modelo.
+
+### Link to this sectionClonar modelo#
+    
+    
+    POST /api/models/{modelId}/clone
+
+Clona un modelo público en uno de tus proyectos. Requiere una sesión activa en el navegador de la plataforma; no disponible mediante clave API.
+
+**Cuerpo:**
+    
+    
+    {
+        "targetProjectSlug": "my-project",
+        "modelName": "cloned-model",
+        "description": "Cloned from public model",
+        "owner": "team-username"
+    }
+
+Campo| Tipo| Requerido| Descripción  
+---|---|---|---  
+`targetProjectSlug`| cadena| Sí| Slug del proyecto de destino  
+`modelName`| cadena| No| Nombre para el modelo clonado  
+`description`| cadena| No| Descripción del modelo  
+`owner`| cadena| No| Nombre de usuario del equipo (para clonar en un área de trabajo)  
+  
+### Link to this sectionSeguimiento de descarga#
+    
+    
+    POST /api/models/{modelId}/track-download
+
+Realiza el seguimiento de las analíticas de descarga del modelo.
+
+### Link to this sectionEjecuta la inferencia#
+    
+    
+    POST /api/models/{modelId}/predict
+
+**Formulario multiparte:**
+
+Campo| Tipo| Descripción  
+---|---|---  
+`file`| archivo| Archivo de imagen o vídeo (ej. JPG, PNG, WebP, BMP, TIFF; MP4, MOV, AVI)  
+`conf`| float| Umbral de confianza (predeterminado: 0.25)  
+`iou`| float| Umbral de IoU (predeterminado: 0.7)  
+`imgsz`| entero| Tamaño de imagen en píxeles (predeterminado: 640)  
+`source`| cadena| URL de imagen o imagen codificada en base64 (alternativa a `file`)  
+  
+El tamaño máximo de carga es de 100 MB.
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -F "file=@image.jpg" \
+      -F "conf=0.5" \
+      https://platform.ultralytics.com/api/models/MODEL_ID/predict
+
+**Respuesta:**
+    
+    
+    {
+        "images": [
+            {
+                "shape": [1080, 1920],
+                "results": [
+                    {
+                        "class": 0,
+                        "name": "person",
+                        "confidence": 0.92,
+                        "box": { "x1": 100, "y1": 50, "x2": 300, "y2": 400 }
+                    }
+                ]
+            }
+        ],
+        "metadata": {
+            "imageCount": 1
+        }
+    }
+
+### Link to this sectionObtener token de predicción#
+    
+    
+    POST /api/models/{modelId}/predict/token
+
+Solo sesión de navegador
+
+Esta ruta es utilizada por la pestaña Predict de la aplicación para emitir tokens de inferencia de corta duración para llamadas directas navegador → predict-service (menor latencia, sin proxy API). Requiere una sesión activa en el navegador de la plataforma y no está disponible mediante clave API. Para inferencia programática, llama a `POST /api/models/{modelId}/predict` con tu clave API.
+
+### Link to this sectionCalentar modelo#
+    
+    
+    POST /api/models/{modelId}/predict/warmup
+
+Solo sesión de navegador
+
+La ruta de calentamiento es utilizada por la pestaña Predict para precargar los pesos de un modelo en el servicio de predicción antes de la primera inferencia del usuario. Requiere una sesión activa en el navegador de la plataforma y no está disponible mediante clave API.
+
+* * *
+
+## Link to this sectionAPI de entrenamiento#
+
+Lanza el entrenamiento de YOLO en GPUs en la nube (26 tipos de GPU desde RTX 2000 Ada hasta B300) y supervisa el progreso en tiempo real. Consulta la [documentación de Cloud Training](/es/platform/train/cloud-training).
+    
+    
+    graph LR
+        A[POST /training/start] --> B[Job Created]
+        B --> C{Training}
+        C -->|progress| D[GET /models/id/training]
+        C -->|cancel| E[DELETE /models/id/training]
+        C -->|complete| F[Model Ready]
+        F --> G[Deploy or Export]
+
+### Link to this sectionIniciar entrenamiento#
+    
+    
+    POST /api/training/start
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "modelId": "MODEL_ID",
+        "projectId": "PROJECT_ID",
+        "gpuType": "rtx-4090",
+        "trainArgs": {
+          "model": "yolo26n.pt",
+          "data": "ul://username/datasets/my-dataset",
+          "epochs": 100,
+          "imgsz": 640,
+          "batch": 16
+        }
+      }' \
+      https://platform.ultralytics.com/api/training/start
+
+Tipos de GPU
+
+Los tipos de GPU disponibles incluyen `rtx-4090`, `a100-80gb-pcie`, `a100-80gb-sxm`, `h100-sxm`, `rtx-pro-6000`, `b300` y otros. Consulta [Entrenamiento en la nube](/es/platform/train/cloud-training) para ver la lista completa con los precios.
+
+### Link to this sectionObtener disponibilidad de GPU#
+    
+    
+    GET /api/training/gpu-availability
+
+Devuelve el estado actual de las existencias de GPU (`High`, `Medium`, `Low` o `null`) clasificado por ID de tipo de GPU. Público, no requiere autenticación; se almacena en caché durante 5 minutos.
+
+### Link to this sectionObtener estado del entrenamiento#
+    
+    
+    GET /api/models/{modelId}/training
+
+Devuelve el estado actual, las métricas y el progreso del trabajo de entrenamiento de un modelo. Los proyectos públicos son accesibles de forma anónima; los proyectos privados requieren una sesión activa en el navegador de la plataforma (esta ruta no acepta autenticación con clave API).
+
+### Link to this sectionCancelar entrenamiento#
+    
+    
+    DELETE /api/models/{modelId}/training
+
+Termina la instancia de computación en ejecución y marca el trabajo como cancelado. Requiere una sesión activa en el navegador de la plataforma; no está disponible mediante clave API.
+
+* * *
+
+## Link to this sectionAPI de despliegues#
+
+Despliega modelos en puntos finales de inferencia dedicados con comprobaciones de estado y monitorización. Los nuevos despliegues utilizan escalado a cero de forma predeterminada, y la API acepta un objeto `resources` opcional. Consulta la [documentación de puntos finales](/es/platform/deploy/endpoints).
+
+Compatibilidad con clave API por ruta
+
+Solo `GET /api/deployments`, `POST /api/deployments`, `GET /api/deployments/{deploymentId}` y `DELETE /api/deployments/{deploymentId}` admiten autenticación con clave API. Las subrutas `predict`, `health`, `logs`, `metrics`, `start` y `stop` requieren una sesión activa en el navegador de la plataforma; son proxies de conveniencia para la interfaz de usuario de la aplicación. Para inferencia programática, llama directamente a la URL del punto final del despliegue (p. ej., `https://predict-abc123.run.app/predict`) con tu clave API. Los [puntos finales dedicados](/es/platform/deploy/endpoints#using-endpoints) no tienen límites de tasa.
+    
+    
+    graph LR
+        A[Create] --> B[Deploying]
+        B --> C[Ready]
+        C -->|stop| D[Stopped]
+        D -->|start| C
+        C -->|delete| E[Deleted]
+        D -->|delete| E
+        C -->|predict| F[Inference Results]
+
+### Link to this sectionListar despliegues#
+    
+    
+    GET /api/deployments
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`modelId`| cadena| Filtrar por modelo  
+`status`| cadena| Filtrar por estado  
+`limit`| entero| Resultados máximos (predeterminado: 20, máximo: 100)  
+`owner`| cadena| Nombre de usuario del propietario del espacio de trabajo  
+  
+### Link to this sectionCrear despliegue#
+    
+    
+    POST /api/deployments
+
+**Cuerpo:**
+    
+    
+    {
+        "modelId": "model_abc123",
+        "name": "my-deployment",
+        "region": "us-central1",
+        "resources": {
+            "cpu": 1,
+            "memoryGi": 2,
+            "minInstances": 0,
+            "maxInstances": 1
+        }
+    }
+
+Campo| Tipo| Requerido| Descripción  
+---|---|---|---  
+`modelId`| cadena| Sí| ID del modelo a desplegar  
+`name`| cadena| Sí| Nombre del despliegue  
+`region`| cadena| Sí| Región del despliegue  
+`resources`| objeto| No| Configuración de recursos (`cpu`, `memoryGi`, `minInstances`, `maxInstances`)  
+  
+Crea un punto final de inferencia dedicado en la región especificada. El punto final es accesible globalmente mediante una URL única.
+
+Recursos predeterminados
+
+El diálogo de despliegue actualmente envía valores predeterminados fijos de `cpu=1`, `memoryGi=2`, `minInstances=0` y `maxInstances=1`. La ruta de la API acepta un objeto `resources`, pero los límites del plan restringen `minInstances` a `0` y `maxInstances` a `1`.
+
+Selección de región
+
+Elige una región cercana a tus usuarios para obtener la menor latencia posible. La interfaz de usuario de la plataforma muestra estimaciones de latencia para las 43 regiones disponibles.
+
+### Link to this sectionObtener despliegue#
+    
+    
+    GET /api/deployments/{deploymentId}
+
+### Link to this sectionEliminar despliegue#
+    
+    
+    DELETE /api/deployments/{deploymentId}
+
+### Link to this sectionIniciar despliegue#
+    
+    
+    POST /api/deployments/{deploymentId}/start
+
+Reanuda un despliegue detenido.
+
+### Link to this sectionDetener despliegue#
+    
+    
+    POST /api/deployments/{deploymentId}/stop
+
+Pausa un despliegue en ejecución (detiene la facturación).
+
+### Link to this sectionComprobación de estado#
+    
+    
+    GET /api/deployments/{deploymentId}/health
+
+Devuelve el estado de salud del punto final de despliegue.
+
+### Link to this sectionEjecutar inferencia en el despliegue#
+    
+    
+    POST /api/deployments/{deploymentId}/predict
+
+Envía una imagen directamente a un punto final de despliegue para inferencia. Funcionalmente equivalente a la predicción del modelo, pero enrutada a través del punto final dedicado para una menor latencia.
+
+**Formulario multiparte:**
+
+Campo| Tipo| Descripción  
+---|---|---  
+`file`| archivo| Archivo de imagen (JPEG, PNG, WebP)  
+`conf`| float| Umbral de confianza (predeterminado: 0.25)  
+`iou`| float| Umbral de IoU (predeterminado: 0.7)  
+`imgsz`| entero| Tamaño de imagen en píxeles (predeterminado: 640)  
+  
+### Link to this sectionObtener métricas#
+    
+    
+    GET /api/deployments/{deploymentId}/metrics
+
+Devuelve métricas de conteo de solicitudes, latencia y tasa de errores con datos de sparkline.
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`range`| cadena| Rango de tiempo: `1h`, `6h`, `24h` (predeterminado), `7d`, `30d`  
+`sparkline`| cadena| Establece como `true` para obtener datos de sparkline optimizados para la vista del panel de control  
+  
+### Link to this sectionObtener registros#
+    
+    
+    GET /api/deployments/{deploymentId}/logs
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`severity`| cadena| Filtro separado por comas: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`  
+`limit`| entero| Número de entradas (predeterminado: 50, máximo: 200)  
+`pageToken`| cadena| Token de paginación de la respuesta anterior  
+  
+* * *
+
+## Link to this sectionAPI de monitorización#
+
+Solo sesión de navegador
+
+`GET /api/monitoring` es una ruta exclusiva para la interfaz de usuario y requiere una sesión activa en el navegador de la plataforma. No acepta autenticación mediante API-key. Consulta las métricas de despliegue individuales a través de las rutas por despliegue (que también son solo para sesiones de navegador) o utiliza [Cloud Monitoring exports](https://cloud.google.com/monitoring) en el servicio Cloud Run desplegado para obtener acceso programático.
+
+### Link to this sectionMétricas agregadas#
+    
+    
+    GET /api/monitoring
+
+Devuelve métricas agregadas de todos los despliegues del usuario: total de solicitudes, despliegues activos, tasa de error y latencia media.
+
+* * *
+
+## Link to this sectionAPI de exportación#
+
+Convierte modelos a formatos optimizados como ONNX, TensorRT, CoreML y TFLite para su despliegue en el edge. Consulta la [documentación de despliegue](/es/platform/deploy).
+
+### Link to this sectionListar exportaciones#
+    
+    
+    GET /api/exports
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`modelId`| cadena| ID del modelo (obligatorio)  
+`status`| cadena| Filtrar por estado  
+`limit`| entero| Resultados máximos (predeterminado: 20, máximo: 100)  
+  
+### Link to this sectionCrear exportación#
+    
+    
+    POST /api/exports
+
+**Cuerpo:**
+
+Campo| Tipo| Requerido| Descripción  
+---|---|---|---  
+`modelId`| cadena| Sí| ID del modelo de origen  
+`format`| cadena| Sí| Formato de exportación (consulta la tabla a continuación)  
+`gpuType`| cadena| Condicional| Obligatorio cuando `format` es `engine` (TensorRT)  
+`args`| objeto| No| Argumentos de exportación (`imgsz`, `half`, `dynamic`, etc.)  
+      
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"modelId": "MODEL_ID", "format": "onnx"}' \
+      https://platform.ultralytics.com/api/exports
+
+**Formatos admitidos:**
+
+Formato| Valor| Caso de uso  
+---|---|---  
+ONNX| `onnx`| Inferencia multiplataforma  
+TorchScript| `torchscript`| Despliegue en PyTorch  
+OpenVINO| `openvino`| Hardware de Intel  
+TensorRT| `engine`| Optimización para GPU NVIDIA  
+CoreML| `coreml`| Dispositivos Apple  
+TFLite| `tflite`| Dispositivos móviles y embebidos  
+TF SavedModel| `saved_model`| TensorFlow Serving  
+TF GraphDef| `pb`| Grafo congelado de TensorFlow  
+PaddlePaddle| `paddle`| Baidu PaddlePaddle  
+NCNN| `ncnn`| Red neuronal móvil  
+Edge TPU| `edgetpu`| Dispositivos Google Coral  
+TF.js| `tfjs`| Inferencia en navegador  
+MNN| `mnn`| Inferencia móvil en Alibaba  
+RKNN| `rknn`| NPU de Rockchip  
+Qualcomm| `qnn`| NPU Qualcomm Snapdragon  
+IMX| `imx`| Sensor Sony IMX500  
+Axelera| `axelera`| Aceleradores de IA Axelera  
+ExecuTorch| `executorch`| Runtime de Meta ExecuTorch  
+DeepX| `deepx`| Aceleradores NPU de DeepX  
+  
+### Link to this sectionObtener estado de exportación#
+    
+    
+    GET /api/exports/{exportId}
+
+### Link to this sectionCancelar exportación#
+    
+    
+    DELETE /api/exports/{exportId}
+
+### Link to this sectionRastrear descarga de exportación#
+    
+    
+    POST /api/exports/{exportId}/track-download
+
+* * *
+
+## Link to this sectionAPI de actividad#
+
+Consulta un feed de acciones recientes en tu cuenta: ejecuciones de entrenamiento, cargas y mucho más. Consulta la [documentación de actividad](/es/platform/account/activity).
+
+Solo sesión de navegador
+
+Las rutas de actividad funcionan mediante solicitudes autenticadas por el navegador desde la interfaz de usuario de la plataforma. No están expuestas como una API pública, no aceptan autenticación mediante API-key y las formas de las rutas que aparecen a continuación solo se documentan como referencia. Utiliza el feed de actividad en la interfaz de la plataforma para ver, marcar o archivar eventos.
+
+### Link to this sectionListar actividad#
+    
+    
+    GET /api/activity
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`limit`| entero| Tamaño de página (predeterminado: 20, máximo: 100)  
+`page`| entero| Número de página (predeterminado: 1)  
+`archived`| booleano| `true` para la pestaña Archivo, `false` para la Bandeja de entrada  
+`search`| cadena| Búsqueda que no distingue entre mayúsculas y minúsculas en los campos de evento  
+  
+### Link to this sectionMarcar eventos como vistos#
+    
+    
+    POST /api/activity/mark-seen
+
+**Cuerpo:**
+    
+    
+    {
+        "all": true
+    }
+
+O pasa IDs específicos:
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"]
+    }
+
+### Link to this sectionArchivar eventos#
+    
+    
+    POST /api/activity/archive
+
+**Cuerpo:**
+    
+    
+    {
+        "all": true,
+        "archive": true
+    }
+
+O pasa IDs específicos:
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"],
+        "archive": false
+    }
+
+* * *
+
+## Link to this sectionAPI de papelera#
+
+Visualiza y restaura elementos eliminados. Los elementos se eliminan de forma permanente después de 30 días. Consulta la [documentación de la papelera](/es/platform/account/trash).
+
+### Link to this sectionListar papelera#
+    
+    
+    GET /api/trash
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`type`| cadena| Filtro: `all`, `project`, `dataset`, `model`  
+`page`| entero| Número de página (predeterminado: 1)  
+`limit`| entero| Elementos por página (predeterminado: 50, máximo: 200)  
+`owner`| cadena| Nombre de usuario del propietario del espacio de trabajo  
+  
+### Link to this sectionRestaurar elemento#
+    
+    
+    POST /api/trash
+
+**Cuerpo:**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+### Link to this sectionEliminar elemento permanentemente#
+    
+    
+    DELETE /api/trash
+
+**Cuerpo:**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+Irreversible
+
+La eliminación permanente no se puede deshacer. El recurso y todos los datos asociados se eliminarán.
+
+### Link to this sectionVaciar papelera#
+    
+    
+    DELETE /api/trash/empty
+
+Elimina permanentemente todos los elementos de la papelera.
+
+Autenticación
+
+`DELETE /api/trash/empty` requiere una sesión de navegador autenticada y no está disponible mediante API-key. Utiliza en su lugar el botón **Vaciar papelera** en la interfaz de usuario.
+
+* * *
+
+## Link to this sectionAPI de facturación#
+
+Comprueba tu saldo de créditos, compra créditos, consulta el historial de transacciones y configura la recarga automática. Consulta la [documentación de facturación](/es/platform/account/billing).
+
+Unidades de moneda
+
+Los importes de facturación utilizan centavos (`creditsCents`), donde `100 = $1.00`.
+
+### Link to this sectionObtener saldo#
+    
+    
+    GET /api/billing/balance
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`owner`| cadena| Nombre de usuario del propietario del espacio de trabajo  
+  
+**Respuesta:**
+    
+    
+    {
+        "creditsCents": 2500,
+        "plan": "free"
+    }
+
+### Link to this sectionObtener resumen de uso#
+    
+    
+    GET /api/billing/usage-summary
+
+Devuelve los detalles del plan, los límites y las métricas de uso.
+
+### Link to this sectionObtener transacciones#
+    
+    
+    GET /api/billing/transactions
+
+Devuelve el historial de transacciones (las más recientes primero).
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`owner`| cadena| Nombre de usuario del propietario del espacio de trabajo  
+  
+### Link to this sectionCrear sesión de pago#
+    
+    
+    POST /api/billing/checkout-session
+
+**Cuerpo:**
+    
+    
+    {
+        "amount": 25,
+        "owner": "team-username"
+    }
+
+Campo| Tipo| Requerido| Descripción  
+---|---|---|---  
+`amount`| número| Sí| Importe en dólares ($5-$1000)  
+`owner`| cadena| No| Nombre de usuario del equipo para recargas de espacio de trabajo (requiere rol de administrador)  
+  
+Crea una sesión de pago para la compra de créditos.
+
+### Link to this sectionCrear pago de suscripción#
+    
+    
+    POST /api/billing/subscription-checkout
+
+Crea una sesión de pago para la actualización a la suscripción Pro.
+
+**Cuerpo:**
+    
+    
+    {
+        "planId": "pro",
+        "billingCycle": "monthly",
+        "owner": "team-username"
+    }
+
+Campo| Tipo| Requerido| Descripción  
+---|---|---|---  
+`planId`| cadena| Sí| Plan al que suscribirse (`pro`)  
+`billingCycle`| cadena| No| Ciclo de facturación: `monthly` (predeterminado) o `yearly`  
+`owner`| cadena| No| Nombre de usuario del equipo para actualizaciones de espacio de trabajo (requiere rol de administrador)  
+  
+### Link to this sectionCancelar o reanudar suscripción#
+    
+    
+    DELETE /api/billing/subscription-checkout
+
+Cancela una suscripción Pro al final del período de forma predeterminada. Envía `{"resume": true}` para reanudar una cancelación ya programada antes de que finalice el período de facturación.
+
+**Cuerpo:**
+    
+    
+    {
+        "resume": true
+    }
+
+### Link to this sectionRecarga automática#
+
+Añade saldo automáticamente cuando este caiga por debajo de un umbral.
+
+#### Link to this sectionObtener configuración de recarga automática#
+    
+    
+    GET /api/billing/auto-topup
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`owner`| cadena| Nombre de usuario del propietario del espacio de trabajo  
+  
+#### Link to this sectionActualizar configuración de recarga automática#
+    
+    
+    PATCH /api/billing/auto-topup
+
+**Cuerpo:**
+    
+    
+    {
+        "enabled": true,
+        "thresholdCents": 500,
+        "amountCents": 2500
+    }
+
+### Link to this sectionMétodos de pago#
+
+#### Link to this sectionListar métodos de pago#
+    
+    
+    GET /api/billing/payment-methods
+
+#### Link to this sectionCrear intención de configuración#
+    
+    
+    POST /api/billing/payment-methods/setup
+
+Devuelve un secreto de cliente para añadir un nuevo método de pago.
+
+#### Link to this sectionEstablecer método de pago predeterminado#
+    
+    
+    POST /api/billing/payment-methods/default
+
+**Cuerpo:**
+    
+    
+    {
+        "paymentMethodId": "pm_123"
+    }
+
+#### Link to this sectionActualizar información de facturación#
+    
+    
+    PATCH /api/billing/payment-methods
+
+**Cuerpo:**
+    
+    
+    {
+        "name": "Jane Doe",
+        "address": {
+            "line1": "123 Main St",
+            "city": "San Francisco",
+            "state": "CA",
+            "postal_code": "94105",
+            "country": "US"
+        }
+    }
+
+#### Link to this sectionEliminar método de pago#
+    
+    
+    DELETE /api/billing/payment-methods/{id}
+
+* * *
+
+## Link to this sectionAPI de almacenamiento#
+
+Comprueba el desglose de tu uso de almacenamiento por categoría (datasets, modelos, exportaciones) y mira tus elementos más grandes.
+
+Solo sesión de navegador
+
+Las rutas de almacenamiento requieren una sesión de navegador activa en la plataforma y no son accesibles mediante API key. Usa la página [Ajustes > Perfil](/es/platform/account/settings#storage-usage) en la interfaz para desgloses interactivos.
+
+### Link to this sectionObtener información de almacenamiento#
+    
+    
+    GET /api/storage
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`details`| booleano| Establece en `true` para incluir `topItems` (conjuntos de datos, modelos y exportaciones más grandes).  
+  
+**Respuesta:**
+    
+    
+    {
+        "tier": "free",
+        "usage": {
+            "storage": {
+                "current": 1073741824,
+                "limit": 107374182400,
+                "percent": 1.0
+            }
+        },
+        "region": "us",
+        "username": "johndoe",
+        "updatedAt": "2024-01-15T10:00:00Z",
+        "breakdown": {
+            "byCategory": {
+                "datasets": { "bytes": 536870912, "count": 2 },
+                "models": { "bytes": 268435456, "count": 4 },
+                "exports": { "bytes": 268435456, "count": 3 }
+            },
+            "topItems": [
+                {
+                    "_id": "dataset_abc123",
+                    "name": "my-dataset",
+                    "slug": "my-dataset",
+                    "sizeBytes": 536870912,
+                    "type": "dataset"
+                },
+                {
+                    "_id": "model_def456",
+                    "name": "experiment-1",
+                    "slug": "experiment-1",
+                    "sizeBytes": 134217728,
+                    "type": "model",
+                    "parentName": "My Project",
+                    "parentSlug": "my-project"
+                }
+            ]
+        }
+    }
+
+* * *
+
+## Link to this sectionAPI de carga#
+
+Sube archivos directamente al almacenamiento en la nube usando URLs firmadas para transferencias rápidas y fiables. Utiliza un flujo de dos pasos: obtén una URL firmada y luego sube el archivo. Consulta la [documentación de datos](/es/platform/data).
+
+### Link to this sectionObtener URL de carga firmada#
+    
+    
+    POST /api/upload/signed-url
+
+Solicita una URL firmada para subir un archivo directamente al almacenamiento en la nube. La URL firmada evita el servidor de la API para transferencias de archivos grandes.
+
+**Cuerpo:**
+    
+    
+    {
+        "assetType": "images",
+        "assetId": "abc123",
+        "filename": "my-image.jpg",
+        "contentType": "image/jpeg",
+        "totalBytes": 5242880
+    }
+
+Campo| Tipo| Descripción  
+---|---|---  
+`assetType`| cadena| Tipo de activo: `models`, `datasets`, `images`, `videos`  
+`assetId`| cadena| ID del activo de destino  
+`filename`| cadena| Nombre de archivo original  
+`contentType`| cadena| Tipo MIME  
+`totalBytes`| entero| Tamaño del archivo en bytes  
+  
+**Respuesta:**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "uploadUrl": "https://storage.example.com/...",
+        "gcsPath": "gs://bucket/users/user123/images/abc123/my-image.jpg",
+        "downloadUrl": "https://cdn.example.com/...",
+        "expiresAt": "2026-02-22T12:00:00Z"
+    }
+
+### Link to this sectionCompletar carga#
+    
+    
+    POST /api/upload/complete
+
+Notifica a la plataforma que una carga de archivo se ha completado para que pueda comenzar el procesamiento.
+
+**Cuerpo:**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "checksum": "<optional sha-256 hex>"
+    }
+
+* * *
+
+## Link to this sectionAPI de integraciones#
+
+Importa conjuntos de datos desde servicios de terceros. Consulta la [documentación de integraciones](/es/platform/integrations).
+
+### Link to this sectionVista previa de importación de Roboflow#
+    
+    
+    POST /api/integrations/roboflow/preview
+
+Resuelve una API key de Roboflow en un plan de importación masiva: información del espacio de trabajo, qué proyectos se importarían de nuevo, recuento de versiones ya importadas (omitidas) y tipos de proyecto no compatibles. La API key de Roboflow se pasa en el cuerpo y no se almacena.
+
+### Link to this sectionImportar desde Roboflow#
+    
+    
+    POST /api/integrations/roboflow/import
+
+Pone en cola trabajos de ingesta de conjuntos de datos para importar los proyectos de Roboflow seleccionados a tu espacio de trabajo. Requiere espacio de almacenamiento disponible, y cada conjunto de datos debe ajustarse al límite de tamaño por importación de tu plan.
+
+* * *
+
+## Link to this sectionAPI de claves de API#
+
+Gestiona tus claves de API para el acceso programático. Consulta la [documentación de claves de API](/es/platform/account/api-keys).
+
+### Link to this sectionListar claves de API#
+    
+    
+    GET /api/api-keys
+
+### Link to this sectionCrear clave de API#
+    
+    
+    POST /api/api-keys
+
+**Cuerpo:**
+    
+    
+    {
+        "name": "training-server"
+    }
+
+### Link to this sectionEliminar clave de API#
+    
+    
+    DELETE /api/api-keys
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`keyId`| cadena| ID de la clave de API a revocar  
+  
+**Ejemplo:**
+    
+    
+    curl -X DELETE \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/api-keys?keyId=KEY_ID"
+
+* * *
+
+## Link to this sectionAPI de equipos y miembros#
+
+Crea espacios de trabajo de equipo, invita a miembros y gestiona roles para la colaboración. Consulta la [documentación de equipos](/es/platform/account/teams).
+
+### Link to this sectionListar equipos#
+    
+    
+    GET /api/teams
+
+### Link to this sectionCrear equipo#
+    
+    
+    POST /api/teams/create
+
+**Cuerpo:**
+    
+    
+    {
+        "username": "my-team",
+        "fullName": "My Team"
+    }
+
+### Link to this sectionListar miembros#
+    
+    
+    GET /api/members
+
+Devuelve los miembros del espacio de trabajo actual.
+
+### Link to this sectionInvitar miembro#
+    
+    
+    POST /api/members
+
+**Cuerpo:**
+    
+    
+    {
+        "email": "user@example.com",
+        "role": "editor"
+    }
+
+Roles de miembro
+
+Rol| Permisos  
+---|---  
+`viewer`| Acceso de solo lectura a los recursos del espacio de trabajo  
+`editor`| Crear, editar y eliminar recursos  
+`admin`| Gestionar miembros, facturación y todos los recursos (solo asignable por el propietario del equipo)  
+  
+El `owner` del equipo es el creador y no puede ser invitado. La propiedad se transfiere por separado mediante `POST /api/members/transfer-ownership`. Consulta [Equipos](/es/platform/account/teams) para ver todos los detalles sobre los roles.
+
+### Link to this sectionActualizar rol de miembro#
+    
+    
+    PATCH /api/members/{userId}
+
+### Link to this sectionEliminar miembro#
+    
+    
+    DELETE /api/members/{userId}
+
+### Link to this sectionTransferir propiedad#
+    
+    
+    POST /api/members/transfer-ownership
+
+### Link to this sectionInvitaciones#
+
+#### Link to this sectionAceptar invitación#
+    
+    
+    POST /api/invites/accept
+
+#### Link to this sectionObtener información de invitación#
+    
+    
+    GET /api/invites/info
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`token`| cadena| Token de invitación  
+  
+#### Link to this sectionRevocar invitación#
+    
+    
+    DELETE /api/invites/{inviteId}
+
+#### Link to this sectionReenviar invitación#
+    
+    
+    POST /api/invites/{inviteId}/resend
+
+* * *
+
+## Link to this sectionAPI de exploración#
+
+Busca y explora datasets y proyectos públicos compartidos por la comunidad. Consulta la [documentación de exploración](/es/platform/explore).
+
+### Link to this sectionBuscar contenido público#
+    
+    
+    GET /api/explore/search
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`q`| cadena| Consulta de búsqueda  
+`type`| cadena| Tipo de recurso: `all` (predeterminado), `projects`, `datasets`  
+`sort`| cadena| Orden de clasificación: `newest` (predeterminado), `stars`, `oldest`, `name-asc`, `name-desc`, `count-desc`, `count-asc`  
+`offset`| entero| Desplazamiento de paginación (predeterminado: 0). Los resultados devuelven 20 elementos por página.  
+`task`| cadena| Opcional: tipos de tareas YOLO separados por comas para filtrar conjuntos de datos (`detect`, `segment`, `semantic`, `classify`, `pose`, `obb`)  
+  
+### Link to this sectionDatos de la barra lateral#
+    
+    
+    GET /api/explore/sidebar
+
+Devuelve contenido seleccionado para la barra lateral de exploración.
+
+* * *
+
+## Link to this sectionAPIs de usuario y ajustes#
+
+Gestiona tu perfil, claves de API, uso de almacenamiento y ajustes de privacidad de datos. Consulta la [documentación de ajustes](/es/platform/account/settings).
+
+### Link to this sectionObtener usuario por nombre de usuario#
+    
+    
+    GET /api/users
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`username`| cadena| Nombre de usuario a buscar  
+  
+### Link to this sectionSeguir o dejar de seguir a un usuario#
+    
+    
+    PATCH /api/users
+
+**Cuerpo:**
+    
+    
+    {
+        "username": "target-user",
+        "followed": true
+    }
+
+### Link to this sectionComprobar disponibilidad de nombre de usuario#
+    
+    
+    GET /api/username/check
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`username`| cadena| Nombre de usuario a comprobar  
+`suggest`| bool| Opcional: `true` para incluir una sugerencia si está ocupado  
+  
+### Link to this sectionAjustes#
+    
+    
+    GET /api/settings
+    POST /api/settings
+
+Obtener o actualizar los ajustes del perfil de usuario (nombre visible, biografía, enlaces sociales, etc.).
+
+### Link to this sectionIcono de perfil#
+    
+    
+    POST /api/settings/icon
+    DELETE /api/settings/icon
+
+Sube o elimina el avatar del perfil.
+
+### Link to this sectionOnboarding#
+    
+    
+    POST /api/onboarding
+
+Completa el flujo de incorporación (establece la región de datos, nombre de usuario).
+
+* * *
+
+## Link to this sectionAPI de GDPR#
+
+Solicita una exportación de todos tus datos o elimina permanentemente tu cuenta. Consulta la [documentación de ajustes](/es/platform/account/settings).
+
+### Link to this sectionObtener estado del trabajo de GDPR#
+    
+    
+    GET /api/gdpr
+
+**Parámetros de consulta:**
+
+Parámetro| Tipo| Descripción  
+---|---|---  
+`jobId`| cadena| ID del trabajo de GDPR a comprobar  
+  
+Devuelve el estado del trabajo. Para trabajos de exportación completados, la respuesta incluye una `downloadUrl`.
+
+### Link to this sectionIniciar flujo de exportación o eliminación#
+    
+    
+    POST /api/gdpr
+
+**Cuerpo:**
+    
+    
+    {
+        "action": "export"
+    }
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE"
+    }
+
+Opcional para espacios de trabajo de equipo:
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE",
+        "teamUsername": "my-team"
+    }
+
+Acción irreversible
+
+La eliminación de la cuenta es permanente y no se puede deshacer. Se eliminarán todos los datos, modelos y despliegues.
+
+* * *
+
+## Link to this sectionCódigos de error#
+
+Código| Estado HTTP| Descripción  
+---|---|---  
+`UNAUTHORIZED`| 401| Clave API no válida o ausente  
+`FORBIDDEN`| 403| Permisos insuficientes  
+`NOT_FOUND`| 404| Recurso no encontrado  
+`VALIDATION_ERROR`| 400| Datos de solicitud no válidos  
+`RATE_LIMITED`| 429| Demasiadas solicitudes  
+`INTERNAL_ERROR`| 500| Error del servidor  
+  
+* * *
+
+## Link to this sectionIntegración con Python#
+
+Para una integración más sencilla, utiliza el paquete Python de Ultralytics, que gestiona automáticamente la autenticación, las subidas y la transmisión de métricas en tiempo real.
+
+### Link to this sectionInstalación y configuración#
+    
+    
+    pip install ultralytics
+
+Verifica la instalación:
+    
+    
+    yolo check
+
+Requisito de versión del paquete
+
+La integración con la plataforma requiere **ultralytics >=8.4.60**. Las versiones anteriores NO funcionarán con la plataforma.
+
+### Link to this sectionAutenticación#
+    
+    
+    yolo settings api_key=YOUR_API_KEY
+
+### Link to this sectionUso de datasets de la plataforma#
+
+Haz referencia a los datasets con URIs `ul://`:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Train on your Platform dataset
+    model.train(
+        data="ul://your-username/datasets/your-dataset",
+        epochs=100,
+        imgsz=640,
+    )
+
+**Formato de URI:**
+
+Patrón| Descripción  
+---|---  
+`ul://username/datasets/slug`| Conjunto de datos  
+`ul://username/project-name`| Proyecto  
+`ul://username/project/model-name`| Modelo específico  
+`ul://ultralytics/yolo26/yolo26n`| Modelo oficial  
+  
+### Link to this sectionEnvío a la plataforma#
+
+Envía los resultados a un proyecto de la plataforma:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Results automatically sync to Platform
+    model.train(
+        data="coco8.yaml",
+        epochs=100,
+        project="your-username/my-project",
+        name="experiment-1",
+    )
+
+**Qué se sincroniza:**
+
+  * Métricas de entrenamiento (en tiempo real)
+  * Pesos finales del modelo
+  * Gráficos de validación
+  * Salida de consola
+  * Métricas del sistema
+
+
+
+### Link to this sectionEjemplos de API#
+
+**Cargar un modelo desde la plataforma:**
+    
+    
+    # Your own model
+    model = YOLO("ul://username/project/model-name")
+    
+    # Official model
+    model = YOLO("ul://ultralytics/yolo26/yolo26n")
+
+**Ejecutar inferencia:**
+    
+    
+    results = model("image.jpg")
+    
+    # Access results
+    for r in results:
+        boxes = r.boxes  # Detection boxes
+        masks = r.masks  # Segmentation masks
+        keypoints = r.keypoints  # Pose keypoints
+        probs = r.probs  # Classification probabilities
+
+**Exportar modelo:**
+    
+    
+    # Export to ONNX
+    model.export(format="onnx", imgsz=640, half=True)
+    
+    # Export to TensorRT
+    model.export(format="engine", imgsz=640, half=True)
+    
+    # Export to CoreML
+    model.export(format="coreml", imgsz=640)
+
+**Validación:**
+    
+    
+    metrics = model.val(data="ul://username/datasets/my-dataset")
+    
+    print(f"mAP50: {metrics.box.map50}")
+    print(f"mAP50-95: {metrics.box.map}")
+
+* * *
+
+## Link to this sectionWebhooks#
+
+La plataforma utiliza webhooks internos para transmitir métricas de entrenamiento en tiempo real desde el SDK de Python de `ultralytics` (que se ejecuta en GPUs en la nube o en máquinas remotas/locales) de vuelta a la plataforma: pérdida por epoch, mAP, estadísticas del sistema y estado de finalización. Estos webhooks están autenticados mediante el `webhookSecret` HMAC proporcionado por cada trabajo de entrenamiento y no están destinados a ser consumidos por aplicaciones de usuario.
+
+Trabajar por tu cuenta
+
+**Todos los planes** : El progreso del entrenamiento a través del SDK de `ultralytics` (métricas en tiempo real, notificaciones de finalización) funciona automáticamente en todos los planes; solo tienes que establecer `project=username/my-project name=my-run` al entrenar y el SDK transmitirá los eventos de vuelta a la plataforma. No se requiere el registro de webhooks por parte del usuario.
+
+**Las suscripciones a webhooks orientadas al usuario** (callbacks POST a una URL que tú controlas) están en la hoja de ruta de Enterprise y no están disponibles actualmente. Mientras tanto, consulta `GET /api/models/{modelId}/training` para conocer el estado o utiliza el feed de actividad en la interfaz de usuario.
+
+* * *
+
+## Link to this sectionFAQ#
+
+### Link to this section¿Cómo pagino resultados extensos?#
+
+La mayoría de los endpoints utilizan un parámetro `limit` para controlar cuántos resultados se devuelven por solicitud:
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=50"
+
+Los endpoints de actividad y papelera también admiten un parámetro `page` para la paginación basada en páginas:
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/activity?page=2&limit=20"
+
+El endpoint de búsqueda Explore utiliza `offset` en lugar de `page`, con un tamaño de página fijo de 20:
+    
+    
+    curl "https://platform.ultralytics.com/api/explore/search?type=datasets&offset=20&sort=stars"
+
+### Link to this section¿Puedo utilizar la API sin un SDK?#
+
+Sí, toda la funcionalidad está disponible mediante REST. El SDK de Python es un envoltorio de conveniencia que añade funciones como la transmisión de métricas en tiempo real y la carga automática de modelos. También puedes explorar todos los endpoints de forma interactiva en [platform.ultralytics.com/api/docs](https://platform.ultralytics.com/api/docs).
+
+### Link to this section¿Existen librerías cliente para la API?#
+
+Actualmente, utiliza el paquete Python de Ultralytics o realiza solicitudes HTTP directas. Se planean librerías cliente oficiales para otros lenguajes.
+
+### Link to this section¿Cómo gestiono los límites de tasa?#
+
+Utiliza la cabecera `Retry-After` de la respuesta 429 para esperar la cantidad de tiempo correcta:
+    
+    
+    import time
+    
+    import requests
+    
+    def api_request_with_retry(url, headers, max_retries=3):
+        for attempt in range(max_retries):
+            response = requests.get(url, headers=headers)
+            if response.status_code != 429:
+                return response
+            wait = int(response.headers.get("Retry-After", 2**attempt))
+            time.sleep(wait)
+        raise Exception("Rate limit exceeded")
+
+### Link to this section¿Cómo encuentro el ID de mi modelo o dataset?#
+
+Los IDs de los recursos se devuelven cuando creas recursos a través de la API. También puedes encontrarlos en la URL de la plataforma:
+    
+    
+    https://platform.ultralytics.com/username/project/model-name
+                                      ^^^^^^^^ ^^^^^^^ ^^^^^^^^^^
+                                      username project   model
+
+Utiliza los endpoints de lista para buscar por nombre o filtrar por proyecto.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[MYmykolaxboiko2](https://github.com/mykolaxboiko)[LAlaodouya1](https://github.com/laodouya)[RAraimbekovm1](https://github.com/raimbekovm)[SEsergiuwaxmann1](https://github.com/sergiuwaxmann)[LALaughing-q1](https://github.com/Laughing-q)
+
+Creado hace 5 mesesActualizado hace 4 horas
+
+## Comentarios
+
+En esta página
+
+Explora con IA

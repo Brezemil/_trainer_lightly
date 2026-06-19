@@ -1,0 +1,234 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/yolo26-training-recipe
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo26-training-recipe.md)
+
+# Link to this sectionYOLO26のトレーニングレシピ#
+
+## Link to this sectionはじめに#
+
+This guide documents the exact [training](/ja/modes/train) recipe used to produce the official [YOLO26](/ja/models/yolo26) pretrained checkpoints on [COCO](/ja/datasets/detect/coco). Every [hyperparameter](https://www.ultralytics.com/glossary/hyperparameter-tuning) shown here is already embedded in the released `.pt` weights and can be inspected programmatically.
+
+公式チェックポイントに何が含まれていたかを知ることは、アーキテクチャだけでなく、パフォーマンスを決定づける[学習率](https://www.ultralytics.com/glossary/learning-rate)スケジュール、オーグメンテーションパイプライン、損失重みなどを理解する上で役立ちます。[ファインチューニング](https://www.ultralytics.com/glossary/fine-tuning)の際に、どの[データオーグメンテーション](/ja/guides/yolo-data-augmentation)を残すべきか、どの[損失関数](https://www.ultralytics.com/glossary/loss-function)の重みを調整すべきか、そしてデータセットのサイズに対してどのオプティマイザ設定が最適かをより適切に判断できるようになります。
+
+## Link to this sectionトレーニングの概要#
+
+すべてのYOLO26ベースモデルは、**640x640** 解像度のCOCOで、**MuSGD** オプティマイザと**[バッチサイズ](https://www.ultralytics.com/glossary/batch-size) 128**を使用してトレーニングされました。単一の実行でランダムな重みから開始するのではなく、中間的な事前学習済みウェイトから初期化し、[進化論的探索](/ja/guides/hyperparameter-tuning#genetic-evolution-and-mutation)を通じて見つかったハイパーパラメータで洗練されました。全モデルサイズの詳細なトレーニングログとメトリクスは、[Ultralytics Platform](https://platform.ultralytics.com/ultralytics/yolo26)で確認できます：
+
+全サイズ共通の重要な設計上の選択：
+
+  * **エンドツーエンドトレーニング** (`end2end=True`)、NMS不要の1対1ヘッド搭載
+  * **[MuSGD](/ja/modes/train#musgd-optimizer)オプティマイザ**：SGDと、重み行列（convや線形重みなどの`ndim >= 2`のパラメータ）に対するMuon形式の直交化更新を組み合わせたもの
+  * **強力なモザイクオーグメンテーション** （確率~0.9-1.0）、最後の10エポックで無効化 (`close_mosaic=10`)
+  * **積極的なスケールオーグメンテーション** (0.56-0.95)、様々なサイズのオブジェクトに対応
+  * **最小限の回転/せん断** 、ほとんどのサイズで幾何学的歪みを低く抑制
+
+
+
+## Link to this sectionYOLO26チェックポイントのトレーニング引数の確認#
+
+すべてのUltralyticsチェックポイントには、作成に使用された完全なトレーニング設定が保存されているため、このページに記載されている数値を自分で検証できます：
+
+チェックポイントのトレーニング引数を検証
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    print(model.ckpt["train_args"])
+
+出力には、このページに記載されているすべてのレシピ値を含む100以上のエントリーからなる完全な設定が表示されます。`yolo26n.pt`の抜粋：
+    
+    
+    batch: 128
+    ...
+    box: 5.62767
+    ...
+    close_mosaic: 10
+    cls: 0.56099
+    ...
+    dfl: 9.03871
+    ...
+    epochs: 245
+    ...
+    lr0: 0.0054
+    lrf: 0.04952
+    ...
+    optimizer: MuSGD
+
+これは、公式リリースやユーザー自身のファインチューニング済みモデルなど、あらゆる`.pt`チェックポイントで機能します。構成可能なトレーニング引数の全リストについては、[トレーニング構成リファレンス](/ja/usage/cfg)を参照してください。
+
+## Link to this sectionモデルサイズごとのYOLO26トレーニングハイパーパラメータ#
+
+以下の表では、レシピをオプティマイザとスケジュール、損失重み、オーグメンテーションのカテゴリに分類しています。すべての値は、リリースされたチェックポイントに埋め込まれた`train_args`から直接取得したものです。
+
+### Link to this sectionオプティマイザと学習率#
+
+これらのオプティマイザとスケジュールの設定が各サイズのCOCO事前学習を推進しました。Nモデルが他と異なる点に注目してください：
+
+設定| N| S| M| L| X  
+---|---|---|---|---|---  
+`optimizer`| MuSGD| MuSGD| MuSGD| MuSGD| MuSGD  
+`lr0`| 0.0054| 0.00038| 0.00038| 0.00038| 0.00038  
+`lrf`| 0.0495| 0.882| 0.882| 0.882| 0.882  
+`momentum`| 0.947| 0.948| 0.948| 0.948| 0.948  
+`weight_decay`| 0.00064| 0.00027| 0.00027| 0.00027| 0.00027  
+`warmup_epochs`| 0.98| 0.99| 0.99| 0.99| 0.99  
+`epochs`| 245| 70| 80| 60| 40  
+`batch`| 128| 128| 128| 128| 128  
+`imgsz`| 640| 640| 640| 640| 640  
+  
+学習率戦略
+
+Nモデルは急激な減衰 (`lrf=0.0495`) を伴う高い初期学習率を使用したのに対し、S/M/L/Xモデルはより緩やかなスケジュール (`lrf=0.882`) を伴う低い初期学習率を使用しました。これは、小型モデルと大型モデルの収束ダイナミクスの違いを反映しており、小型モデルの方が効果的に学習するために、より積極的な更新を必要とします。
+
+### Link to this section損失関数の重み#
+
+損失重みは、検出損失の3つの要素、すなわち[境界ボックス](https://www.ultralytics.com/glossary/bounding-box)のIoU回帰 (`box`)、分類 (`cls`)、およびボックス距離回帰項 (`dfl`) のバランスをとります。DFLを使用しないYOLO26では、`dfl`ゲインを、分布焦点損失ではなく正規化されたボックス距離に対するL1損失の重み付けに再利用していることに注意してください：
+
+設定| N| S| M| L| X  
+---|---|---|---|---|---  
+`box`| 5.63| 9.83| 9.83| 9.83| 9.83  
+`cls`| 0.56| 0.65| 0.65| 0.65| 0.65  
+`dfl`| 9.04| 0.96| 0.96| 0.96| 0.96  
+  
+Nモデルは`dfl`距離回帰項を優先する一方、S/M/L/XモデルはIoUベースのボックス回帰を重視しています。分類損失は、すべてのサイズで比較的安定しています。
+
+### Link to this sectionオーグメンテーションパイプライン#
+
+各技術の詳細な説明については、[YOLOデータオーグメンテーションガイド](/ja/guides/yolo-data-augmentation)を参照してください。
+
+設定| N| S| M| L| X  
+---|---|---|---|---|---  
+[`mosaic`](/ja/guides/yolo-data-augmentation#mosaic-mosaic)| 0.909| 0.992| 0.992| 0.992| 0.992  
+[`mixup`](/ja/guides/yolo-data-augmentation#mixup-mixup)| 0.012| 0.05| 0.427| 0.427| 0.427  
+[`copy_paste`](/ja/guides/yolo-data-augmentation#copy-paste-copy_paste)| 0.075| 0.404| 0.304| 0.404| 0.404  
+[`scale`](/ja/guides/yolo-data-augmentation#scale-scale)| 0.562| 0.9| 0.95| 0.95| 0.95  
+[`fliplr`](/ja/guides/yolo-data-augmentation#flip-left-right-fliplr)| 0.606| 0.304| 0.304| 0.304| 0.304  
+[`degrees`](/ja/guides/yolo-data-augmentation#rotation-degrees)| 1.11| ~0| ~0| ~0| ~0  
+[`shear`](/ja/guides/yolo-data-augmentation#shear-shear)| 1.46| ~0| ~0| ~0| ~0  
+[`translate`](/ja/guides/yolo-data-augmentation#translation-translate)| 0.071| 0.275| 0.275| 0.275| 0.275  
+[`hsv_h`](/ja/guides/yolo-data-augmentation#hue-adjustment-hsv_h)| 0.014| 0.013| 0.013| 0.013| 0.013  
+[`hsv_s`](/ja/guides/yolo-data-augmentation#saturation-adjustment-hsv_s)| 0.645| 0.353| 0.353| 0.353| 0.353  
+[`hsv_v`](/ja/guides/yolo-data-augmentation#brightness-adjustment-hsv_v)| 0.566| 0.194| 0.194| 0.194| 0.194  
+[`bgr`](/ja/guides/yolo-data-augmentation#bgr-channel-swap-bgr)| 0.106| 0.0| 0.0| 0.0| 0.0  
+  
+`~0`と表示されている値は、実際のチェックポイントでは0.01未満（例えばSモデルの`degrees=0.00012`）であり、事実上オーグメンテーションは無効になっています。
+
+大型モデルは容量が大きく、より強力な[正則化](https://www.ultralytics.com/glossary/regularization)の恩恵を受けるため、全体としてより積極的なオーグメンテーション（高いmixup、copy-paste、スケール）を使用します。Nモデルは、回転、せん断、BGRオーグメンテーションが有意に設定されている唯一のサイズです。
+
+### Link to this section内部トレーニングパラメータ#
+
+上級者向け：内部パイプラインパラメータ
+
+チェックポイントには、内部トレーニングパイプラインで使用されたが、`default.yaml`ではユーザー構成可能な設定として公開されていないパラメータも含まれています：
+
+設定| 説明| N| S| M| L| X  
+---|---|---|---|---|---|---  
+`muon_w`| MuSGDにおけるMuon更新重み| 0.528| 0.436| 0.436| 0.436| 0.436  
+`sgd_w`| MuSGDにおけるSGD更新重み| 0.674| 0.479| 0.479| 0.479| 0.479  
+`cls_w`| 内部分類ウェイト| 2.74| 3.48| 3.48| 3.48| 3.48  
+`o2m`| One-to-manyヘッド損失ウェイト| 1.0| 0.705| 0.705| 0.705| 0.705  
+`topk`| Top-kラベル割り当て| 8| 5| 5| 5| 5  
+  
+ファインチューニング時の各パラメータの意味については、FAQの該当項目を参照してください。
+
+## Link to this section独自のデータセットでのYOLO26のファインチューニング#
+
+独自のデータセットでYOLO26をファインチューニングする場合、完全な事前学習レシピを再現する必要はありません。事前学習済みウェイトには、COCO学習からのオーギュメンテーションおよび最適化の知識が既に組み込まれています。一般的な学習のベストプラクティスについては、[モデル学習のヒント](/ja/guides/model-training-tips)を参照してください。
+
+### Link to this sectionデフォルト設定でのファインチューニング#
+
+デフォルト設定でファインチューニング
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    results = model.train(data="your-dataset.yaml", epochs=100, imgsz=640)
+
+デフォルト設定でのファインチューニングは強力なベースラインとなります。特定の理由がある場合のみハイパーパラメータを調整してください。
+
+### Link to this sectionYOLO26のハイパーパラメータを調整するタイミング#
+
+**小規模データセット（1,000画像未満）:**
+
+  * オーギュメンテーション強度の削減: `mosaic=0.5`, `mixup=0.0`, `copy_paste=0.0`
+  * 学習率を下げる: `lr0=0.001`
+  * より少ない[エポック](https://www.ultralytics.com/glossary/epoch)数とpatienceを使用: `epochs=50`, `patience=20`
+  * バックボーン層のフリーズを検討する: `freeze=10`
+
+
+
+**大規模データセット（50,000画像超）:**
+
+  * 事前学習レシピにより近づける
+  * 長時間の学習には `optimizer=MuSGD` を検討する
+  * オーギュメンテーションの強化: `mosaic=1.0`, `mixup=0.3`, `scale=0.9`
+
+
+
+**ドメイン固有の画像（航空、医療、水中など）:**
+
+  * 垂直方向の向きが変化する場合は `flipud=0.5` を増やす
+  * オブジェクトが任意の回転で現れる場合は `degrees` を増やす
+  * 照明条件がCOCOと大きく異なる場合は `hsv_s` および `hsv_v` を調整する
+
+
+
+自動ハイパーパラメータ最適化については、[ハイパーパラメータチューニングガイド](/ja/guides/hyperparameter-tuning)を参照してください。
+
+### Link to this sectionモデルサイズの選択#
+
+モデル| 最適な用途| バッチサイズの指針  
+---|---|---  
+YOLO26n| エッジデバイス、モバイル、CPUでのリアルタイム推論| コンシューマー向けGPUでの大きなバッチサイズ (64-128)  
+YOLO26s| 速度と精度のバランス| 中程度のバッチサイズ (32-64)  
+YOLO26m| 中程度の計算リソースでの高い精度| 小さいバッチサイズ (16-32)  
+YOLO26l| GPU利用時の高い精度| 小さいバッチサイズ (8-16) またはマルチGPU  
+YOLO26x| 最大の精度、サーバーデプロイ| 小さいバッチサイズ (4-8) またはマルチGPU  
+  
+エクスポートおよびデプロイのオプションについては、[エクスポートガイド](/ja/modes/export)および[モデルデプロイオプション](/ja/guides/model-deployment-options)を参照してください。
+
+## Link to this section結論#
+
+YOLO26のチェックポイントには学習レシピ全体が埋め込まれているため、各モデルサイズの正確なハイパーパラメータは常に `train_args` の参照により確認可能です。デフォルト設定からファインチューニングを開始し、このページの表を使用して慎重に調整を行い、すべての変更を検証セットで確認してください。途中で質問がある場合は、[Ultralytics GitHubリポジトリ](https://github.com/ultralytics/ultralytics)または[Ultralytics Discordサーバー](https://discord.com/invite/ultralytics)でコミュニティに問い合わせてください。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionチェックポイントに使用された正確なハイパーパラメータを確認するにはどうすればよいですか？#
+
+`torch.load()` でチェックポイントを読み込み `train_args` キーにアクセスするか、Ultralytics APIで `model.ckpt["train_args"]` を使用します。具体的な例については、YOLO26チェックポイントの学習引数の確認を参照してください。
+
+### Link to this sectionモデルサイズごとにエポック数が異なるのはなぜですか？#
+
+大規模なモデルは能力が高いため収束が速く、一般的にCOCOでの学習に必要なエポック数は少なくなります（Xモデルは40エポック、Nモデルは245エポック）。ただし、その数は厳密に単調ではありません（Sは70、Mは80）。独自のデータセットでファインチューニングを行う場合、最適なエポック数はモデルサイズではなくデータセットのサイズと複雑さに依存します。アーリーストッピング (`patience`) を使用して、適切な停止ポイントを自動的に見つけてください。
+
+### Link to this sectionファインチューニングにMuSGDを使用すべきですか？#
+
+通常は選択する必要はありません。デフォルトの `optimizer=auto` では、Ultralyticsは長時間の学習（10,000イテレーション超）には **MuSGD** を、短時間の学習には **AdamW** を自動的に選択します。希望する場合は、明示的に `optimizer=MuSGD` を設定することも可能です。MuSGDの仕組みの詳細については、[学習ドキュメント](/ja/modes/train#musgd-optimizer)を参照してください。
+
+### Link to this sectionチェックポイントに含まれる `muon_w`、`sgd_w`、`cls_w`、`o2m`、`topk` とは何ですか？#
+
+これらはベースチェックポイントを作成した学習パイプラインの内部パラメータであり、再現性のために `train_args` に記録されています。これらは `default.yaml` におけるユーザー設定可能な設定ではなく、`model.train()` に渡すと無効な引数エラーが発生します（公開パッケージでは読み取られません）。ファインチューニング時にこれらを設定する必要はありません。各モデルサイズの具体的な値については、内部学習パラメータを参照してください。
+
+### Link to this sectionゼロから正確な事前学習を再現できますか？#
+
+完全に同じ再現はできません。チェックポイントは、公開コードベースにはない追加機能（設定可能な `o2m` ウェイトや `cls_w` など）を備えた内部学習ブランチを使用して作成されました。公開されているUltralyticsパッケージと本ドキュメントのハイパーパラメータを使用すれば非常に近い結果を得ることは可能ですが、正確な再現にはその内部ブランチが必要です。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo26-training-recipe.md)
+
+[RAraimbekovm2](https://github.com/raimbekovm)[Y-Y-T-G1](https://github.com/Y-T-G)
+
+作成日 2 か月前更新日 先週
+
+## コメント
+
+このページの内容
+
+AIで探索

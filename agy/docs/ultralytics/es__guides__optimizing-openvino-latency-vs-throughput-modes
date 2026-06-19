@@ -1,0 +1,188 @@
+---
+source_url: https://docs.ultralytics.com/es/guides/optimizing-openvino-latency-vs-throughput-modes
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+# Link to this sectionOptimización de la inferencia de YOLO con OpenVINO#
+
+![OpenVINO Ecosystem](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/openvino-ecosystem.avif)
+
+## Link to this sectionIntroducción#
+
+Al desplegar modelos de [deep learning](https://www.ultralytics.com/glossary/deep-learning-dl), particularmente aquellos para [detección de objetos](https://www.ultralytics.com/glossary/object-detection) como los modelos Ultralytics YOLO, lograr un rendimiento óptimo es crucial. Esta guía profundiza en cómo aprovechar [el kit de herramientas OpenVINO de Intel](https://docs.ultralytics.com/integrations/openvino) para optimizar la inferencia, centrándose en la latencia y el rendimiento. Tanto si trabajas en aplicaciones de consumo como en despliegues a gran escala, entender y aplicar estas estrategias de optimización asegurará que tus modelos se ejecuten de manera eficiente en diversos dispositivos.
+
+## Link to this sectionOptimización para latencia#
+
+La optimización de la latencia es vital para aplicaciones que requieren una respuesta inmediata de un solo modelo ante una única entrada, algo típico en escenarios de consumo. El objetivo es minimizar el retraso entre la entrada y el resultado de la inferencia. Sin embargo, lograr una baja latencia implica considerar cuidadosamente aspectos, especialmente al ejecutar inferencias concurrentes o gestionar múltiples modelos.
+
+### Link to this sectionEstrategias clave para la optimización de la latencia:#
+
+  * **Una única inferencia por dispositivo:** La forma más sencilla de lograr una baja latencia es limitarte a una inferencia a la vez por dispositivo. Una mayor concurrencia a menudo conlleva un aumento de la latencia.
+  * **Aprovechamiento de subdispositivos:** Dispositivos como CPUs con múltiples sockets o GPUs con múltiples tiles pueden ejecutar múltiples solicitudes con un aumento mínimo de la latencia mediante el uso de sus subdispositivos internos.
+  * **Sugerencias de rendimiento de OpenVINO:** Utilizar `ov::LATENCY` de OpenVINO para la propiedad `ov::performance_mode` durante la compilación del modelo simplifica el ajuste del rendimiento, ofreciendo un enfoque agnóstico al dispositivo y preparado para el futuro.
+
+
+
+### Link to this sectionGestión de la latencia de la primera inferencia:#
+
+  * **Almacenamiento en caché del modelo:** Para mitigar que los tiempos de carga y compilación del modelo afecten a la latencia, utiliza el almacenamiento en caché del modelo siempre que sea posible. Para escenarios donde el caché no es viable, las CPUs generalmente ofrecen los tiempos de carga de modelo más rápidos.
+  * **Mapeo frente a lectura del modelo:** Para reducir los tiempos de carga, OpenVINO sustituyó la lectura del modelo por el mapeo. Sin embargo, si el modelo se encuentra en una unidad extraíble o de red, considera usar `ov::enable_mmap(false)` para volver a la lectura.
+  * **Selección de dispositivo AUTO:** Este modo comienza la inferencia en la CPU y cambia a un acelerador una vez que esté listo, reduciendo de forma fluida la latencia de la primera inferencia.
+
+
+
+## Link to this sectionOptimización para rendimiento (throughput)#
+
+La optimización del rendimiento es crucial para escenarios que atienden numerosas solicitudes de inferencia simultáneamente, maximizando la [utilización de recursos](https://www.ultralytics.com/blog/measuring-ai-performance-to-weigh-the-impact-of-your-innovations) sin sacrificar significativamente el rendimiento de cada solicitud individual.
+
+### Link to this sectionEnfoques para la optimización del rendimiento:#
+
+  1. **Sugerencias de rendimiento de OpenVINO:** Un método de alto nivel y preparado para el futuro para mejorar el rendimiento entre dispositivos mediante sugerencias de rendimiento.
+         
+         import openvino.properties.hint as hints
+         
+         config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+         compiled_model = core.compile_model(model, "GPU", config)
+
+  2. **Procesamiento por lotes (batching) y flujos explícitos:** Un enfoque más granular que implica el procesamiento por lotes explícito y el uso de flujos para un ajuste avanzado del rendimiento.
+
+
+
+
+### Link to this sectionDiseño de aplicaciones orientadas al rendimiento:#
+
+Para maximizar el rendimiento, las aplicaciones deben:
+
+  * Procesar las entradas en paralelo, aprovechando al máximo las capacidades del dispositivo.
+  * Descomponer el flujo de datos en solicitudes de inferencia concurrentes, programadas para una ejecución en paralelo.
+  * Utilizar la API asíncrona con devoluciones de llamada (callbacks) para mantener la eficiencia y evitar la inanición del dispositivo.
+
+
+
+### Link to this sectionEjecución en múltiples dispositivos:#
+
+El modo multidispositivo de OpenVINO simplifica el escalado del rendimiento al equilibrar automáticamente las solicitudes de inferencia entre dispositivos sin necesidad de una gestión de dispositivos a nivel de aplicación.
+
+## Link to this sectionMejoras de rendimiento en el mundo real#
+
+Implementar optimizaciones de OpenVINO con modelos Ultralytics YOLO puede generar mejoras significativas en el rendimiento. Como se demuestra en [los benchmarks](https://docs.ultralytics.com/integrations/openvino#openvino-yolov8-benchmarks), los usuarios pueden experimentar velocidades de inferencia hasta 3 veces más rápidas en CPUs Intel, con aceleraciones aún mayores posibles en todo el espectro de hardware de Intel, incluyendo GPUs integradas, GPUs dedicadas y VPUs.
+
+Por ejemplo, al ejecutar modelos YOLOv8 en CPUs Intel Xeon, las versiones optimizadas por OpenVINO superan sistemáticamente a sus homólogas de PyTorch en cuanto al tiempo de inferencia por imagen, sin comprometer la [precisión](https://www.ultralytics.com/glossary/accuracy).
+
+## Link to this sectionImplementación práctica#
+
+Para exportar y optimizar tu modelo Ultralytics YOLO para OpenVINO, puedes usar la funcionalidad de [exportación](https://docs.ultralytics.com/modes/export):
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to OpenVINO format
+    model.export(format="openvino", half=True)  # Export with FP16 precision
+
+Tras la exportación, puedes ejecutar la inferencia con el modelo optimizado:
+    
+    
+    # Load the OpenVINO model
+    ov_model = YOLO("yolo26n_openvino_model/")
+    
+    # Run inference with performance hints for latency
+    results = ov_model("path/to/image.jpg", verbose=True)
+
+## Link to this sectionConclusión#
+
+Optimizar los modelos Ultralytics YOLO para latencia y rendimiento con OpenVINO puede mejorar significativamente el rendimiento de tu aplicación. Al aplicar cuidadosamente las estrategias descritas en esta guía, los desarrolladores pueden asegurar que sus modelos se ejecuten de manera eficiente, satisfaciendo las demandas de diversos escenarios de despliegue. Recuerda que la elección entre optimizar para latencia o rendimiento depende de las necesidades específicas de tu aplicación y de las características del entorno de despliegue.
+
+Para obtener información técnica más detallada y las últimas actualizaciones, consulta [la documentación de OpenVINO](https://docs.openvino.ai/2024/index.html) y [el repositorio de Ultralytics YOLO](https://github.com/ultralytics/ultralytics). Estos recursos ofrecen guías exhaustivas, tutoriales y apoyo de la comunidad para ayudarte a sacar el máximo provecho de tus modelos de deep learning.
+
+* * *
+
+Asegurarte de que tus modelos alcancen un rendimiento óptimo no consiste solo en ajustar configuraciones; se trata de entender las necesidades de tu aplicación y tomar decisiones informadas. Tanto si optimizas para [respuestas en tiempo real](https://www.ultralytics.com/blog/real-time-inferences-in-vision-ai-solutions-are-making-an-impact) como si maximizas el rendimiento para un procesamiento a gran escala, la combinación de modelos Ultralytics YOLO y OpenVINO ofrece un potente kit de herramientas para que los desarrolladores desplieguen soluciones de IA de alto rendimiento.
+
+## Link to this sectionPreguntas frecuentes#
+
+### Link to this section¿Cómo optimizo los modelos Ultralytics YOLO para una baja latencia usando OpenVINO?#
+
+Optimizar los modelos Ultralytics YOLO para una baja latencia implica varias estrategias clave:
+
+  1. **Una única inferencia por dispositivo:** Limita las inferencias a una a la vez por dispositivo para minimizar los retrasos.
+  2. **Aprovechamiento de subdispositivos:** Utiliza dispositivos como CPUs con múltiples sockets o GPUs con múltiples tiles que pueden manejar múltiples solicitudes con un aumento mínimo de la latencia.
+  3. **Sugerencias de rendimiento de OpenVINO:** Usa `ov::LATENCY` de OpenVINO durante la compilación del modelo para un ajuste simplificado y agnóstico al dispositivo.
+
+
+
+Para obtener consejos más prácticos sobre cómo optimizar la latencia, echa un vistazo a la sección de Optimización de latencia de nuestra guía.
+
+### Link to this section¿Por qué debería usar OpenVINO para optimizar el rendimiento de Ultralytics YOLO?#
+
+OpenVINO mejora el rendimiento del modelo Ultralytics YOLO maximizando la utilización de los recursos del dispositivo sin sacrificar el rendimiento. Los beneficios clave incluyen:
+
+  * **Sugerencias de rendimiento:** Ajuste de rendimiento sencillo y de alto nivel entre dispositivos.
+  * **Procesamiento por lotes y flujos explícitos:** Ajuste preciso para un rendimiento avanzado.
+  * **Ejecución en múltiples dispositivos:** Equilibrio de carga de inferencia automatizado, lo que facilita la gestión a nivel de aplicación.
+
+
+
+Configuración de ejemplo:
+    
+    
+    import openvino.properties.hint as hints
+    
+    config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+    compiled_model = core.compile_model(model, "GPU", config)
+
+Aprende más sobre la optimización del rendimiento en la sección de Optimización del rendimiento de nuestra guía detallada.
+
+### Link to this section¿Cuál es la mejor práctica para reducir la latencia de la primera inferencia en OpenVINO?#
+
+Para reducir la latencia de la primera inferencia, considera estas prácticas:
+
+  1. **Almacenamiento en caché del modelo:** Usa el almacenamiento en caché del modelo para disminuir los tiempos de carga y compilación.
+  2. **Mapeo frente a lectura del modelo:** Usa el mapeo (`ov::enable_mmap(true)`) por defecto, pero cambia a la lectura (`ov::enable_mmap(false)`) si el modelo está en una unidad extraíble o de red.
+  3. **Selección de dispositivo AUTO:** Utiliza el modo AUTO para comenzar con la inferencia en CPU y realizar la transición a un acelerador sin problemas.
+
+
+
+Para estrategias detalladas sobre la gestión de la latencia de la primera inferencia, consulta la sección de Gestión de la latencia de la primera inferencia.
+
+### Link to this section¿Cómo equilibrio la optimización de la latencia y el rendimiento con Ultralytics YOLO y OpenVINO?#
+
+Equilibrar la optimización de la latencia y el rendimiento requiere entender las necesidades de tu aplicación:
+
+  * **Optimización de la latencia:** Ideal para aplicaciones en tiempo real que requieren respuestas inmediatas (p. ej., aplicaciones de consumo).
+  * **Optimización del rendimiento:** Ideal para escenarios con muchas inferencias concurrentes, maximizando el uso de recursos (p. ej., despliegues a gran escala).
+
+
+
+Usar las sugerencias de rendimiento de alto nivel y los modos multidispositivo de OpenVINO puede ayudarte a encontrar el equilibrio adecuado. Elige las [sugerencias de rendimiento de OpenVINO](https://docs.ultralytics.com/integrations/openvino#openvino-performance-hints) apropiadas según tus requisitos específicos.
+
+### Link to this section¿Puedo usar modelos Ultralytics YOLO con otros marcos de IA además de OpenVINO?#
+
+Sí, los modelos Ultralytics YOLO son muy versátiles y se pueden integrar con diversos marcos de IA. Las opciones incluyen:
+
+  * **TensorRT:** Para la optimización de GPUs NVIDIA, sigue [la guía de integración de TensorRT](https://docs.ultralytics.com/integrations/tensorrt).
+  * **CoreML:** Para dispositivos Apple, consulta nuestras [instrucciones de exportación a CoreML](https://docs.ultralytics.com/integrations/coreml).
+  * **[TensorFlow](https://www.ultralytics.com/glossary/tensorflow).js:** Para aplicaciones web y Node.js, mira [la guía de conversión de TF.js](https://docs.ultralytics.com/integrations/tfjs).
+
+
+
+Explora más integraciones en [la página de Integraciones de Ultralytics](https://docs.ultralytics.com/integrations).
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+Creado 17 mar 2024Actualizado el mes pasado
+
+## Comentarios
+
+En esta página
+
+Explora con IA

@@ -1,0 +1,311 @@
+---
+source_url: https://docs.ultralytics.com/vi/guides/coco-to-yolo
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-to-yolo.md)
+
+# Link to this sectionCách chuyển đổi chú thích COCO sang định dạng YOLO#
+
+Việc huấn luyện các model [Ultralytics YOLO](https://www.ultralytics.com/) yêu cầu chú thích ở định dạng YOLO, nhưng nhiều công cụ [chú thích](https://www.ultralytics.com/glossary/data-labeling) phổ biến lại xuất ra định dạng [COCO JSON](https://cocodataset.org/#format-data). Hướng dẫn này chỉ cho bạn cách chuyển đổi chú thích COCO của bạn sang định dạng YOLO và bắt đầu huấn luyện các model [phát hiện đối tượng](https://www.ultralytics.com/glossary/object-detection), [phân đoạn đối tượng](https://www.ultralytics.com/glossary/instance-segmentation) và [ước tính tư thế](https://www.ultralytics.com/glossary/pose-estimation).
+
+## Link to this sectionTại sao cần chuyển đổi từ COCO sang YOLO?#
+
+Định dạng COCO JSON lưu trữ tất cả chú thích trong một tệp duy nhất, trong khi [YOLO](https://docs.ultralytics.com/datasets/detect#ultralytics-yolo-format) sử dụng một tệp văn bản cho mỗi hình ảnh với tọa độ được chuẩn hóa. Việc chuyển đổi là cần thiết vì:
+
+  * **Các model YOLO yêu cầu các tệp nhãn`.txt`** với một tệp cho mỗi hình ảnh, chứa `class x_center y_center width height` theo tọa độ được chuẩn hóa.
+  * **COCO JSON sử dụng tọa độ pixel** ở định dạng `[x_min, y_min, width, height]` với một tệp JSON duy nhất cho tất cả hình ảnh.
+  * **Các Class ID khác nhau** — COCO sử dụng các giá trị `category_id` tùy ý, trong khi YOLO yêu cầu các Class ID bắt đầu từ 0.
+
+
+
+Tính năng| COCO JSON| YOLO TXT  
+---|---|---  
+**Cấu trúc**|  Tệp JSON đơn lẻ cho tất cả hình ảnh| Một tệp `.txt` cho mỗi hình ảnh  
+**Định dạng Bbox**| `[x_min, y_min, width, height]` theo pixel| `class x_center y_center width height` được chuẩn hóa (0-1)  
+**Class ID**| `category_id` (có thể bắt đầu từ bất kỳ số nào)| Được đánh chỉ mục từ 0 (bắt đầu từ 0)  
+**Phân đoạn**|  Mảng đa giác trong trường `segmentation`| Tọa độ đa giác sau Class ID  
+**Keypoint**| `[x, y, visibility, ...]` theo pixel| `[x, y, visibility, ...]` được chuẩn hóa  
+  
+## Link to this sectionBắt đầu nhanh#
+
+Cách nhanh nhất để chuyển đổi chú thích COCO và bắt đầu huấn luyện:
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        labels_dir="path/to/annotations/",  # directory containing your JSON files
+        save_dir="path/to/output/",  # where to save converted labels
+        cls91to80=False,  # IMPORTANT: set False for custom datasets
+    )
+
+Sau khi chuyển đổi, hãy sắp xếp cấu trúc thư mục của bạn, tạo tệp dataset.yaml và bắt đầu huấn luyện. Xem đầy đủ hướng dẫn từng bước bên dưới.
+
+Tập dữ liệu tùy chỉnh: luôn sử dụng `cls91to80=False`
+
+Mặc định `cls91to80=True` được thiết kế **chỉ** dành cho [tập dữ liệu COCO](/vi/datasets/detect/coco) tiêu chuẩn với 80 lớp đối tượng, ánh xạ 91 ID danh mục không liên tục sang 80 ID lớp liên tục. Đối với bất kỳ tập dữ liệu tùy chỉnh nào, bạn **phải** đặt `cls91to80=False` — nếu không các Class ID của bạn sẽ bị ánh xạ sai một cách âm thầm và model của bạn sẽ học sai các lớp.
+
+## Link to this sectionHướng dẫn chuyển đổi từng bước#
+
+### Link to this section1\. Chuẩn bị tập dữ liệu COCO của bạn#
+
+Một tập dữ liệu định dạng COCO điển hình được xuất từ các công cụ chú thích có cấu trúc sau:
+    
+    
+    my_dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── img_001.jpg
+    │   │   ├── img_002.jpg
+    │   │   └── ...
+    │   └── val/
+    │       ├── img_100.jpg
+    │       └── ...
+    └── annotations/
+        ├── instances_train.json
+        └── instances_val.json
+
+Mỗi tệp JSON tuân theo đặc tả [định dạng dữ liệu COCO](https://cocodataset.org/#format-data) với ba trường bắt buộc — `images`, `annotations` và `categories`:
+    
+    
+    {
+        "images": [{ "id": 1, "file_name": "img_001.jpg", "width": 640, "height": 480 }],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [100, 50, 200, 150],
+                "area": 30000,
+                "iscrowd": 0
+            }
+        ],
+        "categories": [
+            { "id": 1, "name": "helmet" },
+            { "id": 2, "name": "vest" }
+        ]
+    }
+
+### Link to this section2\. Chuyển đổi chú thích#
+
+Sử dụng hàm [`convert_coco()`](/reference/data/converter#ultralytics.data.converter.convert_coco) để chuyển đổi chú thích COCO JSON của bạn sang định dạng `.txt` của YOLO:
+
+Chuyển đổi COCO sang định dạng YOLO
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        labels_dir="my_dataset/annotations/",
+        save_dir="my_dataset/converted/",
+        cls91to80=False,
+    )
+
+### Link to this section3\. Sắp xếp cấu trúc thư mục#
+
+Sau khi chuyển đổi, các tệp nhãn cần được đặt cùng với hình ảnh của bạn. YOLO yêu cầu thư mục `labels/` phản chiếu thư mục `images/`:
+    
+    
+    import shutil
+    from pathlib import Path
+    
+    # Paths
+    converted_dir = Path("my_dataset/converted/labels")
+    dataset_dir = Path("my_dataset")
+    
+    # Move labels next to images for each split
+    for split in ["train", "val"]:
+        src = converted_dir / split  # convert_coco strips "instances_" prefix from JSON filename
+        dst = dataset_dir / "labels" / split
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in src.glob("*.txt"):
+            shutil.move(str(f), str(dst / f.name))
+
+[Cấu trúc tập dữ liệu](/vi/datasets/detect#ultralytics-yolo-format) cuối cùng của bạn sẽ trông như thế này:
+    
+    
+    my_dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── img_001.jpg
+    │   │   └── ...
+    │   └── val/
+    │       └── ...
+    ├── labels/
+    │   ├── train/
+    │   │   ├── img_001.txt
+    │   │   └── ...
+    │   └── val/
+    │       └── ...
+    └── dataset.yaml
+
+### Link to this section4\. Tạo dataset.yaml#
+
+Tạo tệp cấu hình `dataset.yaml` để ánh xạ các danh mục COCO của bạn sang tên lớp YOLO. Tệp này cho YOLO biết dữ liệu của bạn nằm ở đâu và cần phát hiện những lớp nào:
+    
+    
+    import json
+    from pathlib import Path
+    
+    import yaml
+    
+    # Read categories from your COCO JSON
+    with open("my_dataset/annotations/instances_train.json") as f:
+        coco = json.load(f)
+    
+    # Build class names matching convert_coco output (category_id - 1)
+    categories = sorted(coco["categories"], key=lambda x: x["id"])
+    names = {cat["id"] - 1: cat["name"] for cat in categories}
+    # NOTE: convert_coco maps class IDs as category_id - 1, so category_id must
+    # start from 1. If your categories start from 0, add 1 to each ID first.
+    
+    # Create dataset.yaml
+    dataset = {
+        "path": str(Path("my_dataset").resolve()),
+        "train": "images/train",
+        "val": "images/val",
+        "names": names,
+    }
+    
+    with open("my_dataset/dataset.yaml", "w") as f:
+        yaml.dump(dataset, f, default_flow_style=False)
+
+Tệp YAML kết quả:
+    
+    
+    path: /absolute/path/to/my_dataset
+    train: images/train
+    val: images/val
+    names:
+        0: helmet
+        1: vest
+
+Để biết thêm chi tiết về định dạng YAML của tập dữ liệu, xem [hướng dẫn cấu hình tập dữ liệu](/vi/datasets/detect).
+
+### Link to this section5\. Huấn luyện model YOLO của bạn#
+
+Với tập dữ liệu đã chuyển đổi của bạn, hãy huấn luyện một model YOLO:
+
+Huấn luyện trên dữ liệu COCO đã chuyển đổi
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load a pretrained model
+    results = model.train(data="my_dataset/dataset.yaml", epochs=100, imgsz=640)
+
+Để có các mẹo huấn luyện và các phương pháp tốt nhất, hãy xem [hướng dẫn huấn luyện model](/vi/guides/model-training-tips).
+
+### Link to this section6\. Xác minh việc chuyển đổi của bạn#
+
+Trước khi huấn luyện, hãy kiểm tra ngẫu nhiên một vài tệp nhãn để xác nhận Class ID và tọa độ là chính xác:
+    
+    
+    from pathlib import Path
+    
+    label_file = Path("my_dataset/labels/train/img_001.txt")
+    for line in label_file.read_text().strip().splitlines():
+        parts = line.split()
+        cls_id = int(parts[0])
+        coords = [float(v) for v in parts[1:5]]
+        assert cls_id >= 0, f"Negative class ID {cls_id} — category_id in your JSON may start from 0"
+        assert all(0 <= v <= 1 for v in coords), f"Coordinates out of [0, 1] range: {coords}"
+
+Mẹo
+
+Nếu bạn thấy Class ID âm, COCO JSON của bạn có thể sử dụng `category_id` bắt đầu từ 0. Hãy cộng 1 vào tất cả các giá trị `category_id` trong JSON trước khi chạy `convert_coco()`, vì nó ánh xạ Class ID dưới dạng `category_id - 1`.
+
+## Link to this sectionKhắc phục các sự cố thường gặp#
+
+### Link to this sectionSai Class ID sau khi chuyển đổi#
+
+Nếu model của bạn huấn luyện được nhưng phát hiện sai lớp đối tượng, có khả năng bạn đang sử dụng `cls91to80=True` (mặc định) trên một tập dữ liệu tùy chỉnh. Điều này ánh xạ các giá trị `category_id` thông qua bảng tra cứu 91-sang-80 của COCO, vốn chỉ đúng cho [tập dữ liệu COCO](/vi/datasets/detect/coco) tiêu chuẩn.
+
+**Giải pháp** : Luôn sử dụng `cls91to80=False` cho các tập dữ liệu tùy chỉnh.
+
+### Link to this sectionKhông tìm thấy nhãn trong khi huấn luyện#
+
+Nếu quá trình huấn luyện hiển thị `WARNING: No labels found` hoặc `0 images, N backgrounds`, các tệp nhãn của bạn không nằm trong thư mục dự kiến. `convert_coco()` lưu nhãn vào một thư mục đầu ra riêng (ví dụ: `save_dir/labels/train/`), nhưng YOLO yêu cầu `labels/` song song với `images/` bên trong thư mục tập dữ liệu của bạn.
+
+**Giải pháp** : Di chuyển các tệp nhãn để khớp với cấu trúc thư mục dự kiến. Đảm bảo `labels/train/` là thư mục ngang cấp với `images/train/`.
+
+### Link to this sectionKeyError trong quá trình chuyển đổi#
+
+Nếu bạn gặp lỗi `KeyError: 'bbox'` hoặc lỗi tương tự khi chạy `convert_coco()`, thư mục `labels_dir` của bạn có thể chứa các tệp JSON không phải instance (ví dụ: `captions_train2017.json`) có cấu trúc chú thích khác.
+
+**Giải pháp** : Chỉ đặt các tệp JSON chú thích instance (ví dụ: `instances_train2017.json`) vào `labels_dir`.
+
+### Link to this sectionTệp nhãn trống sau khi chuyển đổi#
+
+Nếu quá trình chuyển đổi hoàn tất nhưng các tệp `.txt` trống hoặc bị thiếu, tất cả các chú thích có thể có `iscrowd: 1` (phổ biến với các mask do [SAM](/vi/models/sam) tạo ra), hoặc [bounding box](https://www.ultralytics.com/glossary/bounding-box) có chiều rộng hoặc chiều cao bằng 0.
+
+**Giải pháp** : Kiểm tra các chú thích JSON của bạn để tìm giá trị `iscrowd`. Nếu sử dụng mask SAM, hãy tiền xử lý JSON để đặt `iscrowd: 0`.
+
+### Link to this sectionKhoảng trống Class ID trong các nhãn đã chuyển đổi#
+
+Nếu Class ID trong các tệp nhãn không liên tục (ví dụ: 0, 4, 9 thay vì 0, 1, 2), công cụ chú thích của bạn sử dụng các giá trị `category_id` không liên tục.
+
+**Giải pháp** : Xác minh rằng các Class ID trong tệp `.txt` khớp với từ điển `names` trong `dataset.yaml`. Ánh xạ lại các ID thành các giá trị liên tục nếu cần.
+
+Để biết chi tiết API đầy đủ và mô tả tham số, hãy xem [tài liệu tham khảo API `convert_coco`](/reference/data/converter#ultralytics.data.converter.convert_coco).
+
+## Link to this sectionCâu hỏi thường gặp (FAQ)#
+
+### Link to this sectionLàm cách nào để chuyển đổi chú thích COCO JSON sang định dạng YOLO?#
+
+Sử dụng hàm `convert_coco()` từ Ultralytics để chuyển đổi chú thích COCO JSON sang định dạng `.txt` của YOLO. Đặt `cls91to80=False` cho các tập dữ liệu tùy chỉnh:
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="path/to/annotations/", save_dir="output/", cls91to80=False)
+
+Sau khi chuyển đổi, hãy sắp xếp lại các tệp nhãn của bạn để `labels/` phản chiếu thư mục `images/`, sau đó tạo tệp `dataset.yaml`. Xem hướng dẫn từng bước để biết quy trình làm việc đầy đủ.
+
+### Link to this sectionTại sao việc huấn luyện YOLO lại báo "No labels found" sau khi chuyển đổi COCO?#
+
+Điều này xảy ra do `convert_coco()` lưu nhãn vào thư mục con bên trong `save_dir/labels/` (ví dụ: `save_dir/labels/train/`) thay vì trực tiếp vào `labels/train/` của tập dữ liệu của bạn bên cạnh `images/train/`. YOLO yêu cầu nhãn phải song song với hình ảnh — ví dụ: `images/train/img.jpg` cần `labels/train/img.txt`. Hãy di chuyển nhãn đã chuyển đổi của bạn để khớp với cấu trúc này. Xem cách sửa cấu trúc thư mục.
+
+### Link to this section`cls91to80` trong `convert_coco()` có tác dụng gì?#
+
+Tham số `cls91to80` kiểm soát cách các giá trị `category_id` của COCO được ánh xạ sang Class ID của YOLO. Khi `True` (mặc định), nó sử dụng bảng tra cứu được thiết kế cho [tập dữ liệu COCO](/vi/datasets/detect/coco) tiêu chuẩn, có 80 lớp với các ID không liên tục (1-90). Đối với **các tập dữ liệu tùy chỉnh** , luôn đặt `cls91to80=False` — điều này đơn giản là trừ đi 1 từ mỗi `category_id` để tạo Class ID bắt đầu từ 0.
+
+### Link to this sectionTôi có thể huấn luyện YOLO trực tiếp trên COCO JSON mà không cần chuyển đổi không?#
+
+Không thể với quy trình huấn luyện YOLO hiện tại — các chú thích phải ở định dạng `.txt` của YOLO với một tệp cho mỗi hình ảnh. Hãy sử dụng `convert_coco()` để chuyển đổi COCO JSON của bạn trước, sau đó làm theo hướng dẫn này để sắp xếp và huấn luyện. Để biết thêm về các định dạng được hỗ trợ, xem [định dạng tập dữ liệu](/vi/datasets/detect).
+
+### Link to this sectionTôi có thể chuyển đổi chú thích phân đoạn COCO sang định dạng YOLO không?#
+
+Có, hãy sử dụng `use_segments=True` khi gọi `convert_coco()` để bao gồm các mask phân đoạn đa giác trong các nhãn YOLO đã chuyển đổi. Điều này tạo ra các tệp nhãn tương thích với [các model phân đoạn YOLO](/vi/tasks/segment):
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="annotations/", save_dir="output/", use_segments=True, cls91to80=False)
+
+### Link to this sectionLàm cách nào để chuyển đổi chú thích keypoint COCO sang định dạng YOLO?#
+
+Sử dụng `use_keypoints=True` để chuyển đổi chú thích keypoint COCO cho việc huấn luyện [ước tính tư thế](/vi/tasks/pose):
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="annotations/", save_dir="output/", use_keypoints=True, cls91to80=False)
+
+Lưu ý rằng nếu cả `use_segments` và `use_keypoints` đều được đặt thành `True`, chỉ keypoint mới được ghi vào các tệp nhãn — các phân đoạn sẽ bị bỏ qua một cách âm thầm.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-to-yolo.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[RAraimbekovm1](https://github.com/raimbekovm)
+
+Đã tạo 2 tháng trướcĐã cập nhật tháng trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

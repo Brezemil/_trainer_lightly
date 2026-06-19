@@ -1,0 +1,305 @@
+---
+source_url: https://docs.ultralytics.com/fr/guides/sahi-tiled-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+# Link to this sectionDocumentation Ultralytics : Utiliser YOLO26 avec SAHI pour l'inférence par découpage#
+
+[![Ouvrir SAHI pour l'inférence par découpage dans Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/notebooks/blob/main/notebooks/how-to-use-ultralytics-yolo-with-sahi.ipynb)
+
+Bienvenue dans la documentation Ultralytics sur la façon d'utiliser YOLO26 avec [SAHI](https://github.com/obss/sahi) (Slicing Aided Hyper Inference). Ce guide complet vise à te fournir toutes les connaissances essentielles dont tu auras besoin pour implémenter SAHI avec YOLO26. Nous allons approfondir ce qu'est SAHI, pourquoi l'inférence par découpage est critique pour les applications à grande échelle, et comment intégrer ces fonctionnalités avec YOLO26 pour améliorer les performances de [détection d'objets](https://www.ultralytics.com/glossary/object-detection).
+
+![SAHI tiled inference for small objects](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sahi-sliced-inference-overview.avif)
+
+## Link to this sectionIntroduction à SAHI#
+
+SAHI (Slicing Aided Hyper Inference) est une bibliothèque innovante conçue pour optimiser les algorithmes de détection d'objets pour les images à grande échelle et à haute résolution. Sa fonctionnalité principale réside dans le partitionnement des images en segments gérables, l'exécution de la détection d'objets sur chaque segment, puis l'assemblage des résultats. SAHI est compatible avec une gamme de modèles de détection d'objets, y compris la série YOLO, offrant ainsi de la flexibilité tout en garantissant une utilisation optimisée des ressources informatiques.
+
+  
+
+
+  
+**Watch:** How to use SAHI with Ultralytics YOLO26 to Detect Small Objects | Slicing Aided Hyper Inference 🚀 
+
+### Link to this sectionCaractéristiques clés de SAHI#
+
+  * **Intégration transparente** : SAHI s'intègre sans effort avec les modèles YOLO, ce qui signifie que tu peux commencer à découper et à détecter sans beaucoup de modifications de code.
+  * **Efficacité des ressources** : En décomposant les grandes images en parties plus petites, SAHI optimise l'utilisation de la mémoire, te permettant d'exécuter une détection de haute qualité sur du matériel aux ressources limitées.
+  * **Haute[précision](https://www.ultralytics.com/glossary/accuracy)** : SAHI maintient la précision de la détection en utilisant des algorithmes intelligents pour fusionner les boîtes de détection qui se chevauchent pendant le processus d'assemblage.
+
+
+
+## Link to this sectionQu'est-ce que l'inférence par découpage ?#
+
+L'inférence par découpage fait référence à la pratique consistant à subdiviser une image grande ou à haute résolution en segments plus petits (découpages), à effectuer la détection d'objets sur ces segments, puis à recompiler les segments pour reconstruire les emplacements des objets sur l'image originale. Cette technique est inestimable dans les scénarios où les ressources informatiques sont limitées ou lors du travail avec des images à très haute résolution qui pourraient autrement entraîner des problèmes de mémoire.
+
+### Link to this sectionAvantages de l'inférence par découpage#
+
+  * **Réduction de la charge computationnelle** : Les segments d'image plus petits sont plus rapides à traiter et consomment moins de mémoire, permettant une opération plus fluide sur du matériel d'entrée de gamme.
+
+  * **Qualité de détection préservée** : Étant donné que chaque segment est traité indépendamment, il n'y a aucune réduction de la qualité de la détection d'objets, à condition que les segments soient suffisamment grands pour capturer les objets d'intérêt.
+
+  * **Évolutivité améliorée** : La technique permet à la détection d'objets d'être plus facilement mise à l'échelle sur différentes tailles et résolutions d'images, la rendant idéale pour un large éventail d'applications, de l'imagerie satellite aux diagnostics médicaux.
+
+
+
+
+YOLO26 without SAHI| YOLO26 with SAHI  
+---|---  
+![YOLO26 without SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-without-sahi.avif)| ![YOLO26 with SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-with-sahi.avif)  
+  
+## Link to this sectionInstallation et préparation#
+
+### Link to this sectionInstallation#
+
+Pour commencer, installe les dernières versions de SAHI et d'Ultralytics :
+    
+    
+    pip install -U ultralytics sahi
+
+### Link to this sectionImporter les modules et télécharger les ressources#
+
+Voici comment télécharger quelques images de test :
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+## Link to this sectionInférence standard avec YOLO26#
+
+### Link to this sectionInstancier le modèle#
+
+Tu peux instancier un modèle YOLO26 pour la détection d'objets comme ceci :
+    
+    
+    from sahi import AutoDetectionModel
+    
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        confidence_threshold=0.3,
+        device="cpu",  # or 'cuda:0'
+    )
+
+### Link to this sectionEffectuer une prédiction standard#
+
+Effectue une inférence standard en utilisant un chemin d'accès à une image.
+    
+    
+    from sahi.predict import get_prediction
+    
+    result = get_prediction("demo_data/small-vehicles1.jpeg", detection_model)
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+
+### Link to this sectionVisualiser les résultats#
+
+Exporte et visualise les boîtes englobantes et les masques prédits :
+    
+    
+    from PIL import Image
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionInférence par découpage avec YOLO26#
+
+Effectue une inférence par découpage en spécifiant les dimensions des découpages et les taux de chevauchement :
+    
+    
+    from PIL import Image
+    from sahi.predict import get_sliced_prediction
+    
+    result = get_sliced_prediction(
+        "demo_data/small-vehicles1.jpeg",
+        detection_model,
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+    
+    # Export results
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionGérer les résultats de prédiction#
+
+SAHI fournit un objet `PredictionResult`, qui peut être converti dans divers formats d'annotation :
+    
+    
+    # Access the object prediction list
+    object_prediction_list = result.object_prediction_list
+    
+    # Convert to COCO annotation, COCO prediction, imantics, and fiftyone formats
+    result.to_coco_annotations()[:3]
+    result.to_coco_predictions(image_id=1)[:3]
+    result.to_imantics_annotations()[:3]
+    result.to_fiftyone_detections()[:3]
+
+## Link to this sectionPrédiction par lots#
+
+Pour une prédiction par lots sur un répertoire d'images :
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+Tu es maintenant prêt à utiliser YOLO26 avec SAHI pour l'inférence standard et par découpage.
+
+## Link to this sectionCitations et remerciements#
+
+Si tu utilises SAHI dans tes travaux de recherche ou de développement, merci de citer l'article original de SAHI et de créditer les auteurs :
+
+Citation
+    
+    
+    @article{akyon2022sahi,
+      title={Slicing Aided Hyper Inference and Fine-tuning for Small Object Detection},
+      author={Akyon, Fatih Cagatay and Altinuc, Sinan Onur and Temizel, Alptekin},
+      journal={2022 IEEE International Conference on Image Processing (ICIP)},
+      doi={10.1109/ICIP46576.2022.9897990},
+      pages={966-970},
+      year={2022}
+    }
+
+Nous remercions le groupe de recherche SAHI pour la création et la maintenance de cette ressource inestimable pour la communauté de [vision par ordinateur](https://www.ultralytics.com/glossary/computer-vision-cv). Pour plus d'informations sur SAHI et ses créateurs, visite le [dépôt GitHub de SAHI](https://github.com/obss/sahi).
+
+## Link to this sectionFAQ#
+
+### Link to this sectionComment puis-je intégrer YOLO26 avec SAHI pour l'inférence par découpage dans la détection d'objets ?#
+
+Intégrer Ultralytics YOLO26 avec SAHI (Slicing Aided Hyper Inference) pour l'inférence par découpage optimise tes tâches de détection d'objets sur les images haute résolution en les partitionnant en segments gérables. Cette approche améliore l'utilisation de la mémoire et garantit une précision de détection élevée. Pour commencer, tu dois installer les bibliothèques ultralytics et sahi :
+    
+    
+    pip install -U ultralytics sahi
+
+Ensuite, télécharge les images de test :
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+Pour des instructions plus détaillées, réfère-toi à notre guide d'inférence par découpage.
+
+### Link to this sectionPourquoi devrais-je utiliser SAHI avec YOLO26 pour la détection d'objets sur de grandes images ?#
+
+Utiliser SAHI avec Ultralytics YOLO26 pour la détection d'objets sur de grandes images offre plusieurs avantages :
+
+  * **Réduction de la charge computationnelle** : Les segments plus petits sont plus rapides à traiter et consomment moins de mémoire, rendant possible l'exécution de détections de haute qualité sur du matériel aux ressources limitées.
+  * **Précision de détection maintenue** : SAHI utilise des algorithmes intelligents pour fusionner les boîtes qui se chevauchent, préservant la qualité de la détection.
+  * **Évolutivité améliorée** : En mettant à l'échelle les tâches de détection d'objets sur différentes tailles et résolutions d'images, SAHI devient idéal pour diverses applications, telles que l'analyse d'imagerie satellite et les diagnostics médicaux.
+
+
+
+Apprends-en plus sur les avantages de l'inférence par découpage dans notre documentation.
+
+### Link to this sectionPuis-je visualiser les résultats de prédiction lorsque j'utilise YOLO26 avec SAHI ?#
+
+Oui, tu peux visualiser les résultats de prédiction lorsque tu utilises YOLO26 avec SAHI. Voici comment tu peux exporter et visualiser les résultats :
+    
+    
+    from PIL import Image
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    processed_image.show()
+
+Cette commande enregistrera les prédictions visualisées dans le répertoire spécifié, et tu pourras ensuite charger l'image pour l'afficher dans ton notebook ou ton application. Pour un guide détaillé, consulte la section Inférence standard.
+
+### Link to this sectionQuelles fonctionnalités SAHI offre-t-il pour améliorer la détection d'objets YOLO26 ?#
+
+SAHI (Slicing Aided Hyper Inference) offre plusieurs fonctionnalités qui complètent Ultralytics YOLO26 pour la détection d'objets :
+
+  * **Intégration transparente** : SAHI s'intègre facilement avec les modèles YOLO, nécessitant un minimum d'ajustements de code.
+  * **Efficacité des ressources** : Il partitionne les grandes images en segments plus petits, ce qui optimise l'utilisation de la mémoire et la vitesse.
+  * **Haute précision** : En fusionnant efficacement les boîtes de détection qui se chevauchent lors du processus d'assemblage, SAHI maintient une précision de détection élevée.
+
+
+
+Pour une compréhension plus approfondie, lis les fonctionnalités clés de SAHI.
+
+### Link to this sectionComment gérer des projets d'inférence à grande échelle en utilisant YOLO26 et SAHI ?#
+
+Pour gérer des projets d'inférence à grande échelle en utilisant YOLO26 et SAHI, suis ces meilleures pratiques :
+
+  1. **Installer les bibliothèques requises** : Assure-toi d'avoir les dernières versions de ultralytics et de sahi.
+  2. **Configurer l'inférence par découpage** : Détermine les dimensions optimales des segments et les taux de chevauchement pour ton projet spécifique.
+  3. **Exécuter des prédictions par lots** : Utilise les capacités de SAHI pour effectuer des prédictions par lots sur un répertoire d'images, ce qui améliore l'efficacité.
+
+
+
+Exemple pour la prédiction par lots :
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="path/to/yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+Pour des étapes plus détaillées, visite notre section sur la prédiction par lots.
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar8](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[COCoderUni1](https://github.com/CoderUni)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+Créé 12 nov. 2023Mis à jour le mois dernier
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

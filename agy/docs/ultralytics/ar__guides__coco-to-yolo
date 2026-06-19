@@ -1,0 +1,311 @@
+---
+source_url: https://docs.ultralytics.com/ar/guides/coco-to-yolo
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-to-yolo.md)
+
+# Link to this sectionكيفية تحويل تعليقات COCO التوضيحية إلى تنسيق YOLO#
+
+يتطلب تدريب نماذج [Ultralytics YOLO](https://www.ultralytics.com/) تعليقات توضيحية بتنسيق YOLO، ولكن العديد من أدوات [التعليق التوضيحي](https://www.ultralytics.com/glossary/data-labeling) الشائعة تقوم بالتصدير بتنسيق [COCO JSON](https://cocodataset.org/#format-data) بدلاً من ذلك. يوضح لك هذا الدليل كيفية تحويل تعليقات COCO التوضيحية الخاصة بك إلى تنسيق YOLO وبدء تدريب نماذج [اكتشاف الكائنات](https://www.ultralytics.com/glossary/object-detection) و[تجزئة المثيلات](https://www.ultralytics.com/glossary/instance-segmentation) و[تقدير الوضعية](https://www.ultralytics.com/glossary/pose-estimation).
+
+## Link to this sectionلماذا التحويل من COCO إلى YOLO؟#
+
+يخزن تنسيق COCO JSON جميع التعليقات التوضيحية في ملف واحد، بينما يستخدم [YOLO](https://docs.ultralytics.com/datasets/detect#ultralytics-yolo-format) ملف نصي واحد لكل صورة بإحداثيات طبيعية. التحويل ضروري لأن:
+
+  * **تتطلب نماذج YOLO ملفات تصنيف`.txt`** بملف واحد لكل صورة، تحتوي على `class x_center y_center width height` بإحداثيات طبيعية.
+  * **يستخدم COCO JSON إحداثيات البكسل** بتنسيق `[x_min, y_min, width, height]` مع ملف JSON واحد لجميع الصور.
+  * **تختلف معرفات الفئات (Class IDs)** — يستخدم COCO قيم `category_id` اعتباطية، بينما يتطلب YOLO معرفات فئات تبدأ من الصفر (zero-indexed).
+
+
+
+الميزة| COCO JSON| YOLO TXT  
+---|---|---  
+**الهيكل**|  ملف JSON واحد لجميع الصور| ملف `.txt` واحد لكل صورة  
+**تنسيق مربع الإحاطة (Bbox)**| `[x_min, y_min, width, height]` بالبكسل| `class x_center y_center width height` مطبعة (0-1)  
+**معرفات الفئات**| `category_id` (يمكن أن تبدأ من أي رقم)| تبدأ من الصفر (Zero-indexed)  
+**التجزئة (Segmentation)**|  مصفوفات المضلعات في حقل `segmentation`| إحداثيات المضلع بعد معرف الفئة  
+**النقاط الرئيسية (Keypoints)**| `[x, y, visibility, ...]` بالبكسل| `[x, y, visibility, ...]` مطبعة  
+  
+## Link to this sectionبداية سريعة#
+
+أسرع طريقة لتحويل تعليقات COCO التوضيحية وبدء التدريب:
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        labels_dir="path/to/annotations/",  # directory containing your JSON files
+        save_dir="path/to/output/",  # where to save converted labels
+        cls91to80=False,  # IMPORTANT: set False for custom datasets
+    )
+
+بعد التحويل، نظّم هيكل مجلداتك، وأنشئ ملف dataset.yaml، وابدأ التدريب. راجع الدليل التفصيلي الكامل أدناه.
+
+مجموعات البيانات المخصصة: استخدم دائمًا `cls91to80=False`
+
+الإعداد الافتراضي `cls91to80=True` مصمم **فقط** لمجموعة بيانات [COCO](/ar/datasets/detect/coco) القياسية ذات الـ 80 فئة كائن، والتي تقوم بتعيين 91 معرف فئة غير متسلسل إلى 80 معرف فئة متسلسل. بالنسبة لأي مجموعة بيانات مخصصة، **يجب** عليك تعيين `cls91to80=False` — وإلا فسيتم تعيين معرفات الفئات الخاصة بك بشكل غير صحيح بصمت وسيتعلم نموذجك فئات خاطئة.
+
+## Link to this sectionدليل التحويل التفصيلي#
+
+### Link to this sectionتجهيز مجموعة بيانات COCO الخاصة بك#
+
+تتمتع مجموعة بيانات بتنسيق COCO نموذجية يتم تصديرها من أدوات التعليق التوضيحي بالهيكل التالي:
+    
+    
+    my_dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── img_001.jpg
+    │   │   ├── img_002.jpg
+    │   │   └── ...
+    │   └── val/
+    │       ├── img_100.jpg
+    │       └── ...
+    └── annotations/
+        ├── instances_train.json
+        └── instances_val.json
+
+يتبع كل ملف JSON مواصفات [تنسيق بيانات COCO](https://cocodataset.org/#format-data) مع ثلاثة حقول مطلوبة — `images` و`annotations` و`categories`:
+    
+    
+    {
+        "images": [{ "id": 1, "file_name": "img_001.jpg", "width": 640, "height": 480 }],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [100, 50, 200, 150],
+                "area": 30000,
+                "iscrowd": 0
+            }
+        ],
+        "categories": [
+            { "id": 1, "name": "helmet" },
+            { "id": 2, "name": "vest" }
+        ]
+    }
+
+### Link to this sectionتحويل التعليقات التوضيحية#
+
+استخدم وظيفة [`convert_coco()`](/reference/data/converter#ultralytics.data.converter.convert_coco) لتحويل تعليقات COCO JSON التوضيحية الخاصة بك إلى تنسيق `.txt` الخاص بـ YOLO:
+
+تحويل COCO إلى تنسيق YOLO
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        labels_dir="my_dataset/annotations/",
+        save_dir="my_dataset/converted/",
+        cls91to80=False,
+    )
+
+### Link to this sectionتنظيم هيكل المجلدات#
+
+بعد التحويل، يجب وضع ملفات التسميات بجانب صورك. يتوقع YOLO وجود مجلد `labels/` يطابق مجلد `images/`:
+    
+    
+    import shutil
+    from pathlib import Path
+    
+    # Paths
+    converted_dir = Path("my_dataset/converted/labels")
+    dataset_dir = Path("my_dataset")
+    
+    # Move labels next to images for each split
+    for split in ["train", "val"]:
+        src = converted_dir / split  # convert_coco strips "instances_" prefix from JSON filename
+        dst = dataset_dir / "labels" / split
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in src.glob("*.txt"):
+            shutil.move(str(f), str(dst / f.name))
+
+يجب أن يبدو [هيكل مجموعة البيانات](/ar/datasets/detect#ultralytics-yolo-format) النهائي الخاص بك كالتالي:
+    
+    
+    my_dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── img_001.jpg
+    │   │   └── ...
+    │   └── val/
+    │       └── ...
+    ├── labels/
+    │   ├── train/
+    │   │   ├── img_001.txt
+    │   │   └── ...
+    │   └── val/
+    │       └── ...
+    └── dataset.yaml
+
+### Link to this sectionإنشاء dataset.yaml#
+
+أنشئ ملف تهيئة `dataset.yaml` يقوم بتعيين فئات COCO الخاصة بك إلى أسماء فئات YOLO. يخبر هذا الملف YOLO بمكان بياناتك وما هي الفئات التي يجب اكتشافها:
+    
+    
+    import json
+    from pathlib import Path
+    
+    import yaml
+    
+    # Read categories from your COCO JSON
+    with open("my_dataset/annotations/instances_train.json") as f:
+        coco = json.load(f)
+    
+    # Build class names matching convert_coco output (category_id - 1)
+    categories = sorted(coco["categories"], key=lambda x: x["id"])
+    names = {cat["id"] - 1: cat["name"] for cat in categories}
+    # NOTE: convert_coco maps class IDs as category_id - 1, so category_id must
+    # start from 1. If your categories start from 0, add 1 to each ID first.
+    
+    # Create dataset.yaml
+    dataset = {
+        "path": str(Path("my_dataset").resolve()),
+        "train": "images/train",
+        "val": "images/val",
+        "names": names,
+    }
+    
+    with open("my_dataset/dataset.yaml", "w") as f:
+        yaml.dump(dataset, f, default_flow_style=False)
+
+ملف YAML الناتج:
+    
+    
+    path: /absolute/path/to/my_dataset
+    train: images/train
+    val: images/val
+    names:
+        0: helmet
+        1: vest
+
+لمزيد من التفاصيل حول تنسيق dataset YAML، راجع [دليل تهيئة مجموعة البيانات](/ar/datasets/detect).
+
+### Link to this sectionتدريب نموذج YOLO الخاص بك#
+
+بعد تجهيز مجموعة بياناتك المحولة، قم بتدريب نموذج YOLO:
+
+التدريب على بيانات COCO المحولة
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load a pretrained model
+    results = model.train(data="my_dataset/dataset.yaml", epochs=100, imgsz=640)
+
+للحصول على نصائح التدريب وأفضل الممارسات، راجع [دليل تدريب النموذج](/ar/guides/model-training-tips).
+
+### Link to this sectionالتحقق من التحويل الخاص بك#
+
+قبل التدريب، تحقق عشوائيًا من بضعة ملفات تسميات للتأكد من صحة معرفات الفئات والإحداثيات:
+    
+    
+    from pathlib import Path
+    
+    label_file = Path("my_dataset/labels/train/img_001.txt")
+    for line in label_file.read_text().strip().splitlines():
+        parts = line.split()
+        cls_id = int(parts[0])
+        coords = [float(v) for v in parts[1:5]]
+        assert cls_id >= 0, f"Negative class ID {cls_id} — category_id in your JSON may start from 0"
+        assert all(0 <= v <= 1 for v in coords), f"Coordinates out of [0, 1] range: {coords}"
+
+تلميحة
+
+إذا رأيت معرفات فئات سالبة، فمن المحتمل أن ملف COCO JSON الخاص بك يستخدم `category_id` يبدأ من 0. أضف 1 إلى جميع قيم `category_id` في ملف JSON الخاص بك قبل تشغيل `convert_coco()`، حيث يقوم بتعيين معرفات الفئات كـ `category_id - 1`.
+
+## Link to this sectionاستكشاف الأخطاء وإصلاحها#
+
+### Link to this sectionمعرفات فئات خاطئة بعد التحويل#
+
+إذا كان نموذجك يتدرب ولكنه يكتشف فئات كائنات خاطئة، فمن المحتمل أنك تستخدم `cls91to80=True` (الافتراضي) على مجموعة بيانات مخصصة. هذا يعين قيم `category_id` الخاصة بك عبر جدول بحث COCO 91-إلى-80، وهو صحيح فقط لمجموعة بيانات [COCO](/ar/datasets/detect/coco) القياسية.
+
+**الحل** : استخدم دائمًا `cls91to80=False` لمجموعات البيانات المخصصة.
+
+### Link to this sectionلم يتم العثور على تسميات أثناء التدريب#
+
+إذا أظهر التدريب `WARNING: No labels found` أو `0 images, N backgrounds`، فإن ملفات التسميات الخاصة بك ليست في المجلد المتوقع. يقوم `convert_coco()` بحفظ التسميات في مجلد إخراج منفصل (مثل `save_dir/labels/train/`)، ولكن يتوقع YOLO وجود `labels/` موازٍ لـ `images/` داخل مجلد مجموعة البيانات الخاص بك.
+
+**الحل** : انقل ملفات التسميات لتطابق هيكل المجلدات المتوقع. تأكد من أن `labels/train/` هو مجلد شقيق لـ `images/train/`.
+
+### Link to this sectionخطأ KeyError أثناء التحويل#
+
+إذا تلقيت خطأ `KeyError: 'bbox'` أو أخطاء مشابهة عند تشغيل `convert_coco()`، فمن المحتمل أن `labels_dir` الخاص بك يحتوي على ملفات JSON ليست من نوع المثيلات (مثل `captions_train2017.json`) والتي لها هيكل تعليق توضيحي مختلف.
+
+**الحل** : ضع فقط ملفات JSON الخاصة بتعليقات مثيلات الكائنات (مثل `instances_train2017.json`) في `labels_dir`.
+
+### Link to this sectionملفات تسميات فارغة بعد التحويل#
+
+إذا اكتمل التحويل ولكن ملفات `.txt` فارغة أو مفقودة، فقد يكون لجميع التعليقات التوضيحية `iscrowd: 1` (شائع مع الأقنعة التي تم إنشاؤها بواسطة [SAM](/ar/models/sam))، أو أن [مربعات الإحاطة](https://www.ultralytics.com/glossary/bounding-box) ذات عرض أو ارتفاع صفري.
+
+**الحل** : افحص تعليقات JSON التوضيحية الخاصة بك بحثًا عن قيم `iscrowd`. إذا كنت تستخدم أقنعة SAM، فقم بمعالجة ملف JSON مسبقًا لتعيين `iscrowd: 0`.
+
+### Link to this sectionفجوات في معرفات الفئات في التسميات المحولة#
+
+إذا كانت معرفات الفئات في ملفات التسميات غير متسلسلة (مثل 0، 4، 9 بدلاً من 0، 1، 2)، فإن أداة التعليق التوضيحي الخاصة بك تستخدم قيم `category_id` غير متسلسلة.
+
+**الحل** : تحقق من أن معرفات الفئات في ملفات `.txt` الخاصة بك تطابق قاموس `names` في `dataset.yaml`. أعد تعيين المعرفات إلى قيم متسلسلة إذا لزم الأمر.
+
+للحصول على تفاصيل API الكاملة وأوصاف المعلمات، راجع [مرجع API لـ `convert_coco`](/reference/data/converter#ultralytics.data.converter.convert_coco).
+
+## Link to this sectionالأسئلة الشائعة#
+
+### Link to this sectionكيف أقوم بتحويل تعليقات COCO JSON التوضيحية إلى تنسيق YOLO؟#
+
+استخدم وظيفة `convert_coco()` من Ultralytics لتحويل تعليقات COCO JSON التوضيحية إلى تنسيق `.txt` الخاص بـ YOLO. قم بتعيين `cls91to80=False` لمجموعات البيانات المخصصة:
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="path/to/annotations/", save_dir="output/", cls91to80=False)
+
+بعد التحويل، أعد تنظيم ملفات التسميات الخاصة بك بحيث يطابق `labels/` مجلد `images/`، ثم أنشئ ملف `dataset.yaml`. راجع الدليل التفصيلي لسير العمل الكامل.
+
+### Link to this sectionلماذا يظهر تدريب YOLO "لم يتم العثور على تسميات" بعد تحويل COCO؟#
+
+يحدث هذا لأن `convert_coco()` يحفظ التسميات في مجلد فرعي داخل `save_dir/labels/` (على سبيل المثال، `save_dir/labels/train/`) بدلاً من وضعه مباشرة في مجلد `labels/train/` الخاص بمجموعة بياناتك بجانب `images/train/`. يتوقع YOLO أن تكون التسميات موازية للصور — على سبيل المثال، تحتاج `images/train/img.jpg` إلى `labels/train/img.txt`. انقل تسمياتك المحولة لتطابق هذا الهيكل. راجع إصلاح هيكل المجلدات.
+
+### Link to this sectionماذا يفعل `cls91to80` في `convert_coco()`؟#
+
+تتحكم معلمة `cls91to80` في كيفية تعيين قيم `category_id` الخاصة بـ COCO إلى معرفات فئات YOLO. عند تعيينها إلى `True` (الافتراضي)، فإنها تستخدم جدول بحث مصمم لمجموعة بيانات [COCO](/ar/datasets/detect/coco) القياسية، والتي تحتوي على 80 فئة بمعرفات غير متسلسلة (1-90). بالنسبة لـ **مجموعات البيانات المخصصة** ، قم دائمًا بتعيين `cls91to80=False` — هذا ببساطة يطرح 1 من كل `category_id` لإنشاء معرفات فئات تبدأ من الصفر.
+
+### Link to this sectionهل يمكنني تدريب YOLO مباشرة على COCO JSON دون تحويل؟#
+
+ليس مع خط أنابيب تدريب YOLO الحالي — يجب أن تكون التعليقات التوضيحية بتنسيق `.txt` الخاص بـ YOLO مع ملف واحد لكل صورة. استخدم `convert_coco()` لتحويل COCO JSON الخاص بك أولاً، ثم اتبع هذا الدليل للتنظيم والتدريب. لمزيد من المعلومات حول التنسيقات المدعومة، راجع [تنسيقات مجموعة البيانات](/ar/datasets/detect).
+
+### Link to this sectionهل يمكنني تحويل تعليقات التجزئة (segmentation) الخاصة بـ COCO إلى تنسيق YOLO؟#
+
+نعم، استخدم `use_segments=True` عند استدعاء `convert_coco()` لتضمين أقنعة تجزئة المضلعات في تسميات YOLO المحولة. ينتج عن هذا ملفات تسميات متوافقة مع [نماذج تجزئة YOLO](/ar/tasks/segment):
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="annotations/", save_dir="output/", use_segments=True, cls91to80=False)
+
+### Link to this sectionكيف أقوم بتحويل تعليقات النقاط الرئيسية (keypoints) الخاصة بـ COCO إلى تنسيق YOLO؟#
+
+استخدم `use_keypoints=True` لتحويل تعليقات النقاط الرئيسية الخاصة بـ COCO لتدريب [تقدير الوضعية](/ar/tasks/pose):
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="annotations/", save_dir="output/", use_keypoints=True, cls91to80=False)
+
+لاحظ أنه إذا تم تعيين كل من `use_segments` و`use_keypoints` على `True`، فسيتم كتابة النقاط الرئيسية فقط في ملفات التسميات — يتم تجاهل الأجزاء بصمت.
+
+المساهمون
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-to-yolo.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[RAraimbekovm1](https://github.com/raimbekovm)
+
+تم الإنشاء قبل شهرينتم التحديث الشهر الماضي
+
+## التعليقات
+
+في هذه الصفحة
+
+استكشف باستخدام الذكاء الاصطناعي

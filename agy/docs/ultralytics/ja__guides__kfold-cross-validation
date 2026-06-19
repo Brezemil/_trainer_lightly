@@ -1,0 +1,332 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/kfold-cross-validation
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+# Link to this sectionUltralyticsを使用したK-Fold交差検証#
+
+## Link to this sectionはじめに#
+
+この包括的なガイドでは、Ultralyticsエコシステム内における[物体検出](https://www.ultralytics.com/glossary/object-detection)データセットのK-Fold交差検証の実装方法を解説します。YOLO検出フォーマットと、sklearn、pandas、PyYAMLなどの主要なPythonライブラリを活用し、必要なセットアップ、特徴ベクトル生成のプロセス、およびK-Foldデータセット分割の実行手順を説明します。
+
+![K-fold cross validation data splitting](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/k-fold-cross-validation-overview.avif)
+
+プロジェクトがFruit Detectionデータセットであれ、カスタムデータソースであれ、このチュートリアルは[機械学習](https://www.ultralytics.com/glossary/machine-learning-ml)モデルの信頼性と堅牢性を向上させるためのK-Fold交差検証の理解と適用を目的としています。このチュートリアルでは`k=5`分割を使用しますが、最適な分割数はデータセットやプロジェクトの特性に応じて異なることに留意してください。
+
+それでは始めましょう。
+
+## Link to this sectionセットアップ#
+
+  * アノテーションは[YOLO検出フォーマット](/ja/datasets/detect)である必要があります。
+
+  * このガイドでは、アノテーションファイルがローカルで利用可能であることを前提としています。
+
+  * デモンストレーションには、[Fruit Detection](https://www.kaggle.com/datasets/lakshaytyagi01/fruit-detection/code)データセットを使用します。
+
+    * このデータセットには合計8479枚の画像が含まれています。
+    * 6つのクラスラベルが含まれており、各インスタンス数は以下の通りです。
+
+
+
+クラスラベル| インスタンス数  
+---|---  
+Apple| 7049  
+Grapes| 7202  
+Pineapple| 1613  
+Orange| 15549  
+Banana| 3536  
+Watermelon| 1976  
+  
+  * 必要なPythonパッケージは以下の通りです：
+
+    * `ultralytics`
+    * `sklearn`
+    * `pandas`
+    * `pyyaml`
+  * このチュートリアルでは`k=5`分割で運用します。ただし、使用するデータセットに最適な分割数を決定してください。
+
+
+
+  1. プロジェクト用に新しいPython仮想環境(`venv`)を作成して有効化します。`pip`（または好みのパッケージマネージャー）を使用してインストールします：
+
+     * Ultralyticsライブラリ: `pip install -U ultralytics`。あるいは、公式[リポジトリ](https://github.com/ultralytics/ultralytics)をクローンすることも可能です。
+     * Scikit-learn、pandas、PyYAML: `pip install -U scikit-learn pandas pyyaml`
+  2. アノテーションが[YOLO検出フォーマット](/ja/datasets/detect)であることを確認してください。
+
+     * このチュートリアルでは、すべてのアノテーションファイルは`Fruit-Detection/labels`ディレクトリに配置されています。
+
+
+
+## Link to this section物体検出データセット用の特徴ベクトル生成#
+
+  1. まず、以下の手順のために新しい`example.py`というPythonファイルを作成します。
+
+  2. データセットのすべてのラベルファイルを取得します。
+         
+         from pathlib import Path
+         
+         dataset_path = Path("./Fruit-detection")  # replace with 'path/to/dataset' for your custom data
+         labels = sorted(dataset_path.rglob("*labels/*.txt"))  # all data in 'labels'
+
+  3. 次に、データセットのYAMLファイルの内容を読み取り、クラスラベルのインデックスを抽出します。
+         
+         import yaml
+         
+         yaml_file = "path/to/data.yaml"  # your data YAML with data directories and names dictionary
+         with open(yaml_file, encoding="utf8") as y:
+             classes = yaml.safe_load(y)["names"]
+         cls_idx = sorted(classes.keys())
+
+  4. 空の`pandas` DataFrameを初期化します。
+         
+         import pandas as pd
+         
+         index = [label.stem for label in labels]  # uses base filename as ID (no extension)
+         labels_df = pd.DataFrame([], columns=cls_idx, index=index)
+
+  5. アノテーションファイルに存在する各クラスラベルのインスタンス数をカウントします。
+         
+         from collections import Counter
+         
+         for label in labels:
+             lbl_counter = Counter()
+         
+             with open(label) as lf:
+                 lines = lf.readlines()
+         
+             for line in lines:
+                 # classes for YOLO label uses integer at first position of each line
+                 lbl_counter[int(line.split(" ", 1)[0])] += 1
+         
+             labels_df.loc[label.stem] = lbl_counter
+         
+         labels_df = labels_df.fillna(0.0)  # replace `nan` values with `0.0`
+
+  6. 以下は、データを格納したDataFrameのサンプルビューです：
+         
+         0    1    2    3    4    5
+         '0000a16e4b057580_jpg.rf.00ab48988370f64f5ca8ea4...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.7e6dce029fb67f01eb19aa7...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.bc4d31cdcbe229dd022957a...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '00020ebf74c4881c_jpg.rf.508192a0a97aa6c4a3b6882...'  0.0  0.0  0.0  1.0  0.0  0.0
+         '00020ebf74c4881c_jpg.rf.5af192a2254c8ecc4188a25...'  0.0  0.0  0.0  1.0  0.0  0.0
+          ...                                                  ...  ...  ...  ...  ...  ...
+         'ff4cd45896de38be_jpg.rf.c4b5e967ca10c7ced3b9e97...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff4cd45896de38be_jpg.rf.ea4c1d37d2884b3e3cbce08...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff5fd9c3c624b7dc_jpg.rf.bb519feaa36fc4bf630a033...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'ff5fd9c3c624b7dc_jpg.rf.f0751c9c3aa4519ea3c9d6a...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'fffe28b31f2a70d4_jpg.rf.7ea16bd637ba0711c53b540...'  0.0  6.0  0.0  0.0  0.0  0.0
+
+
+
+
+行はデータセット内の画像に対応するラベルファイルを示し、列はクラスラベルのインデックスに対応しています。各行は、データセット内に存在する各クラスラベルの数を示す擬似的な特徴ベクトルを表しています。このデータ構造により、物体検出データセットに[K-Fold交差検証](https://www.ultralytics.com/glossary/cross-validation)を適用することが可能になります。
+
+## Link to this sectionK-Foldデータセット分割#
+
+  1. Now we will use the `KFold` class from `sklearn.model_selection` to generate `k` splits of the dataset.
+
+     * 重要： 
+       * `shuffle=True`を設定することで、分割内でクラスがランダムに分布されるようになります。
+       * By setting `random_state=M` where `M` is a chosen integer, you can obtain repeatable results.
+    
+    import random
+    
+    from sklearn.model_selection import KFold
+    
+    random.seed(0)  # for reproducibility
+    ksplit = 5
+    kf = KFold(n_splits=ksplit, shuffle=True, random_state=20)  # setting random_state for repeatable results
+    
+    kfolds = list(kf.split(labels_df))
+
+  2. これでデータセットは`k`個のフォールドに分割され、それぞれに`train`（訓練）と`val`（検証）のインデックスリストが含まれます。これらの結果をより明確に表示するためにDataFrameを作成します。
+         
+         folds = [f"split_{n}" for n in range(1, ksplit + 1)]
+         folds_df = pd.DataFrame(index=index, columns=folds)
+         
+         for i, (train, val) in enumerate(kfolds, start=1):
+             folds_df[f"split_{i}"].loc[labels_df.iloc[train].index] = "train"
+             folds_df[f"split_{i}"].loc[labels_df.iloc[val].index] = "val"
+
+  3. Now we will calculate the distribution of class labels for each fold as a ratio of the classes present in `val` to those present in `train`.
+         
+         fold_lbl_distrb = pd.DataFrame(index=folds, columns=cls_idx)
+         
+         for n, (train_indices, val_indices) in enumerate(kfolds, start=1):
+             train_totals = labels_df.iloc[train_indices].sum()
+             val_totals = labels_df.iloc[val_indices].sum()
+         
+             # To avoid division by zero, we add a small value (1E-7) to the denominator
+             ratio = val_totals / (train_totals + 1e-7)
+             fold_lbl_distrb.loc[f"split_{n}"] = ratio
+
+理想的には、すべてのクラス比率が各分割間およびクラス間で妥当な程度に類似していることが望ましいですが、これはデータセットの特性に依存します。
+
+  4. 続いて、各分割用のディレクトリとデータセットYAMLファイルを作成します。
+         
+         import datetime
+         
+         supported_extensions = [".jpg", ".jpeg", ".png"]
+         
+         # Initialize an empty list to store image file paths
+         images = []
+         
+         # Loop through supported extensions and gather image files
+         for ext in supported_extensions:
+             images.extend(sorted((dataset_path / "images").rglob(f"*{ext}")))
+         
+         # Create the necessary directories and dataset YAML files
+         save_path = Path(dataset_path / f"{datetime.date.today().isoformat()}_{ksplit}-Fold_Cross-val")
+         save_path.mkdir(parents=True, exist_ok=True)
+         ds_yamls = []
+         
+         for split in folds_df.columns:
+             # Create directories
+             split_dir = save_path / split
+             split_dir.mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "labels").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "labels").mkdir(parents=True, exist_ok=True)
+         
+             # Create dataset YAML files
+             dataset_yaml = split_dir / f"{split}_dataset.yaml"
+             ds_yamls.append(dataset_yaml)
+         
+             with open(dataset_yaml, "w") as ds_y:
+                 yaml.safe_dump(
+                     {
+                         "path": split_dir.as_posix(),
+                         "train": "train",
+                         "val": "val",
+                         "names": classes,
+                     },
+                     ds_y,
+                 )
+
+  5. 最後に、各分割の画像とラベルを対応するディレクトリ（'train'または'val'）にコピーします。
+
+     * **注意:** このコード部分にかかる時間は、データセットのサイズとシステムハードウェアによって異なります。
+    
+    import shutil
+    
+    from tqdm import tqdm
+    
+    for image, label in tqdm(zip(images, labels), total=len(images), desc="Copying files"):
+        for split, k_split in folds_df.loc[image.stem].items():
+            # Destination directory
+            img_to_path = save_path / split / k_split / "images"
+            lbl_to_path = save_path / split / k_split / "labels"
+    
+            # Copy image and label files to new directory (SamefileError if file already exists)
+            shutil.copy(image, img_to_path / image.name)
+            shutil.copy(label, lbl_to_path / label.name)
+
+
+
+
+## Link to this sectionレコードの保存（オプション）#
+
+オプションとして、K-Fold分割およびラベル分布のDataFrameレコードをCSVファイルとして保存し、今後の参照用に使用できます。
+    
+    
+    folds_df.to_csv(save_path / "kfold_datasplit.csv")
+    fold_lbl_distrb.to_csv(save_path / "kfold_label_distribution.csv")
+
+## Link to this sectionK-Foldデータ分割を使用したYOLOの学習#
+
+  1. まず、YOLOモデルを読み込みます。
+         
+         from ultralytics import YOLO
+         
+         weights_path = "path/to/weights.pt"  # use yolo26n.pt for a small model
+         model = YOLO(weights_path, task="detect")
+
+  2. 次に、データセットのYAMLファイルを反復処理して学習を実行します。結果は`project`および`name`引数で指定されたディレクトリに保存されます。デフォルトでは、このディレクトリは「runs/detect/train#」となり、#は整数インデックスです。
+         
+         results = {}
+         
+         # Define your additional arguments here
+         batch = 16
+         project = "kfold_demo"
+         epochs = 100
+         
+         for k, dataset_yaml in enumerate(ds_yamls):
+             model = YOLO(weights_path, task="detect")
+             results[k] = model.train(
+                 data=dataset_yaml, epochs=epochs, batch=batch, project=project, name=f"fold_{k + 1}"
+             )  # include any additional train arguments
+
+  3. また、[Ultralytics data.split.autosplit](https://docs.ultralytics.com/reference/data/split)関数を使用して、データセットを自動分割することも可能です：
+         
+         from ultralytics.data.split import autosplit
+         
+         # Automatically split dataset into train/val/test
+         autosplit(path="path/to/images", weights=(0.8, 0.2, 0.0), annotated_only=True)
+
+
+
+
+## Link to this section結論#
+
+このガイドでは、YOLO物体検出モデルの学習にK-Fold交差検証を使用するプロセスを解説しました。データセットをK個のパーティションに分割し、フォールド間でバランスの取れたクラス分布を確保する方法を学習しました。
+
+また、データ分割とラベル分布を可視化するためのレポートDataFrameを作成する手順を学び、訓練セットと検証セットの構造を明確に把握することができました。
+
+オプションとして、将来の参照用にレコードを保存しました。これは大規模プロジェクトやモデルのパフォーマンスに関するトラブルシューティングを行う際に特に役立ちます。
+
+最後に、ループ内で各分割を使用して実際のモデル学習を実行し、さらなる分析と比較のために学習結果を保存しました。
+
+このK-Fold交差検証の手法は、利用可能なデータを最大限に活用する堅牢な方法であり、モデルのパフォーマンスが異なるデータサブセット間で信頼性が高く一貫していることを保証するのに役立ちます。これにより、特定のデータパターンに[過学習](https://www.ultralytics.com/glossary/overfitting)しにくく、汎用性と信頼性の高いモデルが得られます。
+
+このガイドではYOLOを使用しましたが、これらの手順は他の機械学習モデルにもほとんど適用可能です。これらの手順を理解することで、自身の機械学習プロジェクトで効果的に交差検証を適用できるようになります。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionK-Fold交差検証とは何か、そしてなぜ物体検出において役立つのか？#
+
+K-Fold交差検証は、モデルのパフォーマンスをより確実に評価するために、データセットを「k」個のサブセット（フォールド）に分割する手法です。各フォールドは訓練データと[検証データ](https://www.ultralytics.com/glossary/validation-data)の両方の役割を果たします。物体検出においてK-Fold交差検証を使用することは、Ultralytics YOLOモデルのパフォーマンスが異なるデータ分割間で堅牢かつ汎用的であることを保証し、信頼性を高めるのに役立ちます。Ultralytics YOLOでK-Fold交差検証を設定するための詳細な手順については、Ultralyticsを使用したK-Fold交差検証を参照してください。
+
+### Link to this sectionUltralytics YOLOを使用してK-Fold交差検証を実装するにはどうすればよいか？#
+
+Ultralytics YOLOでK-Fold交差検証を実装するには、以下の手順に従う必要があります：
+
+  1. アノテーションが[YOLO検出フォーマット](/ja/datasets/detect)であることを確認する。
+  2. `sklearn`、`pandas`、`pyyaml`などのPythonライブラリを使用する。
+  3. データセットから特徴ベクトルを作成する。
+  4. Split your dataset using `KFold` from `sklearn.model_selection`.
+  5. 各分割でYOLOモデルを学習する。
+
+
+
+包括的なガイドについては、ドキュメントのK-Foldデータセット分割セクションを参照してください。
+
+### Link to this sectionなぜ物体検出にUltralytics YOLOを使用すべきなのか？#
+
+Ultralytics YOLO offers state-of-the-art, real-time object detection with high [accuracy](https://www.ultralytics.com/glossary/accuracy) and efficiency. It's versatile, supporting multiple [computer vision](https://www.ultralytics.com/glossary/computer-vision-cv) tasks such as [detection](/ja/tasks/detect), [instance segmentation](/ja/tasks/segment), [semantic segmentation](/ja/tasks/semantic), and [classification](/ja/tasks/classify). Additionally, it integrates seamlessly with tools like [Ultralytics Platform](https://docs.ultralytics.com/platform) for no-code model training and deployment. For more details, explore the benefits and features on our [Ultralytics YOLO page](https://www.ultralytics.com/yolo).
+
+### Link to this sectionUltralytics YOLOのためにアノテーションが正しいフォーマットであることを確認するにはどうすればよいか？#
+
+アノテーションはYOLO検出フォーマットに従う必要があります。各アノテーションファイルには、オブジェクトクラスと、画像内での[バウンディングボックス](https://www.ultralytics.com/glossary/bounding-box)座標を記述する必要があります。YOLOフォーマットにより、物体検出モデルの学習に向けた効率的で標準化されたデータ処理が保証されます。適切なアノテーションフォーマットの詳細については、[YOLO検出フォーマットガイド](/ja/datasets/detect)をご覧ください。
+
+### Link to this sectionFruit Detection以外のカスタムデータセットでK-Fold交差検証を使用できるか？#
+
+はい、アノテーションがYOLO検出フォーマットであれば、どのカスタムデータセットでもK-Fold交差検証を使用できます。データセットパスとクラスラベルをカスタムデータセット固有のものに置き換えてください。この柔軟性により、あらゆる物体検出プロジェクトにおいてK-Fold交差検証を使用した堅牢なモデル評価のメリットを享受できます。実践的な例については、特徴ベクトルの生成セクションを確認してください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+[GLglenn-jocher21](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[AMambitious-octopus1](https://github.com/ambitious-octopus)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[BUBurhan-Q1](https://github.com/Burhan-Q)[M-M-Amrollahi1](https://github.com/M-Amrollahi)[IVIvorZhu3311](https://github.com/IvorZhu331)
+
+作成日 2023年11月12日更新日 2 週間前
+
+## コメント
+
+このページの内容
+
+AIで探索

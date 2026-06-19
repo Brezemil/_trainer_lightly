@@ -1,0 +1,455 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/model-yaml-config
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-yaml-config.md)
+
+# Link to this sectionModel YAML Yapılandırma Kılavuzu#
+
+Model YAML yapılandırma dosyası, Ultralytics sinir ağları için mimari plan görevi görür. Katmanların nasıl bağlandığını, her modülün hangi parametreleri kullandığını ve tüm ağın farklı model boyutları genelinde nasıl ölçeklendiğini tanımlar.
+
+![Model YAML configuration workflow.](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yaml-configuration-guide.avif)
+
+## Link to this sectionYapılandırma Yapısı#
+
+Model YAML dosyaları, mimariyi tanımlamak için birlikte çalışan üç ana bölüme ayrılmıştır.
+
+### Link to this sectionParametreler Bölümü#
+
+**parameters** bölümü, modelin küresel özelliklerini ve ölçeklendirme davranışını belirtir:
+    
+    
+    # Parameters
+    nc: 80 # number of classes
+    scales: # compound scaling constants [depth, width, max_channels]
+        n: [0.50, 0.25, 1024] # nano: shallow layers, narrow channels
+        s: [0.50, 0.50, 1024] # small: shallow depth, standard width
+        m: [0.50, 1.00, 512] # medium: moderate depth, full width
+        l: [1.00, 1.00, 512] # large: full depth and width
+        x: [1.00, 1.50, 512] # extra-large: maximum performance
+    kpt_shape: [17, 3] # pose models only
+
+  * `nc`, modelin tahmin ettiği sınıf sayısını ayarlar.
+  * `scales`, model derinliğini, genişliğini ve maksimum kanal sayısını ayarlayarak farklı boyut varyantları (nano'dan ekstra-büyük'e kadar) üreten bileşik ölçeklendirme faktörlerini tanımlar.
+  * `kpt_shape` applies to pose models. It can be `[N, 2]` for `(x, y)` keypoints or `[N, 3]` for `(x, y, visibility)`.
+
+
+
+`scales` ile gereksiz tekrarları azalt
+
+`scales` parametresi, tek bir temel YAML dosyasından birden fazla model boyutu oluşturmanı sağlar. Örneğin, `yolo26n.yaml` yüklediğinde, Ultralytics temel `yolo26.yaml` dosyasını okur ve nano varyantını oluşturmak için `n` ölçeklendirme faktörlerini (`depth=0.50`, `width=0.25`) uygular.
+
+`nc` ve `kpt_shape` veri setine bağlıdır
+
+Veri setin farklı bir `nc` veya `kpt_shape` belirtirse, Ultralytics çalışma zamanında model yapılandırmasını veri seti YAML dosyasıyla eşleşecek şekilde otomatik olarak geçersiz kılar.
+
+### Link to this sectionBackbone (Omurga) ve Head (Baş) Mimarisi#
+
+Model mimarisi, backbone (özellik çıkarma) ve head (göreve özel) bölümlerinden oluşur:
+    
+    
+    backbone:
+        # [from, repeats, module, args]
+        - [-1, 1, Conv, [64, 3, 2]] # 0: Initial convolution
+        - [-1, 1, Conv, [128, 3, 2]] # 1: Downsample
+        - [-1, 3, C2f, [128, True]] # 2: Feature processing
+    
+    head:
+        - [-1, 1, nn.Upsample, [None, 2, nearest]] # 6: Upsample
+        - [[-1, 2], 1, Concat, [1]] # 7: Skip connection
+        - [-1, 3, C2f, [256]] # 8: Process features
+        - [[8], 1, Detect, [nc]] # 9: Detection layer
+
+## Link to this sectionKatman Belirtme Formatı#
+
+Her katman tutarlı bir desen izler: **`[from, repeats, module, args]`**
+
+Bileşen| Amaç| Örnekler  
+---|---|---  
+**from**|  Giriş bağlantıları| `-1` (önceki), `6` (katman 6), `[4, 6, 8]` (çoklu giriş)  
+**repeats**|  Tekrar sayısı| `1` (tek), `3` (3 kez tekrarla)  
+**module**|  Modül tipi| `Conv`, `C2f`, `TorchVision`, `Detect`  
+**args**|  Modül argümanları| `[64, 3, 2]` (kanallar, kernel, adım)  
+  
+### Link to this sectionBağlantı Desenleri#
+
+`from` alanı, ağın boyunca esnek veri akışı desenleri oluşturur:
+    
+    
+    - [-1, 1, Conv, [64, 3, 2]]    # Takes input from previous layer
+
+Katman İndeksleme
+
+Katmanlar 0'dan başlayarak indekslenir. Negatif indeksler önceki katmanlara referans verir (`-1` = önceki katman), pozitif indeksler ise belirli katmanlara konumlarına göre referans verir.
+
+### Link to this sectionModül Tekrarı#
+
+`repeats` parametresi daha derin ağ bölümleri oluşturur:
+    
+    
+    - [-1, 3, C2f, [128, True]] # Creates 3 consecutive C2f blocks
+    - [-1, 1, Conv, [64, 3, 2]] # Single convolution layer
+
+Gerçek tekrar sayısı, model boyutu yapılandırmandan gelen derinlik ölçeklendirme faktörü ile çarpılır.
+
+## Link to this sectionKullanılabilir Modüller#
+
+Modüller işlevselliğe göre düzenlenmiştir ve [Ultralytics modüller dizininde](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules) tanımlanmıştır. Aşağıdaki tablolar, yaygın olarak kullanılan modülleri kategoriye göre gösterir; kaynak kodda çok daha fazlası mevcuttur:
+
+### Link to this sectionTemel İşlemler#
+
+Modül| Amaç| Kaynak| Argümanlar  
+---|---|---|---  
+`Conv`| Konvolüsyon + BatchNorm + Aktivasyon| [conv.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/conv.py)| `[out_ch, kernel, stride, pad, groups]`  
+`nn.Upsample`| Uzamsal yukarı örnekleme| [PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.nn.Upsample.html)| `[size, scale_factor, mode]`  
+`nn.Identity`| Geçiş işlemi| [PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.nn.Identity.html)| `[]`  
+  
+### Link to this sectionKompozit Bloklar#
+
+Modül| Amaç| Kaynak| Argümanlar  
+---|---|---|---  
+`C2f`| 2 konvolüsyonlu CSP darboğazı| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, shortcut, expansion]`  
+`SPPF`| Uzamsal Piramit Havuzlama (hızlı)| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, kernel_size]`  
+`Concat`| Kanal bazlı birleştirme| [conv.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/conv.py)| `[dimension]`  
+  
+### Link to this sectionUzmanlaşmış Modüller#
+
+Modül| Amaç| Kaynak| Argümanlar  
+---|---|---|---  
+`TorchVision`| Herhangi bir torchvision modelini yükle| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, model_name, weights, unwrap, truncate, split]`  
+`Index`| Listeden belirli tensörü çıkar| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, index]`  
+`Detect`| YOLO tespit başlığı| [head.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/head.py)| `[nc]`  
+  
+Tam Modül Listesi
+
+Bu, mevcut modüllerin bir alt kümesini temsil eder. Modüllerin tam listesi ve parametreleri için [modüller dizinini](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules) keşfet.
+
+## Link to this sectionGelişmiş Özellikler#
+
+### Link to this sectionTorchVision Entegrasyonu#
+
+TorchVision modülü, herhangi bir [TorchVision modelinin](https://docs.pytorch.org/vision/stable/models.html) bir omurga olarak sorunsuz entegrasyonunu sağlar:
+    
+    
+    from ultralytics import YOLO
+    
+    # Model with ConvNeXt backbone
+    model = YOLO("convnext_backbone.yaml")
+    results = model.train(data="coco8.yaml", epochs=100)
+
+Çok Ölçekli Özellikler
+
+Çok ölçekli tespit için ara özellik haritaları almak istiyorsan son parametreyi `True` olarak ayarla.
+
+### Link to this sectionÖzellik Seçimi için Index Modülü#
+
+Birden fazla özellik haritası çıkaran modeller kullanırken, Index modülü belirli çıktıları seçer:
+    
+    
+    backbone:
+        - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]] # Multi-output
+    head:
+        - [0, 1, Index, [192, 4]] # Select 4th feature map (192 channels)
+        - [0, 1, Index, [384, 6]] # Select 6th feature map (384 channels)
+        - [0, 1, Index, [768, 8]] # Select 8th feature map (768 channels)
+        - [[1, 2, 3], 1, Detect, [nc]] # Multi-scale detection
+
+## Link to this sectionModül Çözünürlük Sistemi#
+
+Ultralytics'in modülleri nasıl bulduğunu ve içe aktardığını anlamak, özelleştirme için çok önemlidir:
+
+### Link to this sectionModül Arama Süreci#
+
+Ultralytics, [`parse_model`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) içinde üç katmanlı bir sistem kullanır:
+    
+    
+    # Core resolution logic
+    m = (
+        getattr(torch.nn, m[3:])
+        if "nn." in m
+        else getattr(torchvision.ops, m[16:])
+        if "torchvision.ops." in m
+        else globals()[m]
+    )
+
+  1. **PyTorch modülleri** : İsmi `'nn.'` ile başlayanlar → `torch.nn` isim alanı
+  2. **TorchVision işlemleri** : İsmi `'torchvision.ops.'` ile başlayanlar → `torchvision.ops` isim alanı
+  3. **Ultralytics modülleri** : Diğer tüm isimler → içe aktarmalar (imports) aracılığıyla genel isim alanı
+
+
+
+### Link to this sectionModül İçe Aktarma Zinciri#
+
+Standart modüller, [`tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) içindeki içe aktarmalar aracılığıyla kullanılabilir hale gelir:
+    
+    
+    from ultralytics.nn.modules import (  # noqa: F401
+        SPPF,
+        C2f,
+        Conv,
+        Detect,
+        # ... many more modules
+        Index,
+        TorchVision,
+    )
+
+## Link to this sectionÖzel Modül Entegrasyonu#
+
+### Link to this sectionKaynak Kod Değişikliği#
+
+Kaynak kodu değiştirmek, özel modüllerini entegre etmenin en esnek yoludur ancak biraz karmaşık olabilir. Özel bir modül tanımlayıp kullanmak için şu adımları izle:
+
+  1. [Hızlı Başlangıç kılavuzundaki](https://docs.ultralytics.com/quickstart#git-clone) Git clone yöntemini kullanarak **Ultralytics'i geliştirme modunda kur**.
+
+  2. **Modülünü** [`ultralytics/nn/modules/block.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py) içinde tanımla:
+         
+         class CustomBlock(nn.Module):
+             """Custom block with Conv-BatchNorm-ReLU sequence."""
+         
+             def __init__(self, c1, c2):
+                 """Initialize CustomBlock with input and output channels."""
+                 super().__init__()
+                 self.layers = nn.Sequential(nn.Conv2d(c1, c2, 3, 1, 1), nn.BatchNorm2d(c2), nn.ReLU())
+         
+             def forward(self, x):
+                 """Forward pass through the block."""
+                 return self.layers(x)
+
+  3. **Modülünü paket seviyesinde** [`ultralytics/nn/modules/__init__.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/__init__.py) içinde kullanıma aç:
+         
+         from .block import CustomBlock  # noqa makes CustomBlock available as ultralytics.nn.modules.CustomBlock
+
+  4. [`ultralytics/nn/tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) içindeki içe aktarmalara **ekle** :
+         
+         from ultralytics.nn.modules import CustomBlock  # noqa
+
+  5. **Handle special arguments** (if needed) inside [`parse_model()`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) in `ultralytics/nn/tasks.py`:
+         
+         # Add this condition in the parse_model() function
+         if m is CustomBlock:
+             c1, c2 = ch[f], args[0]  # input channels, output channels
+             args = [c1, c2, *args[1:]]
+
+  6. **Modülü** model YAML dosyan içinde **kullan** :
+         
+         # custom_model.yaml
+         nc: 1
+         backbone:
+             - [-1, 1, CustomBlock, [64]]
+         head:
+             - [-1, 1, Classify, [nc]]
+
+  7. İleri geçişin (forward pass) çalıştığından emin olmak için **FLOPs değerlerini kontrol et** :
+         
+         from ultralytics import YOLO
+         
+         model = YOLO("custom_model.yaml", task="classify")
+         model.info()  # should print non-zero FLOPs if working
+
+
+
+
+## Link to this sectionÖrnek Yapılandırmalar#
+
+### Link to this sectionTemel Algılama Modeli#
+    
+    
+    # Simple YOLO detection model
+    nc: 80
+    scales:
+        n: [0.33, 0.25, 1024]
+    
+    backbone:
+        - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+        - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+        - [-1, 3, C2f, [128, True]] # 2
+        - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+        - [-1, 6, C2f, [256, True]] # 4
+        - [-1, 1, SPPF, [256, 5]] # 5
+    
+    head:
+        - [-1, 1, Conv, [256, 3, 1]] # 6
+        - [[6], 1, Detect, [nc]] # 7
+
+### Link to this sectionTorchVision Backbone Modeli#
+    
+    
+    # ConvNeXt backbone with YOLO head
+    nc: 80
+    
+    backbone:
+        - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]]
+    
+    head:
+        - [0, 1, Index, [192, 4]] # P3 features
+        - [0, 1, Index, [384, 6]] # P4 features
+        - [0, 1, Index, [768, 8]] # P5 features
+        - [[1, 2, 3], 1, Detect, [nc]] # Multi-scale detection
+
+### Link to this sectionSınıflandırma Modeli#
+    
+    
+    # Simple classification model
+    nc: 1000
+    
+    backbone:
+        - [-1, 1, Conv, [64, 7, 2, 3]]
+        - [-1, 1, nn.MaxPool2d, [3, 2, 1]]
+        - [-1, 4, C2f, [64, True]]
+        - [-1, 1, Conv, [128, 3, 2]]
+        - [-1, 8, C2f, [128, True]]
+        - [-1, 1, nn.AdaptiveAvgPool2d, [1]]
+    
+    head:
+        - [-1, 1, Classify, [nc]]
+
+## Link to this sectionEn İyi Uygulamalar#
+
+### Link to this sectionMimari Tasarım İpuçları#
+
+**Basit Başla** : Özelleştirmeye başlamadan önce kanıtlanmış mimarilerle başla. Mevcut YOLO yapılandırmalarını şablon olarak kullan ve sıfırdan oluşturmak yerine kademeli olarak değişiklik yap.
+
+**Kademeli Test Et** : Her değişiklik adımını doğrula. Bir sonraki değişikliğe geçmeden önce her seferinde tek bir özel modül ekle ve çalıştığını doğrula.
+
+**Kanalları İzle** : Bağlı katmanlar arasındaki kanal boyutlarının eşleştiğinden emin ol. Bir katmanın çıktı kanalları (`c2`), dizideki bir sonraki katmanın giriş kanalları (`c1`) ile eşleşmelidir.
+
+**Atlama Bağlantılarını (Skip Connections) Kullan** : `[[-1, N], 1, Concat, [1]]` kalıplarıyla özellik yeniden kullanımından yararlan. Bu bağlantılar gradyan akışına yardımcı olur ve modelin farklı ölçeklerden gelen özellikleri birleştirmesini sağlar.
+
+**Uygun Şekilde Ölçeklendir** : Hesaplama kısıtlamalarına göre model ölçeklerini seç. Uç cihazlar için nano (`n`), dengeli performans için small (`s`) ve maksimum doğruluk için daha büyük ölçekler (`m`, `l`, `x`) kullan.
+
+### Link to this sectionPerformans Hususları#
+
+**Derinlik vs Genişlik** : Derin ağlar, çoklu dönüşüm katmanları aracılığıyla karmaşık hiyerarşik özellikleri yakalarken, geniş ağlar her katmanda paralel olarak daha fazla bilgi işler. Görevinin karmaşıklığına göre bunları dengele.
+
+**Atlama Bağlantıları** : Eğitim sırasında gradyan akışını iyileştirir ve ağ genelinde özelliklerin yeniden kullanılmasını sağlar. Gradyanların kaybolmasını önlemek için özellikle daha derin mimarilerde önemlidirler.
+
+**Darboğaz (Bottleneck) Blokları** : Modelin ifade gücünü korurken hesaplama maliyetini düşürür. `C2f` gibi modüller, özellik öğrenme kapasitesini korurken standart evrişimlerden daha az parametre kullanır.
+
+**Çok Ölçekli Özellikler** : Aynı görüntüdeki farklı boyutlardaki nesneleri algılamak için gereklidir. Farklı ölçeklerde birden fazla algılama başlığına sahip Feature Pyramid Network (FPN) kalıplarını kullan.
+
+## Link to this sectionSorun Giderme#
+
+### Link to this sectionYaygın Sorunlar#
+
+Sorun| Neden| Çözüm  
+---|---|---  
+`KeyError: 'ModuleName'`| Modül içe aktarılmamış| [`tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) içindeki içe aktarmalara ekle  
+Kanal boyutu uyuşmazlığı| Hatalı `args` tanımı| Giriş/çıkış kanalı uyumluluğunu doğrula  
+`AttributeError: 'int' object has no attribute`| Yanlış argüman türü| Doğru argüman türleri için modül dokümantasyonunu kontrol et  
+Model oluşturulamıyor| Geçersiz `from` referansı| Referans verilen katmanların var olduğundan emin ol  
+  
+### Link to this sectionHata Ayıklama İpuçları#
+
+Özel mimariler geliştirirken sistematik hata ayıklama, sorunları erkenden tespit etmene yardımcı olur:
+
+**Test İçin Identity Head Kullan**
+
+Backbone sorunlarını yalıtmak için karmaşık başlıkları `nn.Identity` ile değiştir:
+    
+    
+    nc: 1
+    backbone:
+        - [-1, 1, CustomBlock, [64]]
+    head:
+        - [-1, 1, nn.Identity, []] # Pass-through for debugging
+
+Bu, backbone çıktılarını doğrudan incelemene olanak tanır:
+    
+    
+    import torch
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("debug_model.yaml")
+    output = model.model(torch.randn(1, 3, 640, 640))
+    print(f"Output shape: {output.shape}")  # Should match expected dimensions
+
+**Model Mimarisi İncelemesi**
+
+FLOPs sayısını kontrol etmek ve her katmanı yazdırmak, özel model yapılandırmanla ilgili sorunları gidermene de yardımcı olabilir. Geçerli bir model için FLOPs sayısı sıfır olmamalıdır. Eğer sıfırsa, büyük olasılıkla ileri geçişte bir sorun vardır. Basit bir ileri geçişi çalıştırmak, karşılaşılan tam hatayı gösterecektir.
+    
+    
+    from ultralytics import YOLO
+    
+    # Build model with verbose output to see layer details
+    model = YOLO("debug_model.yaml", verbose=True)
+    
+    # Check model FLOPs. Failed forward pass causes 0 FLOPs.
+    model.info()
+    
+    # Inspect individual layers
+    for i, layer in enumerate(model.model.model):
+        print(f"Layer {i}: {layer}")
+
+**Adım Adım Doğrulama**
+
+  1. **Minimal başla** : Önce mümkün olan en basit mimariyle test et
+  2. **Kademeli ekle** : Karmaşıklığı katman katman oluştur
+  3. **Boyutları kontrol et** : Kanal ve uzamsal boyut uyumluluğunu doğrula
+  4. **Ölçeklendirmeyi doğrula** : Farklı model ölçekleriyle (`n`, `s`, `m`) test et
+
+
+
+## Link to this sectionSSS#
+
+### Link to this sectionModelimdeki sınıf sayısını nasıl değiştirebilirim?#
+
+YAML dosyanın en üstündeki `nc` parametresini, veri setindeki sınıf sayısına göre ayarla.
+    
+    
+    nc: 5 # 5 classes
+
+### Link to this sectionModel YAML dosyamda özel bir backbone kullanabilir miyim?#
+
+Evet. TorchVision backbone'ları dahil olmak üzere desteklenen herhangi bir modülü kullanabilir veya kendi özel modülünü tanımlayıp Özel Modül Entegrasyonu bölümünde açıklandığı gibi içe aktarabilirsin.
+
+### Link to this sectionModelimi farklı boyutlar (nano, small, medium vb.) için nasıl ölçeklendirebilirim?#
+
+Derinlik, genişlik ve maksimum kanallar için ölçeklendirme faktörlerini tanımlamak adına YAML'ındaki `scales` bölümünü kullan. Temel YAML dosyasını, dosya adına ölçek ekleyerek (örneğin `yolo26n.yaml`) yüklediğinde model bunları otomatik olarak uygulayacaktır.
+
+### Link to this section`[from, repeats, module, args]` biçimi ne anlama geliyor?#
+
+Bu biçim, her katmanın nasıl oluşturulduğunu belirtir:
+
+  * `from`: giriş kaynağı (kaynakları)
+  * `repeats`: modülün kaç kez tekrarlanacağı
+  * `module`: katman türü
+  * `args`: modül için argümanlar
+
+
+
+### Link to this sectionKanal uyuşmazlığı hatalarını nasıl gideririm?#
+
+Bir katmanın çıktı kanallarının, bir sonrakinin beklenen giriş kanallarıyla eşleştiğini kontrol et. Modelinin mimarisini incelemek için `print(model.model.model)` kullan.
+
+### Link to this sectionKullanılabilir modüllerin ve argümanlarının listesini nerede bulabilirim?#
+
+Tüm mevcut modüller ve argümanları için [`ultralytics/nn/modules` dizinindeki](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules) kaynak kodunu kontrol et.
+
+### Link to this sectionYAML yapılandırmama özel bir modülü nasıl eklerim?#
+
+Modülünü kaynak kodda tanımla, Kaynak Kod Değişikliği bölümünde gösterildiği gibi içe aktar ve YAML dosyan içinde ismine göre referans ver.
+
+### Link to this sectionÖzel bir YAML ile önceden eğitilmiş ağırlıkları kullanabilir miyim?#
+
+Evet, önceden eğitilmiş bir kontrol noktasından (checkpoint) ağırlıkları yüklemek için `model.load("path/to/weights")` kullanabilirsin. Ancak, yalnızca eşleşen katmanlara ait ağırlıklar başarıyla yüklenecektir.
+
+### Link to this sectionModel yapılandırmamı nasıl doğrularım?#
+
+FLOPs sayısının sıfır olup olmadığını kontrol etmek için `model.info()` kullan. Geçerli bir model, sıfır olmayan bir FLOPs sayısı göstermelidir. Eğer sıfırsa, sorunu bulmak için Hata Ayıklama İpuçları bölümündeki önerileri izle.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-yaml-config.md)
+
+[GLglenn-jocher7](https://github.com/glenn-jocher)[Y-Y-T-G2](https://github.com/Y-T-G)[RIRizwanMunawar1](https://github.com/RizwanMunawar)
+
+Oluşturulma 16 Eyl 2025Güncellenme 2 hafta önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

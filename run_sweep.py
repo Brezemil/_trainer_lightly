@@ -1,0 +1,358 @@
+"""
+Multi-Stage YOLO/LTDETR Hyperparameter Optimization (HPO) Sweep Runner.
+
+This script coordinates both HPO Phase 1 (Augmentation tuning) and Phase 2 (Learning HPO)
+runs using Weights & Biases (W&B) and Albumentations for both Ultralytics and lightly_train.
+"""
+
+import wandb
+import os
+import sys
+import gc
+import torch
+import warnings
+from config import PipelineConfig
+from eval_utils import (
+    build_albumentations_pipeline,
+    evaluate_model_coco,
+    get_huggingface_backbone,
+)
+
+# Suppress python warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*torchvision.*")
+warnings.filterwarnings("ignore", category=FutureWarning)
+os.environ["PYTHONWARNINGS"] = "ignore"
+
+# Model baseline mapping for lightly counterparts
+LIGHTLY_BASELINE_MAP = {
+    "yolo11n.pt": "ultralytics/yolo11n.yaml",
+    "yolo26s.pt": "ultralytics/yolo26s.yaml",
+    "yolo26n.pt": "ultralytics/yolo26n.yaml",
+    "rtdetr-l.pt": "dinov3/convnext-large-ltdetr-coco",
+}
+
+
+def set_reproducibility(seed: int) -> None:
+    """
+    Sets seeds for Python, NumPy, and PyTorch across CPU and CUDA backends
+    to guarantee strict mathematical reproducibility of runs.
+    """
+    import random
+    import numpy as np
+    import torch
+
+    random.seed(seed)
+    np.random.seed(seed)
+    try:
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.manual_seed(seed)
+                torch.cuda.manual_seed_all(seed)
+            except Exception as e:
+                print(
+                    f"Warning: Could not seed CUDA generator: {e}. If a prior CUDA OOM occurred, this is expected."
+                )
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+    except Exception as e:
+        print(
+            f"Warning: Could not set PyTorch seeds: {e}. If a prior CUDA OOM occurred, this is expected."
+        )
+
+
+def main() -> None:
+    # Set reproducibility seed at start of sweep trial agent to lock weight initialization
+    set_reproducibility(42)
+
+    cfg = PipelineConfig()
+
+    # Enable W&B integration in Ultralytics settings
+    from ultralytics import settings
+
+    settings.update({"wandb": True})
+
+    # Initialize the W&B run (agent injects current sweep parameters)
+    run = wandb.init(project=cfg.project, entity=cfg.entity)
+    wb_config = dict(run.config)
+    phase = wb_config.get("phase", "production")
+
+    # Decide which backend to use based on the model_variant
+    model_variant = wb_config.get("model_variant", cfg.model_variant)
+    # Let's support both backends dynamically
+    backend = (
+        "lightly"
+        if "dinov" in model_variant.lower()
+        or "ltdetr" in model_variant.lower()
+        or model_variant.startswith("facebook/")
+        else "ultralytics"
+    )
+    if wb_config.get("backend"):
+        backend = wb_config.get("backend")
+
+    print("=" * 60)
+    print(f"Sweep run initiated for Phase: {phase} | Backend: {backend}")
+    print(f"Model: {model_variant} | Dataset: {cfg.dataset_path}")
+    print("=" * 60)
+
+    # 1. Setup shared/fixed arguments
+    imgsz = cfg.image_size
+    epochs = cfg.sweep_epochs
+    batch_size = cfg.batch_size
+    device = cfg.device
+    workers = cfg.workers
+    fraction = cfg.fraction
+    amp = cfg.amp
+
+    # 2. Setup Phase 1 vs Phase 2 sweep parameters
+    if phase == "augmentation":
+        # Phase 1: Tune augmentations. Keep learning hyperparameters locked to baseline values.
+        optimizer_name = "MuSGD"
+        lr0_val = 0.0054
+        lrf_val = 0.0495
+        momentum_val = 0.947
+        weight_decay_val = 0.00064
+        warmup_epochs_val = 0.98
+
+        # Read augmentations config from sweep config
+        active_aug_config = wb_config
+    else:
+        # Phase 2: Tune HPO. Retrieve the best augmentations from a previous sweep.
+        prev_sweep_id = wb_config.get("prev_aug_sweep_id")
+        if not prev_sweep_id:
+            raise ValueError(
+                "Phase 2 HPO requires 'prev_aug_sweep_id' to load optimal augmentations."
+            )
+
+        best_aug_config = cfg.get_best_sweep_config(
+            prev_sweep_id, cfg.project, cfg.entity
+        )
+        active_aug_config = best_aug_config
+
+        # Read learning parameters from current sweep config
+        optimizer_name = wb_config.get("optimizer", "AdamW")
+        lr0_val = float(wb_config.get("lr0", 0.001))
+        lrf_val = float(wb_config.get("lrf", 0.01))
+        momentum_val = float(wb_config.get("momentum", 0.937))
+        weight_decay_val = float(wb_config.get("weight_decay", 0.0005))
+        warmup_epochs_val = float(wb_config.get("warmup_epochs", 1.0))
+
+    eval_model = None
+    model = None
+
+    # 3. Train using selected backend
+    try:
+        if backend == "ultralytics":
+            is_rtdetr = "rtdetr" in model_variant.lower()
+            if is_rtdetr:
+                from ultralytics import RTDETR
+
+                model = RTDETR(model_variant)
+            else:
+                from ultralytics import YOLO
+
+                model = YOLO(model_variant)
+
+            train_kwargs = {
+                "data": cfg.dataset_path,
+                "epochs": epochs,
+                "imgsz": imgsz,
+                "device": device,
+                "batch": batch_size,
+                "workers": workers,
+                "fraction": fraction,
+                "seed": 42,
+                "exist_ok": True,
+                "amp": amp,
+            }
+            if cfg.fixed_loss:
+                train_kwargs.update(cfg.fixed_loss)
+
+            # Disable default YOLO spatial/color augmentations
+            train_kwargs.update(
+                {
+                    "hsv_h": 0.0,
+                    "hsv_s": 0.0,
+                    "hsv_v": 0.0,
+                    "degrees": 0.0,
+                    "fliplr": 0.0,
+                    "flipud": 0.0,
+                    "scale": 0.0,
+                    "translate": 0.0,
+                    "shear": 0.0,
+                    "bgr": 0.0,
+                    "close_mosaic": 15,
+                }
+            )
+
+            if not is_rtdetr:
+                train_kwargs.update(
+                    {
+                        "mosaic": active_aug_config.get("mosaic", 0.0),
+                        "mixup": active_aug_config.get("mixup", 0.0),
+                        "copy_paste": active_aug_config.get("copy_paste", 0.0),
+                    }
+                )
+
+            # Build and inject custom Albumentations pipeline
+            train_kwargs["augmentations"] = build_albumentations_pipeline(
+                active_aug_config, imgsz
+            )
+
+            # Inject learning parameters
+            train_kwargs.update(
+                {
+                    "optimizer": optimizer_name,
+                    "lr0": lr0_val,
+                    "lrf": lrf_val,
+                    "momentum": momentum_val,
+                    "weight_decay": weight_decay_val,
+                    "warmup_epochs": warmup_epochs_val,
+                }
+            )
+
+            # Run YOLO training
+            model.train(**train_kwargs)
+            eval_model = model
+
+        else:
+            # --- lightly_train Training Backend ---
+            import lightly_train
+
+            if model_variant.startswith("facebook/"):
+                lightly_model_name = "dinov3/vitl16-ltdetr"
+                hf_weights = get_huggingface_backbone(model_variant)
+            else:
+                lightly_model_name = LIGHTLY_BASELINE_MAP.get(
+                    model_variant,
+                    f"ultralytics/{model_variant.replace('.pt', '.yaml')}",
+                )
+                hf_weights = None
+
+            accel = "cpu"
+            device_arg = "auto"
+            if isinstance(device, int) or (
+                isinstance(device, str) and device.isdigit()
+            ):
+                accel = "gpu"
+                device_arg = [int(device)]
+            elif isinstance(device, str) and "cpu" not in device.lower():
+                accel = "gpu"
+                device_arg = "auto"
+
+            model_args = {
+                "lr": lr0_val,
+                "weight_decay": weight_decay_val,
+                "scheduler_name": "flat-cosine",
+            }
+            if epochs < 2000:
+                model_args["lr_warmup_steps"] = 0
+                model_args["ema_warmup_steps"] = 0
+                model_args["scheduler_flat_steps"] = 0
+                model_args["scheduler_no_aug_steps"] = 0
+            if hf_weights:
+                model_args["backbone_weights"] = hf_weights
+
+            transform_args = {
+                "image_size": (imgsz, imgsz),
+                "random_flip": {
+                    "horizontal_prob": float(
+                        active_aug_config.get("albu_spatial_p", 0.5)
+                    ),
+                    "vertical_prob": float(
+                        active_aug_config.get("albu_spatial_p", 0.5)
+                    ),
+                },
+                "color_jitter": {
+                    "prob": float(active_aug_config.get("albu_color_p", 0.5)),
+                    "strength": 1.0,
+                    "brightness": 0.2,
+                    "contrast": 0.2,
+                    "saturation": 0.2,
+                    "hue": 0.05,
+                },
+                "random_rotate_90": {
+                    "prob": float(active_aug_config.get("albu_rotate90_p", 0.5))
+                },
+            }
+
+            out_run_dir = os.path.join(cfg.runs_dir, f"sweep_run_{run.id}")
+
+            # Run training
+            import yaml
+
+            with open(cfg.dataset_path, "r") as f:
+                data_dict = yaml.safe_load(f)
+            data_dict["format"] = "yolo"
+
+            if cfg.entity:
+                os.environ["WANDB_ENTITY"] = cfg.entity
+            lightly_train.train_object_detection(
+                out=out_run_dir,
+                model=lightly_model_name,
+                data=data_dict,
+                steps=epochs,
+                batch_size=batch_size,
+                num_workers=workers,
+                devices=device_arg,
+                accelerator=accel,
+                precision="16-mixed" if amp else "32-true",
+                seed=42,
+                overwrite=True,
+                model_args=model_args,
+                transform_args=transform_args,
+                logger_args={
+                    "wandb": {"project": cfg.project, "name": f"sweep_run_{run.id}"}
+                },
+            )
+
+            # Load best checkpoint for validation evaluation
+            best_ckpt = os.path.join(out_run_dir, "exported_models", "exported_best.pt")
+            if not os.path.exists(best_ckpt):
+                best_ckpt = os.path.join(
+                    out_run_dir, "exported_models", "exported_last.pt"
+                )
+
+            eval_model = lightly_train.load_model(best_ckpt)
+
+        # 4. Strict COCO Evaluation
+        metrics = evaluate_model_coco(
+            model_path_or_model=eval_model,
+            dataset_yaml_path=cfg.dataset_path,
+            split="val",  # sweeps tune based on validation set
+            eval_results_dir=cfg.eval_results_dir,
+            run_name=f"sweep_run_{run.id}",
+            device=device,
+            batch_size=batch_size,
+            imgsz=imgsz,
+            workers=workers,
+        )
+
+        # Log COCOeval validation metrics to W&B
+        # W&B Sweep metrics controller reads "metrics/AP"
+        wandb.log({f"metrics/{k}": v for k, v in metrics["metrics"].items()})
+
+        # Automatically tag top-performing runs on the W&B dashboard for easy filtering
+        val_map = metrics["metrics"].get("AP", 0.0)
+        if val_map > 0.5:
+            run.tags = run.tags + ("top_performer",) if run.tags else ("top_performer",)
+
+    except Exception as e:
+        print(f"Error occurred during sweep training run: {e}", file=sys.stderr)
+    finally:
+        wandb.finish()
+
+        # Free GPU memory
+        eval_model = None
+        model = None
+        gc.collect()
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()

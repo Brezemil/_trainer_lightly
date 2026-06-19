@@ -1,0 +1,248 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/coral-edge-tpu-on-raspberry-pi
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coral-edge-tpu-on-raspberry-pi.md)
+
+# Link to this sectionRaspberry Pi üzerinde Coral Edge TPU ile Ultralytics YOLO26 nasıl çalıştırılır#
+
+![Raspberry Pi with Edge TPU accelerator](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/edge-tpu-usb-accelerator-and-pi.avif)
+
+Bir [Raspberry Pi](/tr/guides/raspberry-pi), uçta bilgisayarlı görü çalıştırmak için güç verimli ve uygun maliyetli bir platformdur, ancak cihaz üzerindeki çıkarım [ONNX](/tr/integrations/onnx) veya [OpenVINO](/tr/integrations/openvino) gibi optimize edilmiş formatlarla bile yavaştır. Pi'yi bir Coral Edge TPU yardımcı işlemcisi ile eşleştirmek, çıkarımı özel bir donanıma devrederek süreci önemli ölçüde hızlandırır. Bu kılavuz sana çalışma zamanının nasıl kurulacağını, bir Ultralytics YOLO26 modelinin Edge TPU formatına nasıl aktarılacağını ve hızlandırılmış çıkarımın nasıl çalıştırılacağını gösterir.
+
+  
+
+
+  
+**Watch:** How to Run Inference on Raspberry Pi using Google Coral Edge TPU 
+
+## Link to this sectionNeden Coral Edge TPU Kullanmalısın?#
+
+Coral Edge TPU, sistemine bir Edge TPU yardımcı işlemcisi ekleyen kompakt bir cihazdır ve TensorFlow Lite modelleri için düşük güçlü, yüksek performanslı makine öğrenimi çıkarımı sağlar. Yalnızca CPU'nun yetersiz kaldığı gömülü ve mobil dağıtımlar için harika bir çözümdür:
+
+  * **Daha hızlı çıkarım** — Edge TPU, optimize edilmiş modelleri Raspberry Pi CPU'sunun tek başına elde edebileceğinden çok daha hızlı bir şekilde hızlandırır.
+  * **Düşük güç tüketimi** — Watt başına yüksek iş hacmi sağlar, pil veya güneş enerjisi ile çalışan dağıtımlar için idealdir.
+  * **Tak-çalıştır** — [USB Accelerator](https://developers.google.com/coral) USB 3.0 üzerinden bağlanır, bu nedenle fazladan donanım entegrasyonu gerekmez.
+
+
+
+Mevcut TensorFlow Lite için güncellenmiş çalışma zamanı
+
+[Resmi Coral kılavuzu](https://gweb-coral-full.uc.r.appspot.com/docs/accelerator/get-started/) eskimiştir: orijinal Coral çalışma zamanı sürümleri artık mevcut TensorFlow Lite çalışma zamanı sürümleriyle çalışmamaktadır ve proje 2021 ile 2025 arasında hiçbir güncelleme almamıştır. Bu kılavuz, aktif olarak bakımı yapılan bir Edge TPU çalışma zamanı ve en son `tflite-runtime` sürümünü kullanır, böylece hızlandırıcı mevcut bir Raspberry Pi OS kurulumunda çalışır.
+
+## Link to this sectionÖn koşullar#
+
+  * [Raspberry Pi 4B](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/) (2GB veya daha fazlası önerilir) veya [Raspberry Pi 5](https://www.raspberrypi.com/products/raspberry-pi-5/) (Önerilir)
+  * Masaüstü yüklü [Raspberry Pi OS](https://www.raspberrypi.com/software/) Bullseye/Bookworm (64-bit) (Önerilir)
+  * [Coral USB Accelerator](https://developers.google.com/coral)
+  * Modeli dışa aktarmak için ARM olmayan bir platform (Google Colab, bir x86_64 Linux makinesi veya [Ultralytics Docker container](/tr/guides/docker-quickstart)), çünkü Edge TPU derleyicisi ARM üzerinde mevcut değildir
+
+
+
+Bu kılavuz, halihazırda yüklü `ultralytics` ve bağımlılıkları ile çalışan bir Raspberry Pi OS kurulumuna sahip olduğunu varsayar. Değilse, önce [başlangıç kılavuzunu](/tr/quickstart) takip et.
+
+Ön koşullar hazır olduğunda, iş akışı üç adımdan oluşur: Pi üzerinde Edge TPU çalışma zamanını kurmak, ARM olmayan bir makinede modelini dışa aktarmak ve tekrar Pi üzerinde çıkarımı çalıştırmak.
+
+## Link to this sectionEdge TPU Çalışma Zamanını Kur#
+
+Çalışma zamanı birkaç farklı sürümle gelir, bu yüzden işletim sisteminle eşleşeni seç. Yüksek frekanslı sürüm, daha iyi performans için Edge TPU'yu daha yüksek saat hızında çalıştırır, ancak bu termal daralmaya neden olabilir — eğer bunu seçersen bir tür soğutma sistemi kullan.
+
+Raspberry Pi OS| Yüksek frekans modu| İndirilecek sürüm  
+---|---|---  
+Bullseye 32bit| Hayır| `libedgetpu1-std_ ... .bullseye_armhf.deb`  
+Bullseye 64bit| Hayır| `libedgetpu1-std_ ... .bullseye_arm64.deb`  
+Bullseye 32bit| Evet| `libedgetpu1-max_ ... .bullseye_armhf.deb`  
+Bullseye 64bit| Evet| `libedgetpu1-max_ ... .bullseye_arm64.deb`  
+Bookworm 32bit| Hayır| `libedgetpu1-std_ ... .bookworm_armhf.deb`  
+Bookworm 64bit| Hayır| `libedgetpu1-std_ ... .bookworm_arm64.deb`  
+Bookworm 32bit| Evet| `libedgetpu1-max_ ... .bookworm_armhf.deb`  
+Bookworm 64bit| Evet| `libedgetpu1-max_ ... .bookworm_arm64.deb`  
+  
+[En son sürümü buradan indir](https://github.com/feranick/libedgetpu/releases), ardından `.deb` paketini kur:
+    
+    
+    sudo dpkg -i path/to/package.deb
+
+Çalışma zamanını kurduktan sonra, Coral Edge TPU'nu Raspberry Pi üzerindeki bir USB 3.0 portuna tak ki yeni `udev` kuralı devreye girebilsin.
+
+Önce mevcut çalışma zamanını kaldır
+
+Eğer halihazırda Coral Edge TPU çalışma zamanı yüklüyse, yeni bir sürüm kurmadan önce onu kaldır.
+    
+    
+    # If you installed the standard version
+    sudo apt remove libedgetpu1-std
+    
+    # If you installed the high-frequency version
+    sudo apt remove libedgetpu1-max
+
+## Link to this sectionModelini Edge TPU Formatına Aktar#
+
+Edge TPU'yu kullanmak için modelini uyumlu bir formata dönüştür. Dışa aktarma işlemini ARM olmayan bir platformda yap — Google Colab, bir x86_64 Linux makinesi, resmi [Ultralytics Docker container](/tr/guides/docker-quickstart) veya [Ultralytics Platform](/tr/platform/quickstart) — çünkü Edge TPU derleyicisi ARM üzerinde mevcut değildir. Kullanılabilir argümanlar için [Dışa aktarma moduna](/tr/modes/export) bak.
+
+Modeli dışa aktarma
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/model.pt")  # Load an official model or custom model
+    
+    # Export the model
+    model.export(format="edgetpu")
+
+Dışa aktarılan model `<model_name>_saved_model/` klasörüne `<model_name>_full_integer_quant_edgetpu.tflite` olarak kaydedilir.
+
+`_edgetpu.tflite` son ekini koru
+
+Dosya adı mutlaka `_edgetpu.tflite` ile bitmelidir. Başka bir şekilde yeniden adlandırırsan, Ultralytics onu Edge TPU'yu algılamak yerine düz bir TensorFlow Lite modeli olarak yükleyecektir ve hızlandırıcı kullanılmayacaktır.
+
+## Link to this sectionEdge TPU üzerinde Çıkarımı Çalıştır#
+
+Modeli çalıştırmadan önce, Raspberry Pi üzerine gerekli kütüphaneleri kur. Eğer TensorFlow halihazırda yüklüyse, önce onu kaldır:
+    
+    
+    pip uninstall tensorflow tensorflow-aarch64
+
+Ardından `tflite-runtime` kur veya güncelle:
+    
+    
+    pip install -U tflite-runtime
+
+Şimdi çıkarımı çalıştırabilirsin:
+
+Modeli çalıştırma
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/<model_name>_full_integer_quant_edgetpu.tflite")  # Load an official model or custom model
+    
+    # Run Prediction
+    model.predict("path/to/source.png")
+
+Tahmin moduyla ilgili tüm detayları [Tahmin](/tr/modes/predict) sayfasında bulabilirsin.
+
+Birden fazla Edge TPU ile çıkarım
+
+Eğer birden fazla Edge TPU'n varsa, `device` argümanı ile belirli bir tanesini seçebilirsin.
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/<model_name>_full_integer_quant_edgetpu.tflite")  # Load an official model or custom model
+    
+    # Run Prediction
+    model.predict("path/to/source.png")  # Inference defaults to the first TPU
+    
+    model.predict("path/to/source.png", device="tpu:0")  # Select the first TPU
+    
+    model.predict("path/to/source.png", device="tpu:1")  # Select the second TPU
+
+## Link to this sectionKıyaslamalar#
+
+Aşağıdaki rakamlar Raspberry Pi OS Bookworm 64-bit ve bir USB Coral Edge TPU ile ölçülmüştür. Sadece çıkarım süresini gösterir (ön/son işleme hariç) ve Edge TPU'nun Pi modelleri ve modları arasında sağladığı hızlanma için göreceli bir referans görevi görür.
+
+Bu sayılar hakkında
+
+Bu karşılaştırmalar YOLOv8 modelleri ile kaydedilmiştir. Mutlak çıkarım süreleri model sürümüne ve görüntü boyutuna göre değişir, ancak Pi modelleri ve saat modları arasındaki göreceli hız artışları sabittir.
+
+Görüntü Boyutu| Model| Standart Çıkarım Süresi (ms)| Yüksek Frekanslı Çıkarım Süresi (ms)  
+---|---|---|---  
+320| YOLOv8n| 32.2| 26.7  
+320| YOLOv8s| 47.1| 39.8  
+512| YOLOv8n| 73.5| 60.7  
+512| YOLOv8s| 149.6| 125.3  
+  
+Ortalama olarak:
+
+  * Raspberry Pi 5, standart modda Raspberry Pi 4B'den %22 daha hızlıdır.
+  * Raspberry Pi 5, yüksek frekanslı modda Raspberry Pi 4B'den %30.2 daha hızlıdır.
+  * Yüksek frekanslı mod, standart moddan %28.4 daha hızlıdır.
+
+
+
+## Link to this sectionSonuç#
+
+Bir Coral Edge TPU, Raspberry Pi'yi Ultralytics YOLO26 için yetenekli, düşük güçlü bir çıkarım cihazına dönüştürür. Modelini ARM olmayan bir makinede dışa aktar, `_edgetpu.tflite` son ekini koru ve hızlandırılmış uç çıkarımı elde etmek için Pi üzerinde `tflite-runtime` ile çalıştır. Daha fazla dağıtım seçeneği için [Raspberry Pi](/tr/guides/raspberry-pi) kılavuzuna bak.
+
+## Link to this sectionSSS#
+
+### Link to this sectionCoral Edge TPU nedir ve Raspberry Pi'nin performansını Ultralytics YOLO26 ile nasıl artırır?#
+
+Coral Edge TPU, sistemine bir Edge TPU yardımcı işlemcisi ekleyen kompakt bir cihazdır. Bu yardımcı işlemci, özellikle TensorFlow Lite modelleri için optimize edilmiş düşük güçlü, yüksek performanslı makine öğrenimi çıkarımını mümkün kılar. Raspberry Pi üzerinde, çıkarımı CPU'nun tek başına elde edebileceğinin çok ötesine taşır, bu da Ultralytics YOLO26 modelleri için performansı önemli ölçüde artırır.
+
+### Link to this sectionRaspberry Pi üzerinde Coral Edge TPU çalışma zamanını nasıl kurarım?#
+
+Download the appropriate `.deb` package for your Raspberry Pi OS version from [this link](https://github.com/feranick/libedgetpu/releases), then install it:
+    
+    
+    sudo dpkg -i path/to/package.deb
+
+Edge TPU Çalışma Zamanını Kur bölümündeki adımları takip ederek önceki Coral Edge TPU çalışma zamanı sürümlerini kaldırdığından emin ol.
+
+### Link to this sectionUltralytics YOLO26 modelimi Coral Edge TPU ile uyumlu olacak şekilde dışa aktarabilir miyim?#
+
+Evet. Dışa aktarma işlemini Google Colab, bir x86_64 Linux makinesi veya [Ultralytics Docker container](/tr/guides/docker-quickstart) üzerinde çalıştır; ayrıca [Ultralytics Platform](/tr/platform/quickstart) da kullanabilirsin. Python ve CLI ile nasıl dışa aktarılacağı aşağıdadır:
+
+Modeli dışa aktarma
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/model.pt")  # Load an official model or custom model
+    
+    # Export the model
+    model.export(format="edgetpu")
+
+Daha fazla bilgi için [Dışa aktarma modu](/tr/modes/export) belgelerine başvur.
+
+### Link to this sectionRaspberry Pi'mde TensorFlow halihazırda yüklüyse ancak bunun yerine tflite-runtime kullanmak istiyorsam ne yapmalıyım?#
+
+Eğer TensorFlow yüklüyse ve `tflite-runtime` sürümüne geçmen gerekiyorsa, önce TensorFlow'u kaldır:
+    
+    
+    pip uninstall tensorflow tensorflow-aarch64
+
+Ardından `tflite-runtime` kur veya güncelle:
+    
+    
+    pip install -U tflite-runtime
+
+Detaylı talimatlar için Edge TPU Üzerinde Çıkarımı Çalıştır bölümüne bak.
+
+### Link to this sectionCoral Edge TPU kullanarak Raspberry Pi üzerinde dışa aktarılmış bir YOLO26 modeli ile nasıl çıkarım yaparım?#
+
+YOLO26 modelini Edge TPU uyumlu bir formata aktardıktan sonra, aşağıdaki kod parçacıklarıyla çıkarımı çalıştır. Model dosyası, Ultralytics'in onu Edge TPU üzerinde yüklemesi için `_edgetpu.tflite` son ekini korumalıdır:
+
+Modeli çalıştırma
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/<model_name>_full_integer_quant_edgetpu.tflite")  # Load an official model or custom model
+    
+    # Run Prediction
+    model.predict("path/to/source.png")
+
+Tahmin moduyla ilgili kapsamlı detaylar [Tahmin](/tr/modes/predict) sayfasındadır.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coral-edge-tpu-on-raspberry-pi.md)
+
+[GLglenn-jocher19](https://github.com/glenn-jocher)[RIRizwanMunawar3](https://github.com/RizwanMunawar)[SKSkillnoob2](https://github.com/Skillnoob)[RAraimbekovm1](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)[LAlalayants1](https://github.com/lalayants)[JKjk4e1](https://github.com/jk4e)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+Oluşturulma 12 Şub 2024Güncellenme geçen hafta
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

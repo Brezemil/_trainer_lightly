@@ -1,0 +1,210 @@
+---
+source_url: https://docs.ultralytics.com/ko/yolov5/tutorials/multi-gpu-training
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/multi-gpu-training.md)
+
+# Link to this sectionYOLOv5를 사용한 멀티 GPU 학습#
+
+이 가이드는 단일 머신 또는 여러 머신에서 **여러 개의** GPU를 사용하여 YOLOv5를 학습하는 방법을 설명합니다.
+
+## Link to this section시작하기 전에#
+
+Clone repo and install [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) in a [**Python >=3.8.0**](https://www.python.org/) environment, including [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). [Models](https://github.com/ultralytics/yolov5/tree/master/models) and [datasets](https://github.com/ultralytics/yolov5/tree/master/data) download automatically from the latest YOLOv5 [release](https://github.com/ultralytics/yolov5/releases).
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+Docker 사용
+
+모든 멀티 GPU 학습 실행에는 **Ultralytics Docker 이미지** 사용을 권장합니다. [Docker 빠른 시작 가이드](/ko/yolov5/environments/docker-image-quickstart-tutorial)를 참조하십시오. [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+PyTorch >= 1.9
+
+`torch.distributed.run` replaces `torch.distributed.launch` in **[PyTorch](https://www.ultralytics.com/glossary/pytorch) >= 1.9**. See the [PyTorch distributed documentation](https://docs.pytorch.org/docs/stable/distributed.html) for details.
+
+## Link to this section학습#
+
+학습을 시작할 사전 학습된 모델을 선택하십시오. 여기서는 작고 빠른 모델인 [YOLOv5s](https://github.com/ultralytics/yolov5/blob/master/models/yolov5s.yaml)를 선택합니다. 모든 모델에 대한 전체 비교는 README [테이블](https://github.com/ultralytics/yolov5#pretrained-checkpoints)을 참조하십시오. 이 모델은 [COCO](https://github.com/ultralytics/yolov5/blob/master/data/scripts/get_coco.sh) 데이터셋에서 멀티 GPU로 학습합니다.
+
+![YOLOv5 Models](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-model-comparison.avif)
+
+### Link to this section단일 GPU#
+    
+    
+    python train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0
+
+### Link to this section멀티 GPU [DataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.DataParallel) 모드 (⚠️ 권장하지 않음)#
+
+DataParallel 모드를 활성화하려면 `--device`에 여러 GPU ID를 전달하십시오:
+    
+    
+    python train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0,1
+
+DataParallel은 속도가 느리며 단일 GPU를 사용하는 것에 비해 학습 속도가 거의 향상되지 않습니다.
+
+### Link to this section멀티 GPU [DistributedDataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.parallel.DistributedDataParallel) 모드 (✅ 권장)#
+
+학습 명령어 앞에 `python -m torch.distributed.run --nproc_per_node`를 추가한 후 일반 인수를 전달하십시오:
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0,1
+
+  * `--nproc_per_node`는 사용할 GPU의 수입니다. 위의 예제에서는 `2`입니다.
+  * `--batch`는 각 GPU에 균등하게 나누어지는 총 배치 사이즈입니다. 위의 예제에서는 GPU당 `64 / 2 = 32`가 됩니다.
+
+
+
+위의 명령어는 `0...(N-1)`번 GPU를 사용합니다. 대신 환경 변수를 통해 장치 가시성을 제어하려면 실행하기 전에 `CUDA_VISIBLE_DEVICES=2,3` (또는 다른 목록)을 설정하십시오.
+
+Use specific GPUs (click to expand)
+
+`--device` 뒤에 특정 GPU ID를 전달하십시오. 아래 예제는 `2,3`번 GPU를 사용합니다.
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights '' --device 2,3
+
+Use SyncBatchNorm (click to expand)
+
+[SyncBatchNorm](https://docs.pytorch.org/docs/master/generated/torch.nn.SyncBatchNorm.html)은 멀티 GPU 학습의 [정확도](https://www.ultralytics.com/glossary/accuracy)를 높일 수 있지만, 학습 속도를 크게 저하시킵니다. 이는 멀티 GPU DistributedDataParallel 학습에서만 **사용 가능** 합니다.
+
+**각** GPU의 배치 사이즈가 작을 때(`<= 8`) 가장 적합합니다.
+
+SyncBatchNorm을 활성화하려면 `--sync-bn`을 전달하십시오:
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights '' --sync-bn
+
+Use Multiple machines (click to expand)
+
+이 기능은 멀티 GPU DistributedDataParallel 학습에서만 **사용 가능** 합니다.
+
+계속하기 전에 모든 머신에서 데이터셋, 코드베이스 및 기타 의존성이 일치하는지 확인하고, 네트워크를 통해 머신 간 통신이 가능한지 검증하십시오.
+
+마스터 머신(다른 머신들이 연결될 머신)을 선택하고, 해당 주소(`master_addr`)를 기록하며, 포트(`master_port`)를 정하십시오. 아래 예제에서는 `master_addr = 192.168.1.1` 및 `master_port = 1234`를 사용합니다.
+
+그런 다음 실행하십시오:
+    
+    
+    # On master machine 0
+    python -m torch.distributed.run --nproc_per_node G --nnodes N --node_rank 0 --master_addr "192.168.1.1" --master_port 1234 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights ''
+    
+    
+    # On machine R
+    python -m torch.distributed.run --nproc_per_node G --nnodes N --node_rank R --master_addr "192.168.1.1" --master_port 1234 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights ''
+
+여기서 `G`는 머신당 GPU 수, `N`은 머신 수, `R`은 `0...(N-1)` 범위 내의 머신 랭크입니다. 예를 들어, 두 개의 머신이 각각 2개의 GPU를 가질 경우, 두 번째 머신에서 `G = 2`, `N = 2`, `R = 1`로 설정하십시오.
+
+**모든** `N`개의 머신이 연결될 때까지 학습은 시작되지 않습니다. 출력은 마스터 머신에서만 표시됩니다.
+
+### Link to this section참고#
+
+  * Windows 지원은 테스트되지 않았으며, Linux를 권장합니다.
+
+  * `--batch`는 GPU 수의 배수여야 합니다.
+
+  * GPU 0은 EMA를 유지하고 체크포인트를 처리하기 때문에 다른 GPU보다 약간 더 많은 메모리를 사용합니다.
+
+  * `RuntimeError: Address already in use` 오류가 발생하면, 대개 여러 학습 실행이 동일한 포트를 사용 중임을 의미합니다. `--master_port`로 다른 포트를 지정하십시오:
+        
+        python -m torch.distributed.run --master_port 1234 --nproc_per_node 2 ...
+
+
+
+
+## Link to this section결과#
+
+8x A100 SXM4-40GB를 탑재한 [AWS EC2 P4d 인스턴스](/ko/yolov5/environments/aws-quickstart-tutorial)에서 YOLOv5l 모델을 사용하여 1 COCO [에폭](https://www.ultralytics.com/glossary/epoch) 동안 측정한 DDP 프로파일링 결과입니다.
+
+Profiling code
+    
+    
+    # prepare
+    t=ultralytics/yolov5:latest && sudo docker pull $t && sudo docker run -it --runtime=nvidia --ipc=host --gpus all -v "$(pwd)"/coco:/usr/src/coco $t
+    pip3 install torch==1.9.0+cu111 torchvision==0.10.0+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+    cd .. && rm -rf app && git clone https://github.com/ultralytics/yolov5 -b master app && cd app
+    cp data/coco.yaml data/coco_profile.yaml
+    
+    # profile
+    python train.py --batch-size 16 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch-size 32 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1
+    python -m torch.distributed.run --nproc_per_node 4 train.py --batch-size 64 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1,2,3
+    python -m torch.distributed.run --nproc_per_node 8 train.py --batch-size 128 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1,2,3,4,5,6,7
+
+GPUs  
+A100| batch-size| CUDA_mem  
+device0 (G)| COCO  
+train| COCO  
+val  
+---|---|---|---|---  
+1x| 16| 26GB| 20:39| 0:55  
+2x| 32| 26GB| 11:43| 0:57  
+4x| 64| 26GB| 5:57| 0:55  
+8x| 128| 26GB| 3:09| 0:57  
+  
+결과에서 볼 수 있듯이, 여러 GPU와 함께 [DistributedDataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.parallel.DistributedDataParallel)을 사용하면 학습 속도가 거의 선형적으로 확장됩니다. 8개의 GPU를 사용하면 단일 GPU 대비 약 6.5배 빠르게 학습이 완료되며, 디바이스당 메모리 사용량은 동일하게 유지됩니다.
+
+## Link to this sectionFAQ#
+
+이슈를 열기 전에 아래 체크리스트를 확인하십시오. 시간을 절약할 수 있습니다.
+
+Checklist (click to expand)
+
+  * 이 가이드를 끝까지 읽으셨습니까?
+  * 코드베이스를 다시 클론하셨습니까? 코드는 **매일** 변경됩니다.
+  * 오류 메시지를 검색해보셨습니까? 누군가 이미 동일한 문제를 겪고 수정 방법을 공유했을 수 있습니다.
+  * 모든 요구 사항(올바른 Python 및 PyTorch 버전 포함)을 설치하셨습니까?
+  * 아래 나열된 지원되는 환경 중 하나를 시도해보셨습니까?
+  * 근본 원인을 파악하기 위해 `coco128`이나 `coco2017` 같은 더 작은 데이터셋을 시도해보셨습니까?
+
+
+
+위의 모든 사항을 확인했는데도 문제가 해결되지 않으면, 템플릿을 따라 가능한 많은 세부 정보를 포함하여 이슈를 열어주십시오.
+
+## Link to this section지원되는 환경#
+
+Ultralytics는 프로젝트를 신속하게 시작할 수 있도록 [CUDA](https://developer.nvidia.com/cuda), [CUDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/), [PyTorch](https://pytorch.org/)와 같은 필수 의존성이 미리 설치된 다양한 환경을 제공합니다.
+
+  * **무료 GPU 노트북** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [GCP 시작 가이드](/ko/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [AWS 빠른 시작 가이드](/ko/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [AzureML 빠른 시작 가이드](/ko/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Docker 빠른 시작 가이드](/ko/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this section프로젝트 상태#
+
+[![YOLOv5 CI](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+이 배지는 모든 [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) CI(Continuous Integration) 테스트가 성공적으로 통과했음을 나타냅니다. 이러한 CI 테스트는 [학습](https://github.com/ultralytics/yolov5/blob/master/train.py), [검증](https://github.com/ultralytics/yolov5/blob/master/val.py), [추론](https://github.com/ultralytics/yolov5/blob/master/detect.py), [내보내기](https://github.com/ultralytics/yolov5/blob/master/export.py) 및 [벤치마크](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py)와 같은 YOLOv5의 기능 및 성능을 다양한 관점에서 엄격하게 점검합니다. 24시간마다 그리고 새로운 커밋이 발생할 때마다 테스트를 수행하여 macOS, Windows 및 Ubuntu 환경에서 일관되고 안정적인 작동을 보장합니다.
+
+## Link to this section크레딧#
+
+모든 노고를 아끼지 않은 @MagicFrogSJTU님과 그 과정을 안내해주신 @glenn-jocher님께 감사드립니다.
+
+## Link to this section참고 항목#
+
+  * [Train 모드](https://docs.ultralytics.com/modes/train) \- Ultralytics를 사용하여 YOLO 모델을 학습하는 방법 알아보기
+  * [하이퍼파라미터 튜닝](https://docs.ultralytics.com/guides/hyperparameter-tuning) \- 모델 성능 최적화
+  * [Docker 퀵스타트 가이드](https://docs.ultralytics.com/guides/docker-quickstart) \- 학습을 위한 Docker 환경 설정
+
+
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/multi-gpu-training.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+생성됨 3일 전업데이트됨 3일 전
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

@@ -1,0 +1,188 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/optimizing-openvino-latency-vs-throughput-modes
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+# Link to this section针对 YOLO 的 OpenVINO 推理优化#
+
+![OpenVINO Ecosystem](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/openvino-ecosystem.avif)
+
+## Link to this section介绍#
+
+在部署 [深度学习](https://www.ultralytics.com/glossary/deep-learning-dl) 模型（尤其是像 Ultralytics YOLO 模型这样的 [目标检测](https://www.ultralytics.com/glossary/object-detection) 模型）时，实现最佳性能至关重要。本指南深入探讨了如何利用 [Intel OpenVINO 工具套件](https://docs.ultralytics.com/integrations/openvino) 来优化推理，重点关注延迟和吞吐量。无论你是在开发消费级应用程序还是进行大规模部署，理解并应用这些优化策略都将确保你的模型在各种设备上高效运行。
+
+## Link to this section延迟优化#
+
+对于需要在单个输入下从单个模型获得即时响应的应用程序（在消费级场景中很常见），延迟优化至关重要。其目标是尽可能减少从输入到推理结果之间的延迟。然而，实现低延迟需要仔细考量，尤其是在运行并发推理或管理多个模型时。
+
+### Link to this section延迟优化的关键策略：#
+
+  * **单设备单次推理：** 实现低延迟的最简单方法是限制每个设备一次仅执行一次推理。额外的并发通常会导致延迟增加。
+  * **利用子设备：** 像多插槽 CPU 或多片 GPU 这样的设备，可以通过利用其内部子设备来执行多个请求，同时保持极低的延迟增加。
+  * **OpenVINO Performance Hints:** Utilizing OpenVINO's `ov::LATENCY` for the `ov::performance_mode` property during model compilation simplifies performance tuning, offering a device-agnostic and future-proof approach.
+
+
+
+### Link to this section管理首次推理延迟：#
+
+  * **模型缓存：** 为减轻模型加载和编译时间对延迟的影响，请尽可能使用模型缓存。对于无法缓存的场景，CPU 通常提供最快的模型加载时间。
+  * **模型映射与读取：** 为缩短加载时间，OpenVINO 已用映射替代了模型读取。但如果模型位于可移动驱动器或网络驱动器上，请考虑使用 `ov::enable_mmap(false)` 切换回读取模式。
+  * **AUTO 设备选择：** 该模式在 CPU 上启动推理，一旦准备就绪即切换到加速器，从而无缝减少首次推理延迟。
+
+
+
+## Link to this section吞吐量优化#
+
+吞吐量优化对于同时服务大量推理请求的场景至关重要，它能在不显著牺牲单个请求性能的前提下最大限度地提高 [资源利用率](https://www.ultralytics.com/blog/measuring-ai-performance-to-weigh-the-impact-of-your-innovations)。
+
+### Link to this section吞吐量优化方法：#
+
+  1. **OpenVINO 性能提示：** 一种利用性能提示跨设备增强吞吐量的高级且面向未来的方法。
+         
+         import openvino.properties.hint as hints
+         
+         config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+         compiled_model = core.compile_model(model, "GPU", config)
+
+  2. **显式批处理与流：** 一种更细致的方法，涉及显式批处理和利用流来进行高级性能调优。
+
+
+
+
+### Link to this section设计面向吞吐量的应用程序：#
+
+为最大化吞吐量，应用程序应：
+
+  * 并行处理输入，充分利用设备的计算能力。
+  * 将数据流分解为并发推理请求，并调度为并行执行。
+  * 利用带回调的 Async API 以保持效率并避免设备饥饿。
+
+
+
+### Link to this section多设备执行：#
+
+OpenVINO 的多设备模式通过自动跨设备平衡推理请求来简化吞吐量扩展，无需在应用层进行设备管理。
+
+## Link to this section实际性能提升#
+
+将 OpenVINO 优化应用于 Ultralytics YOLO 模型可带来显著的性能提升。正如在 [基准测试](https://docs.ultralytics.com/integrations/openvino#openvino-yolov8-benchmarks) 中所示，用户在 Intel CPU 上可体验到高达 3 倍的推理速度提升，而在包括集成 GPU、专用 GPU 和 VPU 在内的 Intel 硬件系列上，甚至可能实现更高的加速效果。
+
+例如，当在 Intel Xeon CPU 上运行 YOLOv8 模型时，OpenVINO 优化版本在每张图像的推理时间方面始终优于其 PyTorch 版本，且不会牺牲 [准确率](https://www.ultralytics.com/glossary/accuracy)。
+
+## Link to this section实际应用#
+
+要将你的 Ultralytics YOLO 模型导出并优化为 OpenVINO 格式，可以使用 [导出](https://docs.ultralytics.com/modes/export) 功能：
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to OpenVINO format
+    model.export(format="openvino", half=True)  # Export with FP16 precision
+
+导出后，你可以使用优化后的模型运行推理：
+    
+    
+    # Load the OpenVINO model
+    ov_model = YOLO("yolo26n_openvino_model/")
+    
+    # Run inference with performance hints for latency
+    results = ov_model("path/to/image.jpg", verbose=True)
+
+## Link to this section总结#
+
+使用 OpenVINO 优化 Ultralytics YOLO 模型的延迟和吞吐量可以显著增强应用程序的性能。通过仔细应用本指南中概述的策略，开发人员可以确保其模型高效运行，满足各种部署场景的需求。请记住，在延迟优化与吞吐量优化之间的选择，取决于你的具体应用需求和部署环境的特征。
+
+有关更详细的技术信息和最新更新，请参考 [OpenVINO 文档](https://docs.openvino.ai/2024/index.html) 和 [Ultralytics YOLO 存储库](https://github.com/ultralytics/ultralytics)。这些资源提供了深入的指南、教程和社区支持，帮助你充分利用深度学习模型。
+
+* * *
+
+确保模型实现最佳性能不仅仅是调整配置，而是关于理解应用程序的需求并做出明智的决策。无论你是为了 [实时响应](https://www.ultralytics.com/blog/real-time-inferences-in-vision-ai-solutions-are-making-an-impact) 进行优化，还是为了大规模处理最大化吞吐量，Ultralytics YOLO 模型与 OpenVINO 的结合都为开发人员部署高性能 AI 解决方案提供了强大的工具包。
+
+## Link to this section常见问题 (FAQ)#
+
+### Link to this section如何使用 OpenVINO 优化 Ultralytics YOLO 模型以实现低延迟？#
+
+优化 Ultralytics YOLO 模型以实现低延迟涉及几个关键策略：
+
+  1. **单设备单次推理：** 限制每个设备一次仅执行一次推理以尽量减少延迟。
+  2. **利用子设备：** 利用多插槽 CPU 或多片 GPU 等设备，它们可以处理多个请求，同时保持极低的延迟增加。
+  3. **OpenVINO 性能提示：** 在模型编译期间使用 OpenVINO 的 `ov::LATENCY` 以进行简化且与设备无关的调优。
+
+
+
+有关优化延迟的更多实用技巧，请查看我们指南的 延迟优化部分。
+
+### Link to this section为什么我应该使用 OpenVINO 来优化 Ultralytics YOLO 的吞吐量？#
+
+OpenVINO 通过最大化设备资源利用率（且不牺牲性能）来增强 Ultralytics YOLO 模型的吞吐量。主要优势包括：
+
+  * **性能提示：** 跨设备的简单高级性能调优。
+  * **显式批处理与流：** 用于高级性能的精细调优。
+  * **多设备执行：** 自动化的推理负载均衡，简化了应用层管理。
+
+
+
+配置示例：
+    
+    
+    import openvino.properties.hint as hints
+    
+    config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+    compiled_model = core.compile_model(model, "GPU", config)
+
+在我们的详细指南的 吞吐量优化部分 中了解有关吞吐量优化的更多信息。
+
+### Link to this section在 OpenVINO 中减少首次推理延迟的最佳实践是什么？#
+
+要减少首次推理延迟，请考虑以下实践：
+
+  1. **模型缓存：** 使用模型缓存以缩短加载和编译时间。
+  2. **模型映射与读取：** 默认使用映射 (`ov::enable_mmap(true)`)，但如果模型位于可移动或网络驱动器上，请切换为读取 (`ov::enable_mmap(false)`)。
+  3. **AUTO 设备选择：** 利用 AUTO 模式以启动 CPU 推理并无缝过渡到加速器。
+
+
+
+有关管理首次推理延迟的详细策略，请参考 管理首次推理延迟部分。
+
+### Link to this section我该如何平衡 Ultralytics YOLO 和 OpenVINO 的延迟与吞吐量优化？#
+
+平衡延迟和吞吐量优化需要了解你的应用程序需求：
+
+  * **延迟优化：** 非常适合需要即时响应的实时应用程序（例如消费级应用）。
+  * **吞吐量优化：** 最适合具有许多并发推理的场景，最大限度地利用资源（例如大规模部署）。
+
+
+
+使用 OpenVINO 的高级性能提示和多设备模式可以帮助找到合适的平衡点。根据你的具体要求选择合适的 [OpenVINO 性能提示](https://docs.ultralytics.com/integrations/openvino#openvino-performance-hints)。
+
+### Link to this section我可以在除 OpenVINO 之外的其他 AI 框架中使用 Ultralytics YOLO 模型吗？#
+
+可以，Ultralytics YOLO 模型具有高度通用性，可以与各种 AI 框架集成。选项包括：
+
+  * **TensorRT：** 对于 NVIDIA GPU 优化，请遵循 [TensorRT 集成指南](https://docs.ultralytics.com/integrations/tensorrt)。
+  * **CoreML：** 对于 Apple 设备，请参考我们的 [CoreML 导出说明](https://docs.ultralytics.com/integrations/coreml)。
+  * **[TensorFlow](https://www.ultralytics.com/glossary/tensorflow).js：** 对于 Web 和 Node.js 应用程序，请查看 [TF.js 转换指南](https://docs.ultralytics.com/integrations/tfjs)。
+
+
+
+在 [Ultralytics 集成页面](https://docs.ultralytics.com/integrations) 探索更多集成。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+已创建 2024年3月17日已更新 上个月
+
+## 评论
+
+本页内容
+
+使用 AI 探索

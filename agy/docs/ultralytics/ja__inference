@@ -1,0 +1,310 @@
+---
+source_url: https://docs.ultralytics.com/ja/inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/inference/index.md)
+
+# Link to this sectionRust用 Ultralytics Inference#
+
+[![GitHub](https://img.shields.io/badge/GitHub-ultralytics%2Finference-181717?logo=github&logoColor=white)](https://github.com/ultralytics/inference) [![Crates.io](https://img.shields.io/crates/v/ultralytics-inference?logo=rust&logoColor=white&label=crates.io&color=CE422B)](https://crates.io/crates/ultralytics-inference) [![docs.rs](https://img.shields.io/docsrs/ultralytics-inference?logo=docs.rs&logoColor=white&label=docs.rs)](https://docs.rs/ultralytics-inference) [![Downloads](https://img.shields.io/crates/d/ultralytics-inference?logo=rust&logoColor=white&label=downloads&color=CE422B)](https://crates.io/crates/ultralytics-inference) [![MSRV](https://img.shields.io/crates/msrv/ultralytics-inference?logo=rust&logoColor=white&color=CE422B)](https://crates.io/crates/ultralytics-inference)
+
+[Ultralytics Inference](https://github.com/ultralytics/inference) is a high-performance [YOLO](https://www.ultralytics.com/yolo) inference library and command-line tool written in [Rust](https://rust-lang.org/). It runs exported [ONNX](/ja/integrations/onnx) models through [ONNX Runtime](https://onnxruntime.ai/) to deliver fast, memory-safe predictions on images, videos, webcams, and streams, with no Python runtime required at inference time.
+
+このプロジェクトは単一のクレート `ultralytics-inference` として提供されており、2通りの方法で使用できます。クイックな予測やバッチ処理用の **CLI** として、または Rust アプリケーションに直接組み込む **ライブラリ** として利用可能です。あらゆる Ultralytics [タスク](/ja/tasks)をサポートしており、統一されたデバイスインターフェースを通じて幅広いハードウェアバックエンドに対応します。
+
+## Link to this sectionRustでの推論を選ぶ理由は？#
+
+  * **ネイティブな速度と軽量なフットプリント。** インタプリタなしでネイティブバイナリにコンパイルされるため、サーバー、コンテナ、[エッジデバイス](https://www.ultralytics.com/glossary/edge-ai) に最適です。
+  * **メモリ安全性。** Rust の所有権モデルにより、ガベージコレクタなしで実行時エラーの全クラスを除去します。
+  * **すべての YOLO タスクに対応。** 検出、セグメンテーション、姿勢推定、OBB、分類、セマンティックセグメンテーションを単一の API で実現します。
+  * **幅広いハードウェアサポート。** CPU に加え、ビルド時に選択可能な CUDA、TensorRT、CoreML、OpenVINO、DirectML、ROCm、XNNPACK 実行プロバイダーをサポートします。
+  * **GPUサイドの前処理。** オプションの融合 CUDA カーネルにより、レターボックス処理、正規化、レイアウト変換をデバイス上で保持し、ゼロコピーの入力パスを実現します。
+  * **自動ダウンロード。** よく知られた YOLO モデル名とサンプルアセットは、初回使用時に自動的にダウンロードされます。
+
+
+
+Python パッケージをお探しですか？
+
+このページではスタンドアロンの Rust クレートについて解説しています。Python ワークフロー（トレーニング、検証、エクスポート、予測）については、メインの [クイックスタート](/ja/quickstart) および [Predict モード](/ja/modes/predict) を参照してください。あらゆる Ultralytics モデルを [ONNX 統合](/ja/integrations/onnx) を使用して ONNX にエクスポートし、ここで実行できます。
+
+## Link to this sectionインストール#
+
+Rust 1.89 以降が必要です。video 機能を使用するには、システムに FFmpeg 7 以降がインストールされている必要があります。
+    
+    
+    # Install the command-line tool from crates.io
+    cargo install ultralytics-inference
+    
+    # Or with GPU support compiled in
+    cargo install ultralytics-inference --features cuda,tensorrt
+
+バイナリは `~/.cargo/bin/ultralytics-inference` (Linux および macOS) または Windows の `%USERPROFILE%\.cargo\bin\` に配置されます。
+
+## Link to this sectionCLI クイックスタート#
+
+CLI には `predict` サブコマンドが用意されています。引数なしで実行すると、Nano 検出モデルとサンプル画像がダウンロードされ、推論が実行され、アノテーション結果が `runs/detect/predict` に保存されます。
+    
+    
+    # Detect on the built-in samples (downloads model and images)
+    ultralytics-inference predict
+    
+    # Detect on your own image
+    ultralytics-inference predict --model yolo26n.onnx --source image.jpg
+    
+    # Segmentation (auto-downloads yolo26n-seg.onnx)
+    ultralytics-inference predict --task segment --source image.jpg
+    
+    # Pose on a video, shown live in a window
+    ultralytics-inference predict --task pose --source video.mp4 --show
+    
+    # Tune thresholds and filter to specific classes
+    ultralytics-inference predict --source image.jpg --conf 0.5 --iou 0.45 --classes "0,1,2"
+    
+    # Run a whole folder on the GPU in half precision
+    ultralytics-inference predict --source images/ --device cuda:0 --half
+
+一般的なフラグ:
+
+フラグ| デフォルト| 説明  
+---|---|---  
+`--model`, `-m`| `yolo26n.onnx`| ONNX モデルへのパス。既知の YOLO 名を指定すると自動的にダウンロードされます。  
+`--task`| `detect`| `detect`, `segment`, `pose`, `obb`, `classify`, `semantic` のいずれか。  
+`--source`, `-s`| サンプル| 画像、ディレクトリ、glob、動画、Webカメラのインデックス、または URL。  
+`--conf`| `0.25`| 信頼度の閾値。  
+`--iou`| `0.7`| 非最大値抑制（NMS）のための IoU 閾値。  
+`--imgsz`| モデルメタデータ| 推論画像サイズ。  
+`--device`| `cpu`| 実行デバイス。例: `cuda:0`, `coreml`, `tensorrt:0`  
+`--half`| `false`| FP16 半精度推論。  
+`--save`| `true`| アノテーション結果を `runs/<task>/predict` に保存します。  
+`--show`| `false`| ウィンドウに結果を表示します。  
+`--classes`| すべて| クラス ID で検出結果をフィルタリング。例: `"0,1,2"`  
+  
+## Link to this sectionライブラリ クイックスタート#
+
+モデルをロードして予測を実行します。クラス名、タスクタイプ、画像サイズなどのモデルメタデータは ONNX ファイルから自動的に読み込まれます。
+    
+    
+    use ultralytics_inference::YOLOModel;
+    
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        // Metadata (classes, task, imgsz) is parsed from the model.
+        let mut model = YOLOModel::load("yolo26n.onnx")?;
+    
+        let results = model.predict("image.jpg")?;
+    
+        for result in &results {
+            if let Some(boxes) = &result.boxes {
+                for i in 0..boxes.len() {
+                    let class_id = boxes.cls()[i] as usize;
+                    let conf = boxes.conf()[i];
+                    let name = result.names.get(&class_id).map_or("unknown", |s| s.as_str());
+                    println!("{name} {conf:.2}");
+                }
+            }
+        }
+    
+        Ok(())
+    }
+
+`InferenceConfig` を使用して、ビルダー API で閾値、画像サイズ、精度、デバイスを制御できます：
+    
+    
+    use ultralytics_inference::{Device, InferenceConfig, YOLOModel};
+    
+    let config = InferenceConfig::new()
+        .with_confidence(0.5)
+        .with_iou(0.45)
+        .with_imgsz(640, 640)
+        .with_device(Device::Cuda(0))
+        .with_half(true);
+    
+    let mut model = YOLOModel::load_with_config("yolo26n.onnx", config)?;
+    let results = model.predict("image.jpg")?;
+
+各タスクは `Results` の異なるフィールドに入力されます。以下の各タブは完全な実行可能プログラムです。モデルとサンプル入力は初回実行時に自動的にダウンロードされます。`predict_default()` を `predict("image.jpg")` に置き換えると、独自のファイルで実行できます。
+    
+    
+    use ultralytics_inference::YOLOModel;
+    
+    fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let mut model = YOLOModel::load("yolo26n.onnx")?;
+        let results = model.predict_default()?;
+    
+        for result in &results {
+            if let Some(boxes) = &result.boxes {
+                println!("{} detections", boxes.len());
+                let xyxy = boxes.xyxy(); // rows of [x1, y1, x2, y2]
+                for i in 0..boxes.len() {
+                    let class_id = boxes.cls()[i] as usize;
+                    let name = result.names.get(&class_id).map_or("unknown", |s| s.as_str());
+                    println!("  {name} {:.2} {:?}", boxes.conf()[i], xyxy.row(i).to_vec());
+                }
+            }
+        }
+    
+        Ok(())
+    }
+
+## Link to this sectionサポートされているタスク#
+
+すべての Ultralytics [タスク](/ja/tasks) がサポートされています。`--model` が省略された場合、選択したタスクに対応する Nano モデルが自動的にダウンロードされます。
+
+タスク| `--task`| 出力| デフォルトモデル  
+---|---|---|---  
+検出| `detect`| バウンディングボックスとクラス| `yolo26n.onnx`  
+インスタンスセグメンテーション| `segment`| ボックスおよびインスタンスごとのマスク| `yolo26n-seg.onnx`  
+Pose（姿勢推定）| `pose`| ボックスおよびキーポイント| `yolo26n-pose.onnx`  
+指向性ボックス| `obb`| 回転バウンディングボックス| `yolo26n-obb.onnx`  
+分類| `classify`| クラス確率| `yolo26n-cls.onnx`  
+セマンティックセグメンテーション| `semantic`| ピクセル単位のクラスマップ| `yolo26n-sem.onnx`  
+  
+## Link to this sectionモデル互換性#
+
+ONNX にエクスポートされたあらゆる Ultralytics モデルをローカルファイルから読み込むことができます。標準的な YOLO26、YOLO11、および YOLOv8 モデル名（サイズ `n`, `s`, `m`, `l`, `x`）については自動ダウンロードが利用可能です：
+
+モデルファミリー| 自動ダウンロード可能なバリアント  
+---|---  
+YOLO26| `yolo26{n,s,m,l,x}.onnx`, `-seg`, `-pose`, `-obb`, `-cls`, `-sem`  
+YOLO11| `yolo11{n,s,m,l,x}.onnx`, `-seg`, `-pose`, `-obb`, `-cls`  
+YOLOv8| `yolov8{n,s,m,l,x}.onnx`, `-seg`, `-pose`, `-obb`, `-cls`  
+  
+セマンティックセグメンテーション (`-sem`) は YOLO26 のみです。
+
+## Link to this section入力ソース#
+
+`--source` 引数（およびライブラリ内の `Source` 型）は多くの入力形式を受け入れ、文字列から自動的に検出されます：
+
+ソース| 例| 注意点  
+---|---|---  
+画像| `image.jpg`| 単一ファイル。  
+ディレクトリ| `images/`| フォルダ内のすべての画像。  
+Glob| `images/*.jpg`| シェルスタイルのパターン。  
+動画| `video.mp4`| `video` 機能が必要です。  
+Webcam| `0`| `video` 機能が必要です。  
+ストリーム| `rtsp://...`| `video` 機能が必要です。  
+URL| `https://example.com/image.jpg`| リモート画像のダウンロード。  
+  
+## Link to this sectionデバイスと実行プロバイダー#
+
+推論はデフォルトで CPU 上で実行されます。GPU およびアクセラレータバックエンドは Cargo features としてコンパイルされ、実行時に `--device` (CLI) または `Device` (ライブラリ) で選択されます。
+
+デバイス文字列| `Device` バリアント| ビルド機能| ハードウェア  
+---|---|---|---  
+`cpu`| `Device::Cpu`| 組み込み| 任意の CPU  
+`cuda:0`| `Device::Cuda(0)`| `cuda`| NVIDIA GPU  
+`tensorrt:0`| `Device::TensorRt(0)`| `tensorrt`| NVIDIA GPU、最適化済み  
+`coreml`| `Device::CoreMl`| `coreml`| Apple Silicon / macOS  
+`openvino`| `Device::OpenVino`| `openvino`| Intel CPU / iGPU  
+`directml:0`| `Device::DirectMl(0)`| `directml`| Windows GPU  
+`rocm:0`| `Device::Rocm(0)`| `rocm`| AMD GPU  
+`xnnpack`| `Device::Xnnpack`| `xnnpack`| 最適化済み CPU  
+      
+    
+    # Build the CLI with the providers you need
+    cargo install ultralytics-inference --features cuda,tensorrt
+
+## Link to this sectionGPU アクセラレーションおよび CUDA 前処理#
+
+NVIDIA ハードウェアでは、`cuda` 機能により CUDA 実行プロバイダーが有効になり、`tensorrt` はさらなる最適化のために TensorRT プロバイダーを追加します。可能な限り低いレイテンシを実現するため、`cuda-preprocess` 機能は前処理を GPU 上に移行します。
+
+`cuda-preprocess` は、レターボックスリサイズ、正規化、および HWC から CHW へのレイアウト変換を単一の統合 CUDA カーネルとして実行し、その結果をゼロコピーのデバイステンソルとしてモデルに提供します。これにより、画像ごとの CPU 前処理コストとホストからデバイスへのコピーが削減され、高スループットのバッチやリアルタイムストリームにおいて最大限の効果を発揮します。
+    
+    
+    # Build with fused GPU preprocessing (implies cuda + tensorrt)
+    cargo build --release --features cuda-preprocess
+
+高速パスは、以下の条件がすべて満たされている場合、API を変更することなく自動的に使用されます：機能がコンパイルされていること、デバイスが CUDA または TensorRT であること、タスクが detect、segment、pose、OBB、または semantic segmentation であること、そしてモデルが FP32 入力を使用していることです。デフォルトで有効になっており、モデルごとに無効化することも可能です：
+    
+    
+    use ultralytics_inference::{Device, InferenceConfig};
+    
+    let config = InferenceConfig::new()
+        .with_device(Device::TensorRt(0))
+        .with_cuda_preprocess(false); // force CPU preprocessing
+
+CUDA ツールキットを一致させる
+
+`cuda-preprocess` はビルド時に一致する CUDA ツールキットを必要とし、統合前処理カーネルの実行時に NVRTC を使用します。バージョン要件およびトラブルシューティングについては、[CUDA and TensorRT acceleration guide](https://docs.rs/ultralytics-inference/latest/ultralytics_inference/cuda_guide/index.html) を参照してください。
+
+## Link to this sectionCargo 機能#
+
+機能はビルド時に有効化されます。デフォルト設定にはアノテーションとライブ表示が含まれています。
+
+機能| デフォルト| 目的  
+---|---|---  
+`annotate`| はい| ボックス、マスク、キーポイント、およびラベルを描画します。`--save` に必要です。  
+`visualize`| はい| `--show` 用のリアルタイムウィンドウ表示。  
+`video`| いいえ| ビデオファイルの読み込みと書き込み（FFmpeg 7+ が必要）。  
+`cuda`| いいえ| NVIDIA CUDA 実行プロバイダー。  
+`tensorrt`| いいえ| NVIDIA TensorRT 実行プロバイダー。  
+`cuda-preprocess`| いいえ| ゼロコピー入力を備えた統合 GPU 前処理（cuda および tensorrt を含む）。  
+`coreml`| いいえ| Apple CoreML 実行プロバイダー。  
+`openvino`| いいえ| Intel OpenVINO 実行プロバイダー。  
+`rocm`| いいえ| AMD ROCm 実行プロバイダー。  
+`directml`| いいえ| Windows DirectML 実行プロバイダー。  
+  
+便利なグループとして、関連するプロバイダーをまとめた `nvidia` (cuda, tensorrt)、`amd` (rocm, migraphx)、`intel` (openvino, onednn)、`mobile` (nnapi, coreml, qnn)、および `all` (annotate, visualize, video) があります。`nnapi`、`qnn`、`xnnpack`、`webgpu` など、その他のプロバイダーも利用可能です。
+
+CLI をインストールする際やライブラリを追加する際に機能を有効にします：
+    
+    
+    cargo install ultralytics-inference --features video
+    cargo install ultralytics-inference --features cuda,tensorrt
+    
+    
+    [dependencies]
+    ultralytics-inference = { version = "0.0.21", features = ["video"] }
+
+## Link to this section出力と保存#
+
+デフォルトでは、予測結果はアノテーションが付加され、自動的にインクリメントされる実行ディレクトリに保存されます：
+    
+    
+    runs/
+    └── detect/
+        └── predict/          # then predict2, predict3, ...
+            └── image.jpg     # annotated result
+
+サブフォルダーはタスク名（`runs/segment/`、`runs/pose/` など）に対応します。ビデオソースの場合、アノテーション済み出力はビデオファイルとして書き込まれます。各フレームを個別に書き出すには `--save-frames` を指定してください。`semantic` タスクでは、`--save-json` により `results/` サブフォルダー内にピクセルごとのクラスマップ PNG が書き出されます。アノテーション済み画像およびビデオの保存には `annotate` 機能が必要です。セマンティッククラスマップ PNG のエクスポートには不要です。ビデオ入力および出力には `video` 機能が必要です。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionPython をインストールする必要がありますか？#
+
+いいえ。このクレートは、エクスポートされた ONNX モデルを ONNX Runtime を通じて直接実行します。Python が必要なのは、事前に Ultralytics パッケージでモデルをトレーニングまたは [エクスポート](/ja/modes/export) する場合のみです。
+
+### Link to this sectionどのモデルを実行できますか？#
+
+[YOLO26](/ja/models/yolo26)、[YOLO11](/ja/models/yolo11)、[YOLOv8](/ja/models/yolov8)を含む、ONNXにエクスポートされたすべてのUltralytics YOLOモデルが対象です。既知のモデル名は自動的にダウンロードされます。また、`--model`引数で任意のローカルの`.onnx`ファイルを指定することも可能です。
+
+### Link to this sectionモデルファイルを入手するにはどうすればよいですか？#
+
+[ONNX 統合](/ja/integrations/onnx) などを使用して Python パッケージからエクスポートするか、初回実行時に CLI で選択したタスク用の標準的な nano モデルをダウンロードさせてください。
+
+### Link to this sectionビデオはサポートされていますか？#
+
+はい、`video` 機能を有効にし、システムに FFmpeg 7+ をインストールすることでサポートされます。ビデオファイル、Web カメラ、および RTSP/RTMP/HTTP ストリームに対応しています。
+
+### Link to this section`annotate` および `visualize` 機能は何をしますか？#
+
+どちらもデフォルトで有効になっています。`annotate` は画像にボックス、マスク、キーポイント、クラスラベルを描画し、`--save` でアノテーション済み結果を書き出すために必要です。`visualize` は `--show` のためのライブウィンドウを開きます。結果をプログラムから取得するだけの、より軽量なヘッドレスビルドにする場合は、`cargo build --no-default-features` を実行してこれらを無効にし、必要に応じて個別の機能を追加してください。
+
+### Link to this section完全な API リファレンスはどこにありますか？#
+
+このページは概要です。すべてのパブリックな構造体、メソッド、設定オプションに関する完全な型別の API リファレンスは、ソースコードから直接生成され、[docs.rs](https://docs.rs/ultralytics-inference/latest/ultralytics_inference/) に公開されています。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/inference/index.md)
+
+[ONonuralpszr3](https://github.com/onuralpszr)[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+作成日 先週更新日 5 日前
+
+## コメント
+
+このページの内容
+
+AIで探索

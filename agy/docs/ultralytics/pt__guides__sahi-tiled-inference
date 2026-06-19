@@ -1,0 +1,305 @@
+---
+source_url: https://docs.ultralytics.com/pt/guides/sahi-tiled-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+# Link to this sectionDocumentação Ultralytics: Usando YOLO26 com SAHI para Inferência Fatiada#
+
+[![Abrir SAHI para Inferência Fatiada no Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/notebooks/blob/main/notebooks/how-to-use-ultralytics-yolo-with-sahi.ipynb)
+
+Bem-vindo à documentação da Ultralytics sobre como usar o YOLO26 com o [SAHI](https://github.com/obss/sahi) (Slicing Aided Hyper Inference). Este guia completo visa fornecer todo o conhecimento essencial de que precisas para implementar o SAHI juntamente com o YOLO26. Vamos analisar profundamente o que é o SAHI, por que a inferência fatiada é crítica para aplicações em grande escala e como integrar essas funcionalidades com o YOLO26 para um desempenho aprimorado de [detecção de objetos](https://www.ultralytics.com/glossary/object-detection).
+
+![SAHI tiled inference for small objects](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sahi-sliced-inference-overview.avif)
+
+## Link to this sectionIntrodução ao SAHI#
+
+O SAHI (Slicing Aided Hyper Inference) é uma biblioteca inovadora projetada para otimizar algoritmos de detecção de objetos para imagens de grande escala e alta resolução. A sua funcionalidade principal consiste em dividir imagens em fatias gerenciáveis, executar a detecção de objetos em cada fatia e, em seguida, unir os resultados novamente. O SAHI é compatível com uma gama de modelos de detecção de objetos, incluindo a série YOLO, oferecendo flexibilidade enquanto garante o uso otimizado de recursos computacionais.
+
+  
+
+
+  
+**Watch:** How to use SAHI with Ultralytics YOLO26 to Detect Small Objects | Slicing Aided Hyper Inference 🚀 
+
+### Link to this sectionPrincipais Recursos do SAHI#
+
+  * **Integração Perfeita** : O SAHI integra-se facilmente com modelos YOLO, o que significa que podes começar a fatiar e detectar sem muitas modificações no código.
+  * **Eficiência de Recursos** : Ao dividir imagens grandes em partes menores, o SAHI otimiza o uso da memória, permitindo-te executar detecção de alta qualidade em hardware com recursos limitados.
+  * **Alta[Precisão](https://www.ultralytics.com/glossary/accuracy)**: O SAHI mantém a precisão da detecção empregando algoritmos inteligentes para mesclar caixas de detecção sobrepostas durante o processo de união.
+
+
+
+## Link to this sectionO que é Inferência Fatiada?#
+
+A Inferência Fatiada refere-se à prática de subdividir uma imagem grande ou de alta resolução em segmentos menores (fatias), conduzindo a detecção de objetos nessas fatias e, em seguida, recompilando as fatias para reconstruir as localizações dos objetos na imagem original. Esta técnica é inestimável em cenários onde os recursos computacionais são limitados ou ao trabalhar com imagens de resolução extremamente alta que poderiam, de outra forma, levar a problemas de memória.
+
+### Link to this sectionBenefícios da Inferência Fatiada#
+
+  * **Carga Computacional Reduzida** : Fatias de imagem menores são mais rápidas de processar e consomem menos memória, permitindo uma operação mais suave em hardware de menor desempenho.
+
+  * **Qualidade de Detecção Preservada** : Como cada fatia é tratada independentemente, não há redução na qualidade da detecção de objetos, desde que as fatias sejam grandes o suficiente para capturar os objetos de interesse.
+
+  * **Escalabilidade Aprimorada** : A técnica permite que a detecção de objetos seja escalada mais facilmente através de diferentes tamanhos e resoluções de imagem, tornando-a ideal para uma ampla gama de aplicações, desde imagens de satélite até diagnósticos médicos.
+
+
+
+
+YOLO26 without SAHI| YOLO26 with SAHI  
+---|---  
+![YOLO26 without SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-without-sahi.avif)| ![YOLO26 with SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-with-sahi.avif)  
+  
+## Link to this sectionInstalação e Preparação#
+
+### Link to this sectionInstalação#
+
+Para começar, instala as versões mais recentes do SAHI e da Ultralytics:
+    
+    
+    pip install -U ultralytics sahi
+
+### Link to this sectionImportar Módulos e Baixar Recursos#
+
+Aqui está como baixar algumas imagens de teste:
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+## Link to this sectionInferência Padrão com YOLO26#
+
+### Link to this sectionInstanciar o Modelo#
+
+Podes instanciar um modelo YOLO26 para detecção de objetos desta forma:
+    
+    
+    from sahi import AutoDetectionModel
+    
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        confidence_threshold=0.3,
+        device="cpu",  # or 'cuda:0'
+    )
+
+### Link to this sectionRealizar Predição Padrão#
+
+Realiza a inferência padrão usando um caminho de imagem.
+    
+    
+    from sahi.predict import get_prediction
+    
+    result = get_prediction("demo_data/small-vehicles1.jpeg", detection_model)
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+
+### Link to this sectionVisualizar Resultados#
+
+Exporta e visualiza as caixas delimitadoras e máscaras preditas:
+    
+    
+    from PIL import Image
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionInferência Fatiada com YOLO26#
+
+Realiza a inferência fatiada especificando as dimensões das fatias e as taxas de sobreposição:
+    
+    
+    from PIL import Image
+    from sahi.predict import get_sliced_prediction
+    
+    result = get_sliced_prediction(
+        "demo_data/small-vehicles1.jpeg",
+        detection_model,
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+    
+    # Export results
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionManipulação de Resultados de Predição#
+
+O SAHI fornece um objeto `PredictionResult`, que pode ser convertido em vários formatos de anotação:
+    
+    
+    # Access the object prediction list
+    object_prediction_list = result.object_prediction_list
+    
+    # Convert to COCO annotation, COCO prediction, imantics, and fiftyone formats
+    result.to_coco_annotations()[:3]
+    result.to_coco_predictions(image_id=1)[:3]
+    result.to_imantics_annotations()[:3]
+    result.to_fiftyone_detections()[:3]
+
+## Link to this sectionPredição em Lote#
+
+Para predição em lote em um diretório de imagens:
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+Estás agora pronto para usar o YOLO26 com o SAHI para inferência padrão e fatiada.
+
+## Link to this sectionCitações e Agradecimentos#
+
+Se usares o SAHI no teu trabalho de pesquisa ou desenvolvimento, por favor cita o artigo original do SAHI e dá crédito aos autores:
+
+Citação
+    
+    
+    @article{akyon2022sahi,
+      title={Slicing Aided Hyper Inference and Fine-tuning for Small Object Detection},
+      author={Akyon, Fatih Cagatay and Altinuc, Sinan Onur and Temizel, Alptekin},
+      journal={2022 IEEE International Conference on Image Processing (ICIP)},
+      doi={10.1109/ICIP46576.2022.9897990},
+      pages={966-970},
+      year={2022}
+    }
+
+Estendemos os nossos agradecimentos ao grupo de pesquisa do SAHI por criar e manter este recurso inestimável para a comunidade de [visão computacional](https://www.ultralytics.com/glossary/computer-vision-cv). Para mais informações sobre o SAHI e os seus criadores, visita o [repositório GitHub do SAHI](https://github.com/obss/sahi).
+
+## Link to this sectionPerguntas Frequentes#
+
+### Link to this sectionComo posso integrar o YOLO26 com o SAHI para inferência fatiada na detecção de objetos?#
+
+Integrar o Ultralytics YOLO26 com o SAHI (Slicing Aided Hyper Inference) para inferência fatiada otimiza as tuas tarefas de detecção de objetos em imagens de alta resolução, dividindo-as em fatias gerenciáveis. Esta abordagem melhora o uso da memória e garante uma alta precisão de detecção. Para começar, precisas de instalar as bibliotecas ultralytics e sahi:
+    
+    
+    pip install -U ultralytics sahi
+
+Em seguida, baixa imagens de teste:
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+Para instruções mais detalhadas, consulta o nosso guia de Inferência Fatiada.
+
+### Link to this sectionPor que devo usar o SAHI com o YOLO26 para detecção de objetos em imagens grandes?#
+
+Usar o SAHI com o Ultralytics YOLO26 para detecção de objetos em imagens grandes oferece vários benefícios:
+
+  * **Carga Computacional Reduzida** : Fatias menores são mais rápidas de processar e consomem menos memória, tornando viável a execução de detecções de alta qualidade em hardware com recursos limitados.
+  * **Precisão de Detecção Mantida** : O SAHI usa algoritmos inteligentes para mesclar caixas sobrepostas, preservando a qualidade da detecção.
+  * **Escalabilidade Aprimorada** : Ao escalar tarefas de detecção de objetos através de diferentes tamanhos e resoluções de imagem, o SAHI torna-se ideal para várias aplicações, como análise de imagens de satélite e diagnósticos médicos.
+
+
+
+Sabe mais sobre os benefícios da inferência fatiada na nossa documentação.
+
+### Link to this sectionPosso visualizar os resultados da predição ao usar o YOLO26 com o SAHI?#
+
+Sim, podes visualizar os resultados da predição ao usar o YOLO26 com o SAHI. Aqui está como podes exportar e visualizar os resultados:
+    
+    
+    from PIL import Image
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    processed_image.show()
+
+Este comando salvará as predições visualizadas no diretório especificado, e podes então carregar a imagem para visualizá-la no teu notebook ou aplicação. Para um guia detalhado, confere a seção de Inferência Padrão.
+
+### Link to this sectionQue funcionalidades oferece o SAHI para melhorar a detecção de objetos com o YOLO26?#
+
+O SAHI (Slicing Aided Hyper Inference) oferece várias funcionalidades que complementam o Ultralytics YOLO26 para detecção de objetos:
+
+  * **Integração Perfeita** : O SAHI integra-se facilmente com modelos YOLO, exigindo ajustes mínimos de código.
+  * **Eficiência de Recursos** : Ele divide imagens grandes em fatias menores, o que otimiza o uso da memória e a velocidade.
+  * **Alta Precisão** : Ao mesclar efetivamente as caixas de detecção sobrepostas durante o processo de união, o SAHI mantém uma alta precisão de detecção.
+
+
+
+Para uma compreensão mais profunda, lê sobre os principais recursos do SAHI.
+
+### Link to this sectionComo lido com projetos de inferência em grande escala usando o YOLO26 e o SAHI?#
+
+Para lidar com projetos de inferência em grande escala usando o YOLO26 e o SAHI, segue estas boas práticas:
+
+  1. **Instalar Bibliotecas Necessárias** : Garante que tens as versões mais recentes do ultralytics e do sahi.
+  2. **Configurar Inferência Fatiada** : Determina as dimensões ideais das fatias e as taxas de sobreposição para o teu projeto específico.
+  3. **Executar Predições em Lote** : Usa as capacidades do SAHI para realizar predições em lote num diretório de imagens, o que melhora a eficiência.
+
+
+
+Exemplo para predição em lote:
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="path/to/yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+Para passos mais detalhados, visita a nossa seção sobre Predição em Lote.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar8](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[COCoderUni1](https://github.com/CoderUni)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+Criado 12 de nov. de 2023Atualizado mês passado
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

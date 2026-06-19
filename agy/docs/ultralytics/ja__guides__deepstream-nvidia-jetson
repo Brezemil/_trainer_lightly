@@ -1,0 +1,374 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/deepstream-nvidia-jetson
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/deepstream-nvidia-jetson.md)
+
+# Link to this sectionNVIDIA Jetson上でのDeepStream SDKとTensorRTを使用したUltralytics YOLO26#
+
+  
+
+
+  
+**Watch:** How to use Ultralytics YOLO26 models with NVIDIA Deepstream on Jetson Orin NX 🚀 
+
+この包括的なガイドでは、DeepStream SDKとTensorRTを使用して[NVIDIA Jetson](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/)デバイスにUltralytics YOLO26をデプロイするための詳細な手順を説明します。ここでは、Jetsonプラットフォームでの推論パフォーマンスを最大化するためにTensorRTを使用します。
+
+![NVIDIA DeepStream SDK on Jetson platform](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/deepstream-nvidia-jetson.avif)
+
+注意
+
+This guide has been tested with [NVIDIA Jetson Orin Nano Super Developer Kit](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/nano-super-developer-kit) running the latest stable JetPack release of [JP6.1](https://developer.nvidia.com/embedded/jetpack-sdk-61), [Seeed Studio reComputer J4012](https://www.seeedstudio.com/reComputer-J4012-p-5586.html) which is based on NVIDIA Jetson Orin NX 16GB running JetPack release of [JP5.1.3](https://developer.nvidia.com/embedded/jetpack-sdk-513) and [Seeed Studio reComputer J1020 v2](https://www.seeedstudio.com/reComputer-J1020-v2-p-5498.html) which is based on NVIDIA Jetson Nano 4GB running JetPack release of [JP4.6.4](https://developer.nvidia.com/jetpack-sdk-464). It is expected to work across all the NVIDIA Jetson hardware lineup including latest and legacy.
+
+## Link to this sectionNVIDIA DeepStreamとは何ですか？#
+
+[NVIDIAのDeepStream SDK](https://developer.nvidia.com/deepstream-sdk)は、GStreamerをベースにしたAIマルチセンサー処理、ビデオ、オーディオ、画像認識のための完全なストリーミング分析ツールキットです。これは、IVA（インテリジェントビデオ分析）アプリやサービスを構築するビジョンAI開発者、ソフトウェアパートナー、スタートアップ、OEMにとって理想的です。[ニューラルネットワーク](https://www.ultralytics.com/glossary/neural-network-nn)や、トラッキング、動画のエンコード/デコード、動画レンダリングといった他の複雑な処理タスクを組み込んだストリーム処理パイプラインを作成できるようになりました。これらのパイプラインにより、ビデオ、画像、センサーデータのリアルタイム分析が可能になります。DeepStreamのマルチプラットフォームサポートにより、オンプレミス、エッジ、クラウド上でビジョンAIアプリケーションやサービスをより迅速かつ簡単に開発できます。
+
+## Link to this section前提条件#
+
+このガイドを始める前に：
+
+  * ドキュメント「[クイックスタートガイド: NVIDIA JetsonとUltralytics YOLO26](/ja/guides/nvidia-jetson)」にアクセスして、NVIDIA JetsonデバイスでUltralytics YOLO26をセットアップしてください。
+  * JetPackのバージョンに合わせて[DeepStream SDK](https://developer.nvidia.com/deepstream-getting-started)をインストールしてください。 
+    * JetPack 4.6.4の場合、[DeepStream 6.0.1](https://archive.docs.nvidia.com/metropolis/deepstream/6.0.1/dev-guide/text/DS_Quickstart.html)をインストールしてください。
+    * JetPack 5.1.3の場合、[DeepStream 6.3](https://archive.docs.nvidia.com/metropolis/deepstream/6.3/dev-guide/text/DS_Quickstart.html)をインストールしてください。
+    * JetPack 6.1の場合、[DeepStream 7.1](https://docs.nvidia.com/metropolis/deepstream/7.1/text/DS_Overview.html)をインストールしてください。
+    * JetPack 7.1の場合、[DeepStream 9.0](https://docs.nvidia.com/metropolis/deepstream/9.0/text/DS_Overview.html)をインストールしてください。
+
+
+
+ヒント
+
+このガイドでは、JetsonデバイスにDeepStream SDKをインストールするためにDebianパッケージ方式を使用しています。DeepStreamのレガシーバージョンについては、[DeepStream SDK on Jetson (Archived)](https://developer.nvidia.com/embedded/deepstream-on-jetson-downloads-archived)も参照してください。
+
+## Link to this sectionYOLO26用のDeepStream設定#
+
+ここでは、YOLOモデルのNVIDIA DeepStream SDKサポートを含む[marcoslucianops/DeepStream-Yolo](https://github.com/marcoslucianops/DeepStream-Yolo) GitHubリポジトリを使用します。marcoslucianops氏の貢献に感謝します。
+
+  1. 必要な依存関係とともにUltralyticsをインストールしてください。
+         
+         cd ~
+         pip install -U pip
+         git clone https://github.com/ultralytics/ultralytics
+         cd ultralytics
+         pip install -e ".[export]" onnxslim
+
+  2. DeepStream-Yoloリポジトリをクローンします。
+         
+         cd ~
+         git clone https://github.com/marcoslucianops/DeepStream-Yolo
+
+  3. Copy the `export_yolo26.py` file from `DeepStream-Yolo/utils` directory to the `ultralytics` folder
+         
+         cp ~/DeepStream-Yolo/utils/export_yolo26.py ~/ultralytics
+         cd ultralytics
+
+  4. [YOLO26リリース](https://github.com/ultralytics/assets/releases)からお好みのUltralytics YOLO26検出モデル（.pt）をダウンロードしてください。ここでは[yolo26s.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt)を使用します。
+         
+         wget https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt
+
+
+
+
+注意
+
+[カスタムトレーニングしたYOLO26モデル](https://docs.ultralytics.com/modes/train)を使用することも可能です。
+
+  5. モデルをONNXに変換する
+         
+         python3 export_yolo26.py -w yolo26s.pt
+
+
+
+
+以下の引数を上記のコマンドに渡します。
+
+DeepStream 5.1の場合は、`--dynamic`引数を削除し、`opset` 12以下を使用してください。デフォルトの`opset`は17です。
+    
+    
+    --opset 12
+
+推論サイズを変更する場合（デフォルト: 640）
+    
+    
+    -s SIZE
+    --size SIZE
+    -s HEIGHT WIDTH
+    --size HEIGHT WIDTH
+
+1280の場合の例：
+    
+    
+    -s 1280
+    or
+    -s 1280 1280
+
+ONNXモデルを単純化する場合（DeepStream >= 6.0）
+    
+    
+    --simplify
+
+動的バッチサイズを使用する場合（DeepStream >= 6.1）
+    
+    
+    --dynamic
+
+静的バッチサイズを使用する場合（バッチサイズ = 4の例）
+    
+    
+    --batch 4
+
+  6. 生成された`.onnx`モデルファイルと`labels.txt`ファイルを`DeepStream-Yolo`フォルダにコピーします。
+         
+         cp yolo26s.pt.onnx labels.txt ~/DeepStream-Yolo
+         cd ~/DeepStream-Yolo
+
+  7. インストールされているJetPackのバージョンに合わせてCUDAバージョンを設定します。
+
+JetPack 4.6.4の場合：
+         
+         export CUDA_VER=10.2
+
+JetPack 5.1.3の場合：
+         
+         export CUDA_VER=11.4
+
+JetPack 6.1の場合：
+         
+         export CUDA_VER=12.6
+
+  8. ライブラリをコンパイルする
+         
+         make -C nvdsinfer_custom_impl_Yolo clean && make -C nvdsinfer_custom_impl_Yolo
+
+  9. モデルに合わせて`config_infer_primary_yolo26.txt`ファイルを編集します（80クラスのYOLO26sの場合）
+         
+         [property]
+         ...
+         onnx-file=yolo26s.pt.onnx
+         ...
+         num-detected-classes=80
+         ...
+
+  10. `deepstream_app_config`ファイルを編集します。
+         
+         ...
+         [primary-gie]
+         ...
+         config-file=config_infer_primary_yolo26.txt
+
+  11. `deepstream_app_config`ファイルでビデオソースを変更することも可能です。ここではデフォルトのビデオファイルが読み込まれます。
+         
+         ...
+         [source0]
+         ...
+         uri=file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+
+
+
+
+### Link to this section推論を実行する#
+    
+    
+    deepstream-app -c deepstream_app_config.txt
+
+注意
+
+推論を開始する前にTensorRTエンジンファイルを生成するため、時間がかかります。お待ちください。
+
+![YOLO26 with deepstream](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-with-deepstream.avif)
+
+ヒント
+
+If you want to convert the model to FP16 precision, simply set `model-engine-file=model_b1_gpu0_fp16.engine` and `network-mode=2` inside `config_infer_primary_yolo26.txt`
+
+## Link to this sectionINT8キャリブレーション#
+
+推論にINT8精度を使用したい場合は、以下の手順に従う必要があります。
+
+注意
+
+現在、INT8はTensorRT 10.xでは動作しません。このガイドのこのセクションは、動作が確認されているTensorRT 8.xでテストされています。
+
+  1. `OPENCV`環境変数を設定する
+         
+         export OPENCV=1
+
+  2. ライブラリをコンパイルする
+         
+         make -C nvdsinfer_custom_impl_Yolo clean && make -C nvdsinfer_custom_impl_Yolo
+
+  3. COCOデータセットについては、[val2017](http://images.cocodataset.org/zips/val2017.zip)をダウンロードして展開し、`DeepStream-Yolo`フォルダに移動してください。
+
+  4. キャリブレーション画像用の新しいディレクトリを作成します。
+         
+         mkdir calibration
+
+  5. 以下を実行して、COCOデータセットからキャリブレーション用にランダムに1000枚の画像を選択します。
+         
+         for jpg in $(ls -1 val2017/*.jpg | sort -R | head -1000); do
+           cp ${jpg} calibration/
+         done
+
+
+
+
+注意
+
+NVIDIAは、良好な[精度](https://www.ultralytics.com/glossary/accuracy)を得るために少なくとも500枚の画像を推奨しています。この例では、精度を高めるために1000枚の画像が選択されています（画像数が多い＝精度が高い）。**head -1000** で設定可能です。例えば、2000枚の場合は**head -2000** としてください。このプロセスには時間がかかる場合があります。
+
+  6. 選択したすべての画像を含む`calibration.txt`ファイルを作成します。
+         
+         realpath calibration/*jpg > calibration.txt
+
+  7. 環境変数を設定します。
+         
+         export INT8_CALIB_IMG_PATH=calibration.txt
+         export INT8_CALIB_BATCH_SIZE=1
+
+
+
+
+注意
+
+INT8_CALIB_BATCH_SIZEの値が高いほど、精度が向上し、キャリブレーション速度が速くなります。GPUメモリに合わせて設定してください。
+
+  8. `config_infer_primary_yolo26.txt`ファイルを更新します。
+
+From（変更前）
+         
+         ...
+         model-engine-file=model_b1_gpu0_fp32.engine
+         #int8-calib-file=calib.table
+         ...
+         network-mode=0
+         ...
+
+To（変更後）
+         
+         ...
+         model-engine-file=model_b1_gpu0_int8.engine
+         int8-calib-file=calib.table
+         ...
+         network-mode=1
+         ...
+
+
+
+
+### Link to this section推論を実行する#
+    
+    
+    deepstream-app -c deepstream_app_config.txt
+
+## Link to this sectionマルチストリーム設定#
+
+  
+
+
+  
+**Watch:** How to Run Multi-Stream Inference with Ultralytics YOLO26 using NVIDIA DeepStream on Jetson Orin 🚀 
+
+1つのDeepStreamアプリケーションで複数のストリームをセットアップするには、`deepstream_app_config.txt`ファイルに以下の変更を加えます。
+
+  1. 必要なストリーム数に合わせてグリッド表示の行数と列数を変更します。例えば、4つのストリームの場合は2行2列を追加できます。
+         
+         [tiled-display]
+         rows=2
+         columns=2
+
+  2. `num-sources=4`を設定し、4つのストリームすべての`uri`エントリを追加します。
+         
+         [source0]
+         enable=1
+         type=3
+         uri=path/to/video1.jpg
+         uri=path/to/video2.jpg
+         uri=path/to/video3.jpg
+         uri=path/to/video4.jpg
+         num-sources=4
+
+
+
+
+### Link to this section推論を実行する#
+    
+    
+    deepstream-app -c deepstream_app_config.txt
+
+![DeepStream multi-camera streaming configuration](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/multistream-setup.avif)
+
+## Link to this sectionベンチマーク結果#
+
+以下のベンチマークは、NVIDIA Jetson Orin NX 16GB上で640x640の入力サイズを使用して、YOLO26モデルが異なるTensorRT精度レベルでどのように動作するかをまとめたものです。
+
+### Link to this section比較チャート#
+
+![NVIDIA Jetson DeepStream performance benchmarks](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/jetson-deepstream-benchmarks.avif)
+
+### Link to this section詳細な比較表#
+
+性能
+
+形式| ステータス| 推論時間 (ms/im)  
+---|---|---  
+TensorRT (FP32)| ✅| 8.64  
+TensorRT (FP16)| ✅| 5.27  
+TensorRT (INT8)| ✅| 4.54  
+  
+## Link to this section謝辞#
+
+このガイドは、Seeed Studioの友人であるLakshantha氏とElaine氏によって作成されました。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionNVIDIA JetsonデバイスでUltralytics YOLO26をセットアップするにはどうすればよいですか？#
+
+To set up Ultralytics YOLO26 on an [NVIDIA Jetson](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/) device, you first need to install the [DeepStream SDK](https://developer.nvidia.com/deepstream-getting-started) compatible with your JetPack version. Follow the step-by-step guide in our [Quick Start Guide](/ja/guides/nvidia-jetson) to configure your NVIDIA Jetson for YOLO26 deployment.
+
+### Link to this sectionNVIDIA JetsonでYOLO26と共にTensorRTを使用する利点は何ですか？#
+
+YOLO26でTensorRTを使用すると、推論用にモデルが最適化され、NVIDIA Jetsonデバイスにおけるレイテンシが大幅に削減され、スループットが向上します。TensorRTは、レイヤー融合、精度キャリブレーション、カーネル自動チューニングを通じて、高性能で低レイテンシの[ディープラーニング](https://www.ultralytics.com/glossary/deep-learning-dl)推論を提供します。これにより、特にビデオ分析や自律型マシンなどのリアルタイムアプリケーションにとって非常に有用な、より高速で効率的な実行が可能になります。
+
+### Link to this sectionDeepStream SDKを使用して、異なるNVIDIA Jetsonハードウェア間でUltralytics YOLO26を実行できますか？#
+
+はい。DeepStream SDKとTensorRTを使用してUltralytics YOLO26をデプロイするためのガイドは、すべてのNVIDIA Jetsonラインナップと互換性があります。これには、[JetPack 5.1.3](https://developer.nvidia.com/embedded/jetpack-sdk-513)を搭載したJetson Orin NX 16GBや、[JetPack 4.6.4](https://developer.nvidia.com/jetpack-sdk-464)を搭載したJetson Nano 4GBなどのデバイスが含まれます。詳細な手順については、「YOLO26用のDeepStream設定」セクションを参照してください。
+
+### Link to this sectionDeepStream用にYOLO26モデルをONNXに変換するにはどうすればよいですか？#
+
+To convert a YOLO26 model to ONNX format for deployment with DeepStream, use the `utils/export_yolo26.py` script from the [DeepStream-Yolo](https://github.com/marcoslucianops/DeepStream-Yolo) repository.
+
+コマンド例を以下に示します。
+    
+    
+    python3 utils/export_yolo26.py -w yolo26s.pt --opset 12 --simplify
+
+モデル変換の詳細については、[モデルエクスポートセクション](/ja/modes/export)を確認してください。
+
+### Link to this sectionNVIDIA Jetson Orin NXにおけるYOLOのパフォーマンスベンチマークはどのようなものですか？#
+
+NVIDIA Jetson Orin NX 16GBにおけるYOLO26モデルのパフォーマンスは、TensorRTの精度レベルによって異なります。例えば、YOLO26sモデルでは以下の達成値が得られます。
+
+  * **FP32精度** : 14.6 ms/im, 68.5 FPS
+  * **FP16精度** : 7.94 ms/im, 126 FPS
+  * **INT8精度** : 5.95 ms/im, 168 FPS
+
+
+
+これらのベンチマークは、NVIDIA Jetsonハードウェア上でTensorRT最適化されたYOLO26モデルを使用する際の効率性と性能を強調しています。詳細については、ベンチマーク結果セクションをご覧ください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/deepstream-nvidia-jetson.md)
+
+[GLglenn-jocher11](https://github.com/glenn-jocher)[RIRizwanMunawar5](https://github.com/RizwanMunawar)[LAlakshanthad4](https://github.com/lakshanthad)[Y-Y-T-G2](https://github.com/Y-T-G)[ONonuralpszr2](https://github.com/onuralpszr)[PDpderrenger1](https://github.com/pderrenger)[MImiles-deans-ultralytics1](https://github.com/miles-deans-ultralytics)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+作成日 2024年7月1日更新日 先週
+
+## コメント
+
+このページの内容
+
+AIで探索

@@ -1,0 +1,258 @@
+---
+source_url: https://docs.ultralytics.com/fr/datasets/semantic
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/semantic/index.md)
+
+# Link to this sectionPrésentation des jeux de données de segmentation sémantique#
+
+La [segmentation sémantique](https://www.ultralytics.com/glossary/semantic-segmentation) attribue une étiquette de classe à chaque pixel d'une image. Contrairement à la [segmentation d'instance](/fr/datasets/segment), la segmentation sémantique ne distingue pas les objets individuels d'une même classe. La cible d'entraînement est une carte de classes dense où chaque pixel contient un ID de classe.
+
+Ce guide explique le format de jeu de données utilisé par les modèles de segmentation sémantique YOLO d'Ultralytics et liste les configurations de jeux de données intégrées disponibles pour l'entraînement et la validation.
+
+## Link to this sectionFormats de jeux de données pris en charge#
+
+Deux formats d'étiquettes sont pris en charge. Le chargeur de jeu de données choisit le chemin selon que le YAML du jeu de données définit ou non une clé `masks_dir`.
+
+### Link to this sectionFormat de masque PNG#
+
+Les jeux de données de segmentation sémantique utilisent un fichier image et un fichier masque par échantillon. Le masque est une image à canal unique, généralement au format PNG, où chaque valeur de pixel correspond à l'index de la classe du pixel de l'image associé.
+
+  * Les valeurs de pixel `0`, `1`, `2`, ... représentent les IDs de classe issus du mappage `names` du jeu de données.
+  * La valeur de pixel `255` est traitée comme l'étiquette d'ignorance et est exclue du calcul de la perte et des métriques.
+  * Les fichiers de masque doivent utiliser le même nom de base que le fichier image correspondant, par exemple `frankfurt_000000_000294.png`.
+  * Les masques sont résolus par défaut en `.png` ; s'ils sont manquants, d'autres extensions d'image prises en charge sont également acceptées. Utilise des formats sans perte comme `.png` ou `.tiff`, car la compression avec perte (ex: `.jpg`) corrompt les valeurs de pixel des IDs de classe.
+
+
+
+La disposition par défaut conserve les images et les masques dans des dossiers parallèles. La valeur `masks_dir` du YAML du jeu de données remplace le composant de chemin `images` pour localiser les masques.
+    
+    
+    dataset/
+    ├── images/
+    │   ├── train/
+    │   └── val/
+    └── masks/
+        ├── train/
+        └── val/
+
+Par exemple, une image située dans `images/train/aachen_000000_000019.png` est associée à un masque situé dans `masks/train/aachen_000000_000019.png` lorsque `masks_dir: masks` est défini.
+
+### Link to this sectionFormat d'étiquette de polygone YOLO#
+
+Si ton jeu de données possède déjà des étiquettes de polygone YOLO d'Ultralytics (un `.txt` par image avec des lignes de type `<class-index> <x1> <y1> <x2> <y2> ...`), tu peux entraîner la segmentation sémantique directement à partir de celles-ci — aucune conversion en masque PNG n'est nécessaire. Consulte le [format de jeu de données de segmentation d'instance](/fr/datasets/segment#ultralytics-yolo-format) pour la disposition par ligne.
+
+Ce chemin est sélectionné automatiquement lorsque le YAML du jeu de données **omet** `masks_dir`. Comportement :
+
+  * Les polygones sont convertis en un masque sémantique par image au moment du chargement, triés par zone afin que les petits objets remplacent les plus grands dans les zones de chevauchement.
+  * **Multi-classe** (`N > 1` dans `names`) : une classe `background` supplémentaire est ajoutée après tes classes déclarées pour les pixels non couverts par un polygone. Le modèle est construit avec `N + 1` canaux de sortie et le dernier canal est le fond.
+  * **Classe unique** (`N == 1` dans `names`) : entraîné en tant que 1 classe. Le masque est binaire, avec ta classe déclarée affichée comme `1` et les pixels non couverts par un polygone comme `0`. Aucune classe de fond supplémentaire n'est ajoutée à `names`.
+  * Les pixels ajoutés par le remplissage d'augmentation (ex: recadrage aléatoire) utilisent toujours `255` comme étiquette d'ignorance.
+
+
+
+Utilise ce chemin lorsque tes données sont déjà étiquetées en polygones d'instance et que tu souhaites obtenir un modèle de segmentation sémantique à partir des mêmes fichiers.
+
+### Link to this sectionFormat YAML du jeu de données#
+
+Les jeux de données de segmentation sémantique sont configurés avec des fichiers YAML. Les champs principaux sont :
+
+Clé| Description  
+---|---  
+`path`| Répertoire racine du jeu de données.  
+`train`| Chemin de l'image d'entraînement relatif à `path`, ou un chemin absolu.  
+`val`| Chemin de l'image de validation relatif à `path`, ou un chemin absolu.  
+`test`| Chemin optionnel de l'image de test.  
+`masks_dir`| Nom du répertoire utilisé pour les masques sémantiques. Omet cette clé pour passer au format d'étiquette de polygone YOLO.  
+`names`| Mappage de l'ID de classe vers le nom de la classe.  
+`label_mapping`| Mappage optionnel des IDs du jeu de données source vers les IDs d'entraînement ou `ignore_label`.  
+  
+ultralytics/cfg/datasets/cityscapes8.yaml
+    
+    
+    # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+    
+    # Cityscapes semantic segmentation dataset (19 classes)
+    # Documentation: https://docs.ultralytics.com/datasets/semantic/cityscapes8
+    # Example usage: yolo semantic train data=cityscapes8.yaml model=yolo26n-sem.pt
+    # parent
+    # ├── ultralytics
+    # └── datasets
+    #     └── cityscapes8 ← downloads here (small subset)
+    #         └── images
+    #         └── masks
+    
+    # Dataset root directory
+    path: cityscapes8 # dataset root dir
+    train: images/train # train images (relative to 'path') 4 images
+    val: images/val # val images (relative to 'path') 4 images
+    
+    masks_dir: masks # semantic mask directory
+    
+    # Cityscapes 19-class labels
+    names:
+      0: road
+      1: sidewalk
+      2: building
+      3: wall
+      4: fence
+      5: pole
+      6: traffic light
+      7: traffic sign
+      8: vegetation
+      9: terrain
+      10: sky
+      11: person
+      12: rider
+      13: car
+      14: truck
+      15: bus
+      16: train
+      17: motorcycle
+      18: bicycle
+    
+    # Map source label IDs to train IDs; ignore_label is converted to 255.
+    label_mapping:
+      -1: ignore_label
+      0: ignore_label
+      1: ignore_label
+      2: ignore_label
+      3: ignore_label
+      4: ignore_label
+      5: ignore_label
+      6: ignore_label
+      7: 0
+      8: 1
+      9: ignore_label
+      10: ignore_label
+      11: 2
+      12: 3
+      13: 4
+      14: ignore_label
+      15: ignore_label
+      16: ignore_label
+      17: 5
+      18: ignore_label
+      19: 6
+      20: 7
+      21: 8
+      22: 9
+      23: 10
+      24: 11
+      25: 12
+      26: 13
+      27: 14
+      28: 15
+      29: ignore_label
+      30: ignore_label
+      31: 16
+      32: 17
+      33: 18
+    
+    # Download URL (optional)
+    download: https://github.com/ultralytics/assets/releases/download/v0.0.0/cityscapes8.zip
+
+Utilise `label_mapping` lorsque les IDs des masques sources ne correspondent pas déjà aux IDs de classe d'entraînement contigus. Cityscapes et ADE20K incluent des mappages qui convertissent les IDs d'étiquettes originaux en IDs d'entraînement de segmentation sémantique YOLO et ignorent les étiquettes inutilisées.
+
+## Link to this sectionUtilisation#
+
+Entraîne un modèle de segmentation sémantique YOLO26 avec Python ou l'interface CLI :
+
+Exemple
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained semantic segmentation model
+    model = YOLO("yolo26n-sem.pt")
+    
+    # Train on the Cityscapes8 semantic segmentation dataset
+    results = model.train(data="cityscapes8.yaml", epochs=100, imgsz=1024)
+
+## Link to this sectionJeux de données pris en charge#
+
+Ultralytics fournit des fichiers YAML de jeux de données de segmentation sémantique pour ces jeux de données :
+
+  * [Cityscapes](/fr/datasets/semantic/cityscapes) : Jeu de données de segmentation sémantique de scènes de rue urbaines avec 19 classes d'entraînement.
+  * [Cityscapes8](/fr/datasets/semantic/cityscapes8) : Un sous-ensemble de Cityscapes de 8 images pour des tests rapides et des vérifications CI.
+  * [ADE20K](/fr/datasets/semantic/ade20k) : Jeu de données d'analyse de scène avec 150 classes sémantiques.
+
+
+
+## Link to this sectionAjouter ton propre jeu de données#
+
+### Link to this sectionOption A — Masques PNG#
+
+  1. Enregistre tes images dans des dossiers séparés tels que `images/train` et `images/val`.
+  2. Enregistre un masque à canal unique par image dans les dossiers de masques correspondants, tels que `masks/train` et `masks/val`.
+  3. Assure-toi que les valeurs de pixel des masques sont des IDs de classe. Utilise `255` pour les pixels qui doivent être ignorés.
+  4. Crée un YAML de jeu de données avec `path`, `train`, `val`, `masks_dir` et `names`.
+  5. Ajoute `label_mapping` uniquement lorsque tes IDs de masque nécessitent une conversion vers des IDs d'entraînement contigus.
+
+
+    
+    
+    path: path/to/my-semantic-dataset
+    train: images/train
+    val: images/val
+    masks_dir: masks
+    
+    names:
+        0: background
+        1: road
+        2: building
+
+### Link to this sectionOption B — Étiquettes de polygone#
+
+  1. Dispose les images et les fichiers de polygone `.txt` exactement comme pour la [segmentation d'instance](/fr/datasets/segment).
+  2. Crée un YAML de jeu de données avec `path`, `train`, `val` et `names` — **omet** `masks_dir`.
+  3. N'ajoute pas d'entrée "background" dans `names`. Pour les jeux de données multi-classes, le chargeur en ajoute une automatiquement ; pour les jeux de données à classe unique, l'entraînement reste sur 1 classe — ta classe déclarée devient `1` dans le masque et les pixels non couverts deviennent `0`.
+
+
+    
+    
+    path: path/to/my-polygon-dataset
+    train: images/train
+    val: images/val
+    
+    names:
+        0: person
+        1: car
+
+## Link to this sectionFAQ#
+
+### Link to this sectionQuelle est la différence entre les masques de segmentation sémantique et les étiquettes de segmentation d'instance ?#
+
+Les masques de segmentation sémantique sont des cartes de pixels denses. Chaque pixel stocke un ID de classe, et il y a une image de masque par image d'entraînement. Les étiquettes de segmentation d'instance dans Ultralytics YOLO utilisent des fichiers texte avec des coordonnées de polygone, une ligne par instance d'objet.
+
+### Link to this sectionQuelle valeur de pixel est ignorée pendant l'entraînement ?#
+
+La valeur de pixel `255` est utilisée comme étiquette d'ignorance. Ces pixels sont sautés lors du calcul de la perte et des métriques, ce qui est utile pour les régions vides, les pixels non étiquetés ou les classes en dehors de l'ensemble d'étiquettes d'entraînement.
+
+### Link to this sectionLes noms de fichiers de masque doivent-ils correspondre aux noms de fichiers image ?#
+
+Oui. Chaque masque sémantique doit avoir le même nom de base que l'image correspondante. Le chargeur de jeu de données remplace le composant de répertoire `images` par `masks_dir` et recherche les fichiers de masque correspondants.
+
+### Link to this sectionPuis-je utiliser directement les IDs d'étiquettes du jeu de données original ?#
+
+Oui, s'ils correspondent déjà aux IDs de classe de tes `names`. Si le jeu de données source utilise des IDs non contigus ou inclut des étiquettes qui doivent être ignorées, ajoute une section `label_mapping` pour convertir les valeurs de pixel source en IDs d'entraînement.
+
+### Link to this sectionPuis-je utiliser mon jeu de données de segmentation d'instance pour entraîner la segmentation sémantique ?#
+
+Oui. Les jeux de données de segmentation d'instance utilisent des étiquettes de polygone Ultralytics YOLO (un `.txt` par image avec des lignes `<class-index> <x1> <y1> <x2> <y2> ...`), et les mêmes fichiers peuvent être réutilisés pour la segmentation sémantique — il suffit d'**omettre** `masks_dir` dans le YAML du jeu de données. Le chargeur convertit les polygones en masques par image à la volée. Pour les jeux de données multi-classes (`N > 1`), une classe `background` supplémentaire est ajoutée et le modèle est construit avec `N + 1` canaux de sortie. Pour les jeux de données à classe unique (`N == 1`), l'entraînement reste sur 1 classe — le masque montre ta classe déclarée comme `1` et les pixels non couverts comme `0`.
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/semantic/index.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)
+
+Créé il y a 4 semainesMis à jour il y a 2 semaines
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

@@ -1,0 +1,332 @@
+---
+source_url: https://docs.ultralytics.com/de/guides/kfold-cross-validation
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+# Link to this sectionK-Fold-Kreuzvalidierung mit Ultralytics#
+
+## Link to this sectionEinführung#
+
+Dieser umfassende Leitfaden illustriert die Implementierung der K-Fold-Kreuzvalidierung für [Objekterkennungs-](https://www.ultralytics.com/glossary/object-detection) Datensätze innerhalb des Ultralytics-Ökosystems. Wir nutzen das YOLO-Erkennungsformat und wichtige Python-Bibliotheken wie sklearn, pandas und PyYAML, um dich durch die notwendige Einrichtung, den Prozess der Erzeugung von Feature-Vektoren und die Ausführung eines K-Fold-Datensatz-Splits zu führen.
+
+![K-fold cross validation data splitting](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/k-fold-cross-validation-overview.avif)
+
+Egal, ob dein Projekt das Fruit-Detection-Dataset oder eine benutzerdefinierte Datenquelle umfasst, dieses Tutorial soll dir helfen, die K-Fold-Kreuzvalidierung zu verstehen und anzuwenden, um die Zuverlässigkeit und Robustheit deiner [Machine-Learning-](https://www.ultralytics.com/glossary/machine-learning-ml) Modelle zu stärken. Während wir in diesem Tutorial `k=5` Folds anwenden, denke daran, dass die optimale Anzahl der Folds je nach Datensatz und den Spezifika deines Projekts variieren kann.
+
+Lass uns anfangen.
+
+## Link to this sectionEinrichtung#
+
+  * Deine Annotationen sollten im [YOLO-Erkennungsformat](/de/datasets/detect) vorliegen.
+
+  * Dieser Leitfaden setzt voraus, dass Annotationsdateien lokal verfügbar sind.
+
+  * Für unsere Demonstration verwenden wir das [Fruit-Detection-](https://www.kaggle.com/datasets/lakshaytyagi01/fruit-detection/code) Dataset.
+
+    * Dieser Datensatz enthält insgesamt 8479 Bilder.
+    * Er beinhaltet 6 Klassen-Labels, deren gesamte Instanzanzahlen unten aufgeführt sind.
+
+
+
+Klassen-Label| Instanzanzahl  
+---|---  
+Apple| 7049  
+Grapes| 7202  
+Pineapple| 1613  
+Orange| 15549  
+Banana| 3536  
+Watermelon| 1976  
+  
+  * Notwendige Python-Pakete beinhalten:
+
+    * `ultralytics`
+    * `sklearn`
+    * `pandas`
+    * `pyyaml`
+  * Dieses Tutorial arbeitet mit `k=5` Folds. Du solltest jedoch die beste Anzahl an Folds für deinen spezifischen Datensatz bestimmen.
+
+
+
+  1. Initialisiere eine neue virtuelle Python-Umgebung (`venv`) für dein Projekt und aktiviere sie. Nutze `pip` (oder deinen bevorzugten Paketmanager) für die Installation:
+
+     * Die Ultralytics-Bibliothek: `pip install -U ultralytics`. Alternativ kannst du das offizielle [Repo](https://github.com/ultralytics/ultralytics) klonen.
+     * Scikit-learn, pandas und PyYAML: `pip install -U scikit-learn pandas pyyaml`.
+  2. Überprüfe, ob deine Annotationen im [YOLO-Erkennungsformat](/de/datasets/detect) vorliegen.
+
+     * Für dieses Tutorial befinden sich alle Annotationsdateien im Verzeichnis `Fruit-Detection/labels`.
+
+
+
+## Link to this sectionGenerierung von Feature-Vektoren für ein Objekterkennungs-Dataset#
+
+  1. Beginne mit der Erstellung einer neuen `example.py` Python-Datei für die folgenden Schritte.
+
+  2. Fahre fort, alle Label-Dateien für deinen Datensatz abzurufen.
+         
+         from pathlib import Path
+         
+         dataset_path = Path("./Fruit-detection")  # replace with 'path/to/dataset' for your custom data
+         labels = sorted(dataset_path.rglob("*labels/*.txt"))  # all data in 'labels'
+
+  3. Lies nun den Inhalt der Datensatz-YAML-Datei und extrahiere die Indizes der Klassen-Labels.
+         
+         import yaml
+         
+         yaml_file = "path/to/data.yaml"  # your data YAML with data directories and names dictionary
+         with open(yaml_file, encoding="utf8") as y:
+             classes = yaml.safe_load(y)["names"]
+         cls_idx = sorted(classes.keys())
+
+  4. Initialisiere einen leeren `pandas` DataFrame.
+         
+         import pandas as pd
+         
+         index = [label.stem for label in labels]  # uses base filename as ID (no extension)
+         labels_df = pd.DataFrame([], columns=cls_idx, index=index)
+
+  5. Zähle die Instanzen jedes in den Annotationsdateien vorhandenen Klassen-Labels.
+         
+         from collections import Counter
+         
+         for label in labels:
+             lbl_counter = Counter()
+         
+             with open(label) as lf:
+                 lines = lf.readlines()
+         
+             for line in lines:
+                 # classes for YOLO label uses integer at first position of each line
+                 lbl_counter[int(line.split(" ", 1)[0])] += 1
+         
+             labels_df.loc[label.stem] = lbl_counter
+         
+         labels_df = labels_df.fillna(0.0)  # replace `nan` values with `0.0`
+
+  6. Das Folgende ist eine beispielhafte Ansicht des gefüllten DataFrames:
+         
+         0    1    2    3    4    5
+         '0000a16e4b057580_jpg.rf.00ab48988370f64f5ca8ea4...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.7e6dce029fb67f01eb19aa7...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.bc4d31cdcbe229dd022957a...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '00020ebf74c4881c_jpg.rf.508192a0a97aa6c4a3b6882...'  0.0  0.0  0.0  1.0  0.0  0.0
+         '00020ebf74c4881c_jpg.rf.5af192a2254c8ecc4188a25...'  0.0  0.0  0.0  1.0  0.0  0.0
+          ...                                                  ...  ...  ...  ...  ...  ...
+         'ff4cd45896de38be_jpg.rf.c4b5e967ca10c7ced3b9e97...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff4cd45896de38be_jpg.rf.ea4c1d37d2884b3e3cbce08...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff5fd9c3c624b7dc_jpg.rf.bb519feaa36fc4bf630a033...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'ff5fd9c3c624b7dc_jpg.rf.f0751c9c3aa4519ea3c9d6a...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'fffe28b31f2a70d4_jpg.rf.7ea16bd637ba0711c53b540...'  0.0  6.0  0.0  0.0  0.0  0.0
+
+
+
+
+Die Zeilen indizieren die Label-Dateien, von denen jede einem Bild in deinem Datensatz entspricht, und die Spalten entsprechen deinen Klassen-Label-Indizes. Jede Zeile repräsentiert einen Pseudo-Feature-Vektor mit der Anzahl jedes in deinem Datensatz vorhandenen Klassen-Labels. Diese Datenstruktur ermöglicht die Anwendung der [K-Fold-Kreuzvalidierung](https://www.ultralytics.com/glossary/cross-validation) auf ein Objekterkennungs-Dataset.
+
+## Link to this sectionK-Fold-Datensatz-Split#
+
+  1. Nun verwenden wir die `KFold`-Klasse aus `sklearn.model_selection`, um `k` Splits des Datensatzes zu generieren.
+
+     * Wichtig: 
+       * Das Setzen von `shuffle=True` stellt eine randomisierte Verteilung der Klassen in deinen Splits sicher.
+       * Durch das Setzen von `random_state=M`, wobei `M` eine gewählte Ganzzahl ist, kannst du reproduzierbare Ergebnisse erzielen.
+    
+    import random
+    
+    from sklearn.model_selection import KFold
+    
+    random.seed(0)  # for reproducibility
+    ksplit = 5
+    kf = KFold(n_splits=ksplit, shuffle=True, random_state=20)  # setting random_state for repeatable results
+    
+    kfolds = list(kf.split(labels_df))
+
+  2. Der Datensatz wurde nun in `k` Folds aufgeteilt, von denen jedes eine Liste mit `train` und `val` Indizes besitzt. Wir erstellen einen DataFrame, um diese Ergebnisse übersichtlicher anzuzeigen.
+         
+         folds = [f"split_{n}" for n in range(1, ksplit + 1)]
+         folds_df = pd.DataFrame(index=index, columns=folds)
+         
+         for i, (train, val) in enumerate(kfolds, start=1):
+             folds_df[f"split_{i}"].loc[labels_df.iloc[train].index] = "train"
+             folds_df[f"split_{i}"].loc[labels_df.iloc[val].index] = "val"
+
+  3. Nun berechnen wir die Verteilung der Klassen-Labels für jedes Fold als Verhältnis der in `val` vorhandenen Klassen zu denen in `train`.
+         
+         fold_lbl_distrb = pd.DataFrame(index=folds, columns=cls_idx)
+         
+         for n, (train_indices, val_indices) in enumerate(kfolds, start=1):
+             train_totals = labels_df.iloc[train_indices].sum()
+             val_totals = labels_df.iloc[val_indices].sum()
+         
+             # To avoid division by zero, we add a small value (1E-7) to the denominator
+             ratio = val_totals / (train_totals + 1e-7)
+             fold_lbl_distrb.loc[f"split_{n}"] = ratio
+
+Das ideale Szenario ist, dass alle Klassenverhältnisse für jeden Split und über alle Klassen hinweg einigermaßen ähnlich sind. Dies hängt jedoch von den Spezifika deines Datensatzes ab.
+
+  4. Als Nächstes erstellen wir die Verzeichnisse und Datensatz-YAML-Dateien für jeden Split.
+         
+         import datetime
+         
+         supported_extensions = [".jpg", ".jpeg", ".png"]
+         
+         # Initialize an empty list to store image file paths
+         images = []
+         
+         # Loop through supported extensions and gather image files
+         for ext in supported_extensions:
+             images.extend(sorted((dataset_path / "images").rglob(f"*{ext}")))
+         
+         # Create the necessary directories and dataset YAML files
+         save_path = Path(dataset_path / f"{datetime.date.today().isoformat()}_{ksplit}-Fold_Cross-val")
+         save_path.mkdir(parents=True, exist_ok=True)
+         ds_yamls = []
+         
+         for split in folds_df.columns:
+             # Create directories
+             split_dir = save_path / split
+             split_dir.mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "labels").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "labels").mkdir(parents=True, exist_ok=True)
+         
+             # Create dataset YAML files
+             dataset_yaml = split_dir / f"{split}_dataset.yaml"
+             ds_yamls.append(dataset_yaml)
+         
+             with open(dataset_yaml, "w") as ds_y:
+                 yaml.safe_dump(
+                     {
+                         "path": split_dir.as_posix(),
+                         "train": "train",
+                         "val": "val",
+                         "names": classes,
+                     },
+                     ds_y,
+                 )
+
+  5. Kopiere schließlich Bilder und Labels in das entsprechende Verzeichnis ('train' oder 'val') für jeden Split.
+
+     * **HINWEIS:** Die Zeit, die für diesen Teil des Codes benötigt wird, variiert je nach Größe deines Datensatzes und deiner System-Hardware.
+    
+    import shutil
+    
+    from tqdm import tqdm
+    
+    for image, label in tqdm(zip(images, labels), total=len(images), desc="Copying files"):
+        for split, k_split in folds_df.loc[image.stem].items():
+            # Destination directory
+            img_to_path = save_path / split / k_split / "images"
+            lbl_to_path = save_path / split / k_split / "labels"
+    
+            # Copy image and label files to new directory (SamefileError if file already exists)
+            shutil.copy(image, img_to_path / image.name)
+            shutil.copy(label, lbl_to_path / label.name)
+
+
+
+
+## Link to this sectionDatensätze speichern (Optional)#
+
+Optional kannst du die Aufzeichnungen der K-Fold-Split- und Label-Verteilungs-DataFrames als CSV-Dateien für spätere Referenzzwecke speichern.
+    
+    
+    folds_df.to_csv(save_path / "kfold_datasplit.csv")
+    fold_lbl_distrb.to_csv(save_path / "kfold_label_distribution.csv")
+
+## Link to this sectionYOLO mit K-Fold-Datensatz-Splits trainieren#
+
+  1. Lade zuerst das YOLO-Modell.
+         
+         from ultralytics import YOLO
+         
+         weights_path = "path/to/weights.pt"  # use yolo26n.pt for a small model
+         model = YOLO(weights_path, task="detect")
+
+  2. Iteriere als Nächstes über die Datensatz-YAML-Dateien, um das Training auszuführen. Die Ergebnisse werden in einem Verzeichnis gespeichert, das durch die Argumente `project` und `name` spezifiziert ist. Standardmäßig ist dieses Verzeichnis 'runs/detect/train#', wobei # ein ganzzahliger Index ist.
+         
+         results = {}
+         
+         # Define your additional arguments here
+         batch = 16
+         project = "kfold_demo"
+         epochs = 100
+         
+         for k, dataset_yaml in enumerate(ds_yamls):
+             model = YOLO(weights_path, task="detect")
+             results[k] = model.train(
+                 data=dataset_yaml, epochs=epochs, batch=batch, project=project, name=f"fold_{k + 1}"
+             )  # include any additional train arguments
+
+  3. Du kannst auch die Funktion [Ultralytics data.split.autosplit](https://docs.ultralytics.com/reference/data/split) für automatisches Datensatz-Splitting verwenden:
+         
+         from ultralytics.data.split import autosplit
+         
+         # Automatically split dataset into train/val/test
+         autosplit(path="path/to/images", weights=(0.8, 0.2, 0.0), annotated_only=True)
+
+
+
+
+## Link to this sectionFazit#
+
+In diesem Leitfaden haben wir den Prozess der Verwendung der K-Fold-Kreuzvalidierung für das Training des YOLO-Objekterkennungsmodells erkundet. Wir haben gelernt, wie man unseren Datensatz in K-Partitionen aufteilt und dabei eine ausgewogene Klassenverteilung über die verschiedenen Folds sicherstellt.
+
+Wir haben zudem das Verfahren zur Erstellung von Report-DataFrames erkundet, um die Datensatz-Splits und Label-Verteilungen über diese Splits zu visualisieren, was uns einen klaren Einblick in die Struktur unserer Trainings- und Validierungssets gibt.
+
+Optional haben wir unsere Aufzeichnungen für spätere Referenzzwecke gespeichert, was besonders bei groß angelegten Projekten oder bei der Fehlersuche in der Modellperformance nützlich sein kann.
+
+Abschließend haben wir das tatsächliche Modelltraining unter Verwendung jedes Splits in einer Schleife implementiert und unsere Trainingsergebnisse für weitere Analysen und Vergleiche gespeichert.
+
+Diese Technik der K-Fold-Kreuzvalidierung ist eine robuste Methode, um das Beste aus deinen verfügbaren Daten herauszuholen, und sie hilft sicherzustellen, dass deine Modellperformance über verschiedene Datensubsets hinweg zuverlässig und konsistent ist. Dies führt zu einem besser generalisierbaren und zuverlässigeren Modell, das weniger anfällig dafür ist, [Overfitting](https://www.ultralytics.com/glossary/overfitting) auf spezifische Datenmuster zu betreiben.
+
+Denke daran, dass diese Schritte, obwohl wir in diesem Leitfaden YOLO verwendet haben, größtenteils auf andere Machine-Learning-Modelle übertragbar sind. Das Verständnis dieser Schritte ermöglicht es dir, die Kreuzvalidierung effektiv in deinen eigenen Machine-Learning-Projekten anzuwenden.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionWas ist K-Fold-Kreuzvalidierung und warum ist sie bei der Objekterkennung nützlich?#
+
+K-Fold-Kreuzvalidierung ist eine Technik, bei der der Datensatz in 'k' Subsets (Folds) unterteilt wird, um die Modellperformance zuverlässiger zu bewerten. Jedes Fold dient sowohl als Trainings- als auch als [Validierungsdaten](https://www.ultralytics.com/glossary/validation-data). Im Kontext der Objekterkennung hilft die Verwendung der K-Fold-Kreuzvalidierung sicherzustellen, dass die Performance deines Ultralytics YOLO-Modells robust und über verschiedene Datensatz-Splits hinweg generalisierbar ist, was dessen Zuverlässigkeit erhöht. Detaillierte Anleitungen zur Einrichtung der K-Fold-Kreuzvalidierung mit Ultralytics YOLO findest du unter K-Fold-Kreuzvalidierung mit Ultralytics.
+
+### Link to this sectionWie implementiere ich die K-Fold-Kreuzvalidierung mit Ultralytics YOLO?#
+
+Um die K-Fold-Kreuzvalidierung mit Ultralytics YOLO zu implementieren, musst du diese Schritte befolgen:
+
+  1. Überprüfe, ob die Annotationen im [YOLO-Erkennungsformat](/de/datasets/detect) vorliegen.
+  2. Verwende Python-Bibliotheken wie `sklearn`, `pandas` und `pyyaml`.
+  3. Erstelle Feature-Vektoren aus deinem Datensatz.
+  4. Teile deinen Datensatz unter Verwendung von `KFold` aus `sklearn.model_selection` auf.
+  5. Trainiere das YOLO-Modell auf jedem Split.
+
+
+
+Einen umfassenden Leitfaden findest du im Abschnitt K-Fold-Datensatz-Split in unserer Dokumentation.
+
+### Link to this sectionWarum sollte ich Ultralytics YOLO für die Objekterkennung verwenden?#
+
+Ultralytics YOLO bietet hochmoderne Echtzeit-Objekterkennung mit hoher [Genauigkeit](https://www.ultralytics.com/glossary/accuracy) und Effizienz. Es ist vielseitig und unterstützt mehrere Aufgaben des [Computer Vision](https://www.ultralytics.com/glossary/computer-vision-cv), wie [Erkennung](/de/tasks/detect), [Instanzsegmentierung](/de/tasks/segment), [semantische Segmentierung](/de/tasks/semantic) und [Klassifizierung](/de/tasks/classify). Zudem lässt es sich nahtlos in Tools wie die [Ultralytics-Plattform](https://docs.ultralytics.com/platform) für No-Code-Modelltraining und -Deployment integrieren. Für weitere Details entdecke die Vorteile und Funktionen auf unserer [Ultralytics YOLO-Seite](https://www.ultralytics.com/yolo).
+
+### Link to this sectionWie kann ich sicherstellen, dass meine Annotationen das korrekte Format für Ultralytics YOLO haben?#
+
+Deine Annotationen sollten dem YOLO-Erkennungsformat folgen. Jede Annotationsdatei muss die Objektklasse neben ihren [Bounding-Box-](https://www.ultralytics.com/glossary/bounding-box) Koordinaten im Bild auflisten. Das YOLO-Format sorgt für eine optimierte und standardisierte Datenverarbeitung beim Training von Objekterkennungsmodellen. Weitere Informationen zur richtigen Formatierung von Annotationen findest du im [Leitfaden zum YOLO-Erkennungsformat](/de/datasets/detect).
+
+### Link to this sectionKann ich die K-Fold-Kreuzvalidierung auch mit anderen benutzerdefinierten Datensätzen außer Fruit Detection verwenden?#
+
+Ja, du kannst die K-Fold-Kreuzvalidierung mit jedem benutzerdefinierten Datensatz verwenden, sofern die Annotationen im YOLO-Erkennungsformat vorliegen. Ersetze die Datensatzpfade und Klassen-Labels durch diejenigen, die für deinen benutzerdefinierten Datensatz spezifisch sind. Diese Flexibilität stellt sicher, dass jedes Objekterkennungsprojekt von einer robusten Modellbewertung mittels K-Fold-Kreuzvalidierung profitieren kann. Ein praktisches Beispiel findest du in unserem Abschnitt Generierung von Feature-Vektoren.
+
+Mitwirkende
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+[GLglenn-jocher21](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[AMambitious-octopus1](https://github.com/ambitious-octopus)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[BUBurhan-Q1](https://github.com/Burhan-Q)[M-M-Amrollahi1](https://github.com/M-Amrollahi)[IVIvorZhu3311](https://github.com/IvorZhu331)
+
+Erstellt 12\. Nov. 2023Aktualisiert vor 2 Wochen
+
+## Kommentare
+
+Auf dieser Seite
+
+Mit KI erkunden

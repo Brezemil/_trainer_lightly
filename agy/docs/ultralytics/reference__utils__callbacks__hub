@@ -1,0 +1,357 @@
+---
+source_url: https://docs.ultralytics.com/reference/utils/callbacks/hub
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/reference/utils/callbacks/hub.md)
+
+# Link to this sectionReference for `ultralytics/utils/callbacks/hub.py`#
+
+Improvements
+
+This page is sourced from <https://github.com/ultralytics/ultralytics/blob/main/ultralytics/utils/callbacks/hub.py>. Have an improvement or example to add? Open a [Pull Request](https://docs.ultralytics.com/help/contributing) — thank you! 🙏
+
+  
+
+
+Summary
+
+  * `on_pretrain_routine_start`
+  * `on_pretrain_routine_end`
+  * `on_fit_epoch_end`
+  * `on_model_save`
+  * `on_train_end`
+  * `on_train_start`
+  * `on_val_start`
+  * `on_predict_start`
+  * `on_export_start`
+
+
+
+## Link to this sectionFunction `ultralytics.utils.callbacks.hub.on_pretrain_routine_start`#
+    
+    
+    def on_pretrain_routine_start(trainer)
+
+Create a remote Ultralytics HUB session to log local model training.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`trainer`| | |  _required_  
+  
+Source code in `ultralytics/utils/callbacks/hub.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/utils/callbacks/hub.py#L11-L14)
+    
+    
+    def on_pretrain_routine_start(trainer):
+        """Create a remote Ultralytics HUB session to log local model training."""
+        if RANK in {-1, 0} and SETTINGS["hub"] is True and SETTINGS["api_key"] and trainer.hub_session is None:
+            trainer.hub_session = HUBTrainingSession.create_session(trainer.args.model, trainer.args)
+
+  
+  
+
+
+* * *
+
+  
+
+
+## Link to this sectionFunction `ultralytics.utils.callbacks.hub.on_pretrain_routine_end`#
+    
+    
+    def on_pretrain_routine_end(trainer)
+
+Initialize timers for upload rate limiting before training begins.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`trainer`| | |  _required_  
+  
+Source code in `ultralytics/utils/callbacks/hub.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/utils/callbacks/hub.py#L17-L21)
+    
+    
+    def on_pretrain_routine_end(trainer):
+        """Initialize timers for upload rate limiting before training begins."""
+        if session := getattr(trainer, "hub_session", None):
+            # Start timer for upload rate limit
+            session.timers = {"metrics": time(), "ckpt": time()}  # start timer for session rate limiting
+
+  
+  
+
+
+* * *
+
+  
+
+
+## Link to this sectionFunction `ultralytics.utils.callbacks.hub.on_fit_epoch_end`#
+    
+    
+    def on_fit_epoch_end(trainer)
+
+Upload training progress metrics to Ultralytics HUB at the end of each epoch.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`trainer`| | |  _required_  
+  
+Source code in `ultralytics/utils/callbacks/hub.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/utils/callbacks/hub.py#L24-L46)
+    
+    
+    def on_fit_epoch_end(trainer):
+        """Upload training progress metrics to Ultralytics HUB at the end of each epoch."""
+        if session := getattr(trainer, "hub_session", None):
+            # Upload metrics after validation ends
+            all_plots = {
+                **trainer.label_loss_items(trainer.tloss, prefix="train"),
+                **trainer.metrics,
+            }
+            if trainer.epoch == 0:
+                from ultralytics.utils.torch_utils import model_info_for_loggers
+    
+                all_plots = {**all_plots, **model_info_for_loggers(trainer)}
+    
+            session.metrics_queue[trainer.epoch] = json.dumps(all_plots)
+    
+            # If any metrics failed to upload previously, add them to the queue to attempt uploading again
+            if session.metrics_upload_failed_queue:
+                session.metrics_queue.update(session.metrics_upload_failed_queue)
+    
+            if time() - session.timers["metrics"] > session.rate_limits["metrics"]:
+                session.upload_metrics()
+                session.timers["metrics"] = time()  # reset timer
+                session.metrics_queue = {}  # reset queue
+
+  
+  
+
+
+* * *
+
+  
+
+
+## Link to this sectionFunction `ultralytics.utils.callbacks.hub.on_model_save`#
+    
+    
+    def on_model_save(trainer)
+
+Upload model checkpoints to Ultralytics HUB with rate limiting.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`trainer`| | |  _required_  
+  
+Source code in `ultralytics/utils/callbacks/hub.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/utils/callbacks/hub.py#L49-L57)
+    
+    
+    def on_model_save(trainer):
+        """Upload model checkpoints to Ultralytics HUB with rate limiting."""
+        if session := getattr(trainer, "hub_session", None):
+            # Upload checkpoints with rate limiting
+            is_best = trainer.best_fitness == trainer.fitness
+            if time() - session.timers["ckpt"] > session.rate_limits["ckpt"]:
+                LOGGER.info(f"{PREFIX}Uploading checkpoint {HUB_WEB_ROOT}/models/{session.model.id}")
+                session.upload_model(trainer.epoch, trainer.last, is_best)
+                session.timers["ckpt"] = time()  # reset timer
+
+  
+  
+
+
+* * *
+
+  
+
+
+## Link to this sectionFunction `ultralytics.utils.callbacks.hub.on_train_end`#
+    
+    
+    def on_train_end(trainer)
+
+Upload final model and metrics to Ultralytics HUB at the end of training.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`trainer`| | |  _required_  
+  
+Source code in `ultralytics/utils/callbacks/hub.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/utils/callbacks/hub.py#L60-L72)
+    
+    
+    def on_train_end(trainer):
+        """Upload final model and metrics to Ultralytics HUB at the end of training."""
+        if session := getattr(trainer, "hub_session", None):
+            # Upload final model and metrics with exponential backoff
+            LOGGER.info(f"{PREFIX}Syncing final model...")
+            session.upload_model(
+                trainer.epoch,
+                trainer.best,
+                map=trainer.metrics.get("metrics/mAP50-95(B)", 0),
+                final=True,
+            )
+            session.alive = False  # stop heartbeats
+            LOGGER.info(f"{PREFIX}Done ✅\n{PREFIX}View model at {session.model_url} 🚀")
+
+  
+  
+
+
+* * *
+
+  
+
+
+## Link to this sectionFunction `ultralytics.utils.callbacks.hub.on_train_start`#
+    
+    
+    def on_train_start(trainer)
+
+Run events on train start.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`trainer`| | |  _required_  
+  
+Source code in `ultralytics/utils/callbacks/hub.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/utils/callbacks/hub.py#L75-L77)
+    
+    
+    def on_train_start(trainer):
+        """Run events on train start."""
+        events(trainer.args, trainer.device)
+
+  
+  
+
+
+* * *
+
+  
+
+
+## Link to this sectionFunction `ultralytics.utils.callbacks.hub.on_val_start`#
+    
+    
+    def on_val_start(validator)
+
+Run events on validation start.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`validator`| | |  _required_  
+  
+Source code in `ultralytics/utils/callbacks/hub.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/utils/callbacks/hub.py#L80-L83)
+    
+    
+    def on_val_start(validator):
+        """Run events on validation start."""
+        if not validator.training:
+            events(validator.args, validator.device)
+
+  
+  
+
+
+* * *
+
+  
+
+
+## Link to this sectionFunction `ultralytics.utils.callbacks.hub.on_predict_start`#
+    
+    
+    def on_predict_start(predictor)
+
+Run events on predict start.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`predictor`| | |  _required_  
+  
+Source code in `ultralytics/utils/callbacks/hub.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/utils/callbacks/hub.py#L86-L89)
+    
+    
+    def on_predict_start(predictor):
+        """Run events on predict start."""
+        backend = getattr(getattr(predictor, "model", None), "backend", None)
+        events(predictor.args, predictor.device, backend=backend)
+
+  
+  
+
+
+* * *
+
+  
+
+
+## Link to this sectionFunction `ultralytics.utils.callbacks.hub.on_export_start`#
+    
+    
+    def on_export_start(exporter)
+
+Run events on export start.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`exporter`| | |  _required_  
+  
+Source code in `ultralytics/utils/callbacks/hub.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/utils/callbacks/hub.py#L92-L94)
+    
+    
+    def on_export_start(exporter):
+        """Run events on export start."""
+        events(exporter.args, exporter.device)
+
+  
+  
+
+
+Contributors
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/reference/utils/callbacks/hub.md)
+
+[GLglenn-jocher9](https://github.com/glenn-jocher)[JKjk4e1](https://github.com/jk4e)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+Created Nov 12, 2023Updated 1 month ago
+
+On This Page
+
+Explore with AI

@@ -1,0 +1,332 @@
+---
+source_url: https://docs.ultralytics.com/ko/guides/kfold-cross-validation
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+# Link to this sectionUltralytics를 활용한 K-Fold 교차 검증#
+
+## Link to this section소개#
+
+이 포괄적인 가이드는 Ultralytics 생태계 내의 [객체 탐지](https://www.ultralytics.com/glossary/object-detection) 데이터셋에 대해 K-Fold 교차 검증을 구현하는 방법을 설명합니다. YOLO 탐지 형식과 sklearn, pandas, PyYAML과 같은 핵심 Python 라이브러리를 활용하여 필요한 설정, 특징 벡터 생성 과정, 그리고 K-Fold 데이터셋 분할 실행 과정을 안내합니다.
+
+![K-fold cross validation data splitting](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/k-fold-cross-validation-overview.avif)
+
+프로젝트에 Fruit Detection 데이터셋이 사용되든 커스텀 데이터 소스가 사용되든, 본 튜토리얼은 [머신 러닝](https://www.ultralytics.com/glossary/machine-learning-ml) 모델의 신뢰성과 견고성을 강화하기 위해 K-Fold 교차 검증을 이해하고 적용하도록 돕는 것을 목표로 합니다. 이 튜토리얼에서는 `k=5` 폴드를 적용하지만, 최적의 폴드 수는 데이터셋과 프로젝트의 세부 사항에 따라 달라질 수 있다는 점을 유의하십시오.
+
+시작해 보겠습니다.
+
+## Link to this section설정#
+
+  * 어노테이션은 [YOLO 탐지 형식](/ko/datasets/detect)이어야 합니다.
+
+  * 이 가이드는 어노테이션 파일이 로컬에 준비되어 있다고 가정합니다.
+
+  * 시연을 위해 [Fruit Detection](https://www.kaggle.com/datasets/lakshaytyagi01/fruit-detection/code) 데이터셋을 사용합니다.
+
+    * 이 데이터셋에는 총 8479개의 이미지가 포함되어 있습니다.
+    * 6개의 클래스 라벨이 포함되어 있으며, 각 라벨의 총 인스턴스 수는 아래와 같습니다.
+
+
+
+클래스 라벨| 인스턴스 수  
+---|---  
+Apple| 7049  
+Grapes| 7202  
+Pineapple| 1613  
+Orange| 15549  
+Banana| 3536  
+Watermelon| 1976  
+  
+  * 필요한 Python 패키지는 다음과 같습니다:
+
+    * `ultralytics`
+    * `sklearn`
+    * `pandas`
+    * `pyyaml`
+  * 이 튜토리얼은 `k=5` 폴드로 진행됩니다. 하지만 구체적인 데이터셋에 가장 적합한 폴드 수를 결정해야 합니다.
+
+
+
+  1. 프로젝트를 위한 새로운 Python 가상 환경(`venv`)을 시작하고 활성화하십시오. `pip`(또는 선호하는 패키지 관리자)를 사용하여 설치합니다:
+
+     * Ultralytics 라이브러리: `pip install -U ultralytics`. 대안으로 공식 [저장소](https://github.com/ultralytics/ultralytics)를 복제할 수 있습니다.
+     * Scikit-learn, pandas 및 PyYAML: `pip install -U scikit-learn pandas pyyaml`.
+  2. 어노테이션이 [YOLO 탐지 형식](/ko/datasets/detect)인지 확인하십시오.
+
+     * 이 튜토리얼에서는 모든 어노테이션 파일이 `Fruit-Detection/labels` 디렉토리에 있다고 가정합니다.
+
+
+
+## Link to this section객체 탐지 데이터셋을 위한 특징 벡터 생성#
+
+  1. 아래 단계를 위해 새로운 `example.py` Python 파일을 만드는 것으로 시작하십시오.
+
+  2. 데이터셋의 모든 라벨 파일을 검색하는 단계로 진행합니다.
+         
+         from pathlib import Path
+         
+         dataset_path = Path("./Fruit-detection")  # replace with 'path/to/dataset' for your custom data
+         labels = sorted(dataset_path.rglob("*labels/*.txt"))  # all data in 'labels'
+
+  3. 이제 데이터셋 YAML 파일의 내용을 읽고 클래스 라벨의 인덱스를 추출하십시오.
+         
+         import yaml
+         
+         yaml_file = "path/to/data.yaml"  # your data YAML with data directories and names dictionary
+         with open(yaml_file, encoding="utf8") as y:
+             classes = yaml.safe_load(y)["names"]
+         cls_idx = sorted(classes.keys())
+
+  4. 빈 `pandas` DataFrame을 초기화합니다.
+         
+         import pandas as pd
+         
+         index = [label.stem for label in labels]  # uses base filename as ID (no extension)
+         labels_df = pd.DataFrame([], columns=cls_idx, index=index)
+
+  5. 어노테이션 파일에 존재하는 각 클래스 라벨의 인스턴스 수를 계산합니다.
+         
+         from collections import Counter
+         
+         for label in labels:
+             lbl_counter = Counter()
+         
+             with open(label) as lf:
+                 lines = lf.readlines()
+         
+             for line in lines:
+                 # classes for YOLO label uses integer at first position of each line
+                 lbl_counter[int(line.split(" ", 1)[0])] += 1
+         
+             labels_df.loc[label.stem] = lbl_counter
+         
+         labels_df = labels_df.fillna(0.0)  # replace `nan` values with `0.0`
+
+  6. 다음은 생성된 DataFrame의 샘플 뷰입니다:
+         
+         0    1    2    3    4    5
+         '0000a16e4b057580_jpg.rf.00ab48988370f64f5ca8ea4...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.7e6dce029fb67f01eb19aa7...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.bc4d31cdcbe229dd022957a...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '00020ebf74c4881c_jpg.rf.508192a0a97aa6c4a3b6882...'  0.0  0.0  0.0  1.0  0.0  0.0
+         '00020ebf74c4881c_jpg.rf.5af192a2254c8ecc4188a25...'  0.0  0.0  0.0  1.0  0.0  0.0
+          ...                                                  ...  ...  ...  ...  ...  ...
+         'ff4cd45896de38be_jpg.rf.c4b5e967ca10c7ced3b9e97...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff4cd45896de38be_jpg.rf.ea4c1d37d2884b3e3cbce08...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff5fd9c3c624b7dc_jpg.rf.bb519feaa36fc4bf630a033...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'ff5fd9c3c624b7dc_jpg.rf.f0751c9c3aa4519ea3c9d6a...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'fffe28b31f2a70d4_jpg.rf.7ea16bd637ba0711c53b540...'  0.0  6.0  0.0  0.0  0.0  0.0
+
+
+
+
+행은 데이터셋의 이미지에 해당하는 라벨 파일을 인덱싱하고, 열은 클래스 라벨 인덱스에 해당합니다. 각 행은 데이터셋에 존재하는 각 클래스 라벨의 개수를 나타내는 의사 특징 벡터(pseudo feature-vector)입니다. 이 데이터 구조를 통해 객체 탐지 데이터셋에 [K-Fold 교차 검증](https://www.ultralytics.com/glossary/cross-validation)을 적용할 수 있습니다.
+
+## Link to this sectionK-Fold 데이터셋 분할#
+
+  1. Now we will use the `KFold` class from `sklearn.model_selection` to generate `k` splits of the dataset.
+
+     * 중요: 
+       * `shuffle=True`로 설정하면 분할 내 클래스의 무작위 분포를 보장할 수 있습니다.
+       * `random_state=M`(여기서 `M`은 선택한 정수)을 설정하여 재현 가능한 결과를 얻을 수 있습니다.
+    
+    import random
+    
+    from sklearn.model_selection import KFold
+    
+    random.seed(0)  # for reproducibility
+    ksplit = 5
+    kf = KFold(n_splits=ksplit, shuffle=True, random_state=20)  # setting random_state for repeatable results
+    
+    kfolds = list(kf.split(labels_df))
+
+  2. 데이터셋이 이제 `k`개의 폴드로 분할되었으며, 각 폴드에는 `train` 및 `val` 인덱스 목록이 있습니다. 이 결과를 더 명확하게 표시하기 위해 DataFrame을 구성하겠습니다.
+         
+         folds = [f"split_{n}" for n in range(1, ksplit + 1)]
+         folds_df = pd.DataFrame(index=index, columns=folds)
+         
+         for i, (train, val) in enumerate(kfolds, start=1):
+             folds_df[f"split_{i}"].loc[labels_df.iloc[train].index] = "train"
+             folds_df[f"split_{i}"].loc[labels_df.iloc[val].index] = "val"
+
+  3. 이제 각 폴드에 대해 `val`에 존재하는 클래스와 `train`에 존재하는 클래스의 비율로 클래스 라벨 분포를 계산합니다.
+         
+         fold_lbl_distrb = pd.DataFrame(index=folds, columns=cls_idx)
+         
+         for n, (train_indices, val_indices) in enumerate(kfolds, start=1):
+             train_totals = labels_df.iloc[train_indices].sum()
+             val_totals = labels_df.iloc[val_indices].sum()
+         
+             # To avoid division by zero, we add a small value (1E-7) to the denominator
+             ratio = val_totals / (train_totals + 1e-7)
+             fold_lbl_distrb.loc[f"split_{n}"] = ratio
+
+이상적인 시나리오는 모든 클래스 비율이 각 분할 및 클래스 전반에 걸쳐 상당히 유사한 것입니다. 그러나 이는 데이터셋의 세부 사항에 따라 달라집니다.
+
+  4. 다음으로 각 분할에 대한 디렉토리와 데이터셋 YAML 파일을 생성합니다.
+         
+         import datetime
+         
+         supported_extensions = [".jpg", ".jpeg", ".png"]
+         
+         # Initialize an empty list to store image file paths
+         images = []
+         
+         # Loop through supported extensions and gather image files
+         for ext in supported_extensions:
+             images.extend(sorted((dataset_path / "images").rglob(f"*{ext}")))
+         
+         # Create the necessary directories and dataset YAML files
+         save_path = Path(dataset_path / f"{datetime.date.today().isoformat()}_{ksplit}-Fold_Cross-val")
+         save_path.mkdir(parents=True, exist_ok=True)
+         ds_yamls = []
+         
+         for split in folds_df.columns:
+             # Create directories
+             split_dir = save_path / split
+             split_dir.mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "labels").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "labels").mkdir(parents=True, exist_ok=True)
+         
+             # Create dataset YAML files
+             dataset_yaml = split_dir / f"{split}_dataset.yaml"
+             ds_yamls.append(dataset_yaml)
+         
+             with open(dataset_yaml, "w") as ds_y:
+                 yaml.safe_dump(
+                     {
+                         "path": split_dir.as_posix(),
+                         "train": "train",
+                         "val": "val",
+                         "names": classes,
+                     },
+                     ds_y,
+                 )
+
+  5. 마지막으로 각 분할에 대해 이미지와 라벨을 해당 디렉토리('train' 또는 'val')로 복사합니다.
+
+     * **참고:** 이 코드 부분에 소요되는 시간은 데이터셋 크기와 시스템 하드웨어에 따라 달라집니다.
+    
+    import shutil
+    
+    from tqdm import tqdm
+    
+    for image, label in tqdm(zip(images, labels), total=len(images), desc="Copying files"):
+        for split, k_split in folds_df.loc[image.stem].items():
+            # Destination directory
+            img_to_path = save_path / split / k_split / "images"
+            lbl_to_path = save_path / split / k_split / "labels"
+    
+            # Copy image and label files to new directory (SamefileError if file already exists)
+            shutil.copy(image, img_to_path / image.name)
+            shutil.copy(label, lbl_to_path / label.name)
+
+
+
+
+## Link to this section기록 저장(선택 사항)#
+
+선택적으로, 향후 참조를 위해 K-Fold 분할 기록과 라벨 분포 DataFrame을 CSV 파일로 저장할 수 있습니다.
+    
+    
+    folds_df.to_csv(save_path / "kfold_datasplit.csv")
+    fold_lbl_distrb.to_csv(save_path / "kfold_label_distribution.csv")
+
+## Link to this sectionK-Fold 데이터 분할을 사용하여 YOLO 학습#
+
+  1. 먼저 YOLO 모델을 로드합니다.
+         
+         from ultralytics import YOLO
+         
+         weights_path = "path/to/weights.pt"  # use yolo26n.pt for a small model
+         model = YOLO(weights_path, task="detect")
+
+  2. 다음으로 데이터셋 YAML 파일을 반복하여 학습을 실행합니다. 결과는 `project` 및 `name` 인수에 지정된 디렉토리에 저장됩니다. 기본적으로 이 디렉토리는 'runs/detect/train#'이며, 여기서 #은 정수 인덱스입니다.
+         
+         results = {}
+         
+         # Define your additional arguments here
+         batch = 16
+         project = "kfold_demo"
+         epochs = 100
+         
+         for k, dataset_yaml in enumerate(ds_yamls):
+             model = YOLO(weights_path, task="detect")
+             results[k] = model.train(
+                 data=dataset_yaml, epochs=epochs, batch=batch, project=project, name=f"fold_{k + 1}"
+             )  # include any additional train arguments
+
+  3. 자동 데이터셋 분할을 위해 [Ultralytics data.split.autosplit](https://docs.ultralytics.com/reference/data/split) 기능을 사용할 수도 있습니다:
+         
+         from ultralytics.data.split import autosplit
+         
+         # Automatically split dataset into train/val/test
+         autosplit(path="path/to/images", weights=(0.8, 0.2, 0.0), annotated_only=True)
+
+
+
+
+## Link to this section결론#
+
+이 가이드에서는 YOLO 객체 탐지 모델을 학습하기 위해 K-Fold 교차 검증을 사용하는 과정을 살펴보았습니다. 데이터셋을 K개의 파티션으로 나누어 다양한 폴드 전반에서 균형 잡힌 클래스 분포를 보장하는 방법을 배웠습니다.
+
+또한 데이터 분할 및 라벨 분포를 시각화하기 위해 리포트 DataFrame을 생성하는 절차를 살펴보고, 학습 및 검증 세트의 구조에 대한 명확한 통찰력을 얻었습니다.
+
+선택적으로 향후 참조를 위해 기록을 저장했으며, 이는 대규모 프로젝트나 모델 성능 문제 해결 시 특히 유용할 수 있습니다.
+
+마지막으로 루프 내에서 각 분할을 사용하여 실제 모델 학습을 구현하고 추가 분석 및 비교를 위해 학습 결과를 저장했습니다.
+
+이 K-Fold 교차 검증 기술은 가용한 데이터를 최대한 활용하는 강력한 방법이며, 모델 성능이 서로 다른 데이터 하위 집합 전반에서 신뢰할 수 있고 일관되도록 돕습니다. 그 결과 특정 데이터 패턴에 [과적합](https://www.ultralytics.com/glossary/overfitting)될 가능성이 적은 보다 일반화되고 신뢰할 수 있는 모델이 만들어집니다.
+
+이 가이드에서는 YOLO를 사용했지만, 이러한 단계는 대부분 다른 머신 러닝 모델에도 적용 가능하다는 점을 기억하십시오. 이러한 단계를 이해하면 자신의 머신 러닝 프로젝트에서 효과적으로 교차 검증을 적용할 수 있습니다.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionK-Fold 교차 검증이란 무엇이며 객체 탐지에서 왜 유용한가요?#
+
+K-Fold 교차 검증은 모델 성능을 더 신뢰성 있게 평가하기 위해 데이터셋을 'k'개의 하위 집합(폴드)으로 나누는 기술입니다. 각 폴드는 학습 및 [검증 데이터](https://www.ultralytics.com/glossary/validation-data) 역할을 모두 수행합니다. 객체 탐지 맥락에서 K-Fold 교차 검증을 사용하면 Ultralytics YOLO 모델의 성능이 다양한 데이터 분할 전반에서 견고하고 일반화되어 신뢰성이 향상됩니다. Ultralytics YOLO로 K-Fold 교차 검증을 설정하는 자세한 지침은 Ultralytics를 활용한 K-Fold 교차 검증을 참조하십시오.
+
+### Link to this sectionUltralytics YOLO를 사용하여 K-Fold 교차 검증을 구현하려면 어떻게 해야 하나요?#
+
+Ultralytics YOLO로 K-Fold 교차 검증을 구현하려면 다음 단계를 따라야 합니다:
+
+  1. 어노테이션이 [YOLO 탐지 형식](/ko/datasets/detect)인지 확인하십시오.
+  2. `sklearn`, `pandas`, `pyyaml`과 같은 Python 라이브러리를 사용하십시오.
+  3. 데이터셋에서 특징 벡터를 생성하십시오.
+  4. Split your dataset using `KFold` from `sklearn.model_selection`.
+  5. 각 분할에서 YOLO 모델을 학습시키십시오.
+
+
+
+포괄적인 가이드는 문서의 K-Fold 데이터셋 분할 섹션을 참조하십시오.
+
+### Link to this section객체 탐지에 Ultralytics YOLO를 사용해야 하는 이유는 무엇인가요?#
+
+Ultralytics YOLO offers state-of-the-art, real-time object detection with high [accuracy](https://www.ultralytics.com/glossary/accuracy) and efficiency. It's versatile, supporting multiple [computer vision](https://www.ultralytics.com/glossary/computer-vision-cv) tasks such as [detection](/ko/tasks/detect), [instance segmentation](/ko/tasks/segment), [semantic segmentation](/ko/tasks/semantic), and [classification](/ko/tasks/classify). Additionally, it integrates seamlessly with tools like [Ultralytics Platform](https://docs.ultralytics.com/platform) for no-code model training and deployment. For more details, explore the benefits and features on our [Ultralytics YOLO page](https://www.ultralytics.com/yolo).
+
+### Link to this sectionUltralytics YOLO에 맞는 올바른 형식의 어노테이션인지 어떻게 확인하나요?#
+
+어노테이션은 YOLO 탐지 형식을 따라야 합니다. 각 어노테이션 파일에는 이미지 내 [바운딩 박스](https://www.ultralytics.com/glossary/bounding-box) 좌표와 함께 객체 클래스가 나열되어야 합니다. YOLO 형식은 객체 탐지 모델 학습을 위한 간소화되고 표준화된 데이터 처리를 보장합니다. 적절한 어노테이션 형식에 대한 자세한 내용은 [YOLO 탐지 형식 가이드](/ko/datasets/detect)를 방문하십시오.
+
+### Link to this sectionFruit Detection 외의 커스텀 데이터셋에도 K-Fold 교차 검증을 사용할 수 있나요?#
+
+네, 어노테이션이 YOLO 탐지 형식이라면 어떤 커스텀 데이터셋에도 K-Fold 교차 검증을 사용할 수 있습니다. 데이터셋 경로와 클래스 라벨을 커스텀 데이터셋에 맞는 것으로 교체하십시오. 이러한 유연성 덕분에 모든 객체 탐지 프로젝트가 K-Fold 교차 검증을 통해 견고한 모델 평가의 이점을 누릴 수 있습니다. 실용적인 예제는 특징 벡터 생성 섹션을 검토하십시오.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+[GLglenn-jocher21](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[AMambitious-octopus1](https://github.com/ambitious-octopus)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[BUBurhan-Q1](https://github.com/Burhan-Q)[M-M-Amrollahi1](https://github.com/M-Amrollahi)[IVIvorZhu3311](https://github.com/IvorZhu331)
+
+생성됨 2023년 11월 12일업데이트됨 2주 전
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

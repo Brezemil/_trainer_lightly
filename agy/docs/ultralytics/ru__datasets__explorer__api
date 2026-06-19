@@ -1,0 +1,352 @@
+---
+source_url: https://docs.ultralytics.com/ru/datasets/explorer/api
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/explorer/api.md)
+
+# Link to this sectionUltralytics Explorer API#
+
+Примечание сообщества ⚠️
+
+Начиная с **`ultralytics>=8.3.12`**, Ultralytics Explorer был удален. Чтобы использовать Explorer, установи его с помощью `pip install ultralytics==8.3.11`. Похожие (и расширенные) функции исследования наборов данных доступны в [Ultralytics Platform](https://platform.ultralytics.com/).
+
+## Link to this sectionВведение#
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/ultralytics/blob/main/docs/en/datasets/explorer/explorer.ipynb) Explorer API — это Python API для изучения твоих наборов данных. Он поддерживает фильтрацию и поиск по набору данных с использованием SQL-запросов, векторного поиска сходства и семантического поиска.
+
+  
+
+
+  
+**Watch:** Ultralytics Explorer API Overview 
+
+## Link to this sectionУстановка#
+
+Для некоторых функций Explorer требуются внешние библиотеки. Они устанавливаются автоматически при использовании Explorer. Чтобы установить эти зависимости вручную, используй следующую команду:
+    
+    
+    pip install ultralytics[explorer]
+
+## Link to this sectionИспользование#
+    
+    
+    from ultralytics import Explorer
+    
+    # Create an Explorer object
+    explorer = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    
+    # Create embeddings for your dataset
+    explorer.create_embeddings_table()
+    
+    # Search for similar images to a given image/images
+    df = explorer.get_similar(img="path/to/image.jpg")
+    
+    # Or search for similar images to a given index/indices
+    df = explorer.get_similar(idx=0)
+
+Примечание
+
+Таблица [Embeddings](https://www.ultralytics.com/glossary/embeddings) для заданной пары набора данных и модели создается только один раз и затем используется повторно. Внутри используется [LanceDB](https://lancedb.github.io/lancedb/), который масштабируется на диске, поэтому ты можешь создавать и повторно использовать эмбеддинги для больших наборов данных, таких как COCO, не опасаясь нехватки оперативной памяти.
+
+Если ты хочешь принудительно обновить таблицу эмбеддингов, ты можешь передать `force=True` в метод `create_embeddings_table`.
+
+Ты можешь напрямую получить доступ к объекту таблицы LanceDB для выполнения расширенного анализа. Узнай об этом больше в разделе Работа с таблицей эмбеддингов.
+
+## Link to this section1\. Поиск сходства#
+
+Поиск сходства — это метод поиска изображений, похожих на заданное. Он основан на идее, что похожие изображения будут иметь похожие эмбеддинги. Как только таблица эмбеддингов создана, ты можешь запустить семантический поиск одним из следующих способов:
+
+  * По заданному индексу или списку индексов в наборе данных: `exp.get_similar(idx=[1,10], limit=10)`
+  * По любому изображению или списку изображений, которых нет в наборе данных: `exp.get_similar(img=["path/to/img1", "path/to/img2"], limit=10)`
+
+
+
+В случае нескольких входных данных используется совокупность их эмбеддингов.
+
+Ты получаешь pandas DataFrame с `limit` количеством наиболее похожих точек данных по отношению к входным, а также их расстояние в пространстве эмбеддингов. Ты можешь использовать этот набор данных для дальнейшей фильтрации.
+
+Семантический поиск
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    similar = exp.get_similar(img="https://ultralytics.com/images/bus.jpg", limit=10)
+    print(similar.head())
+    
+    # Search using multiple indices
+    similar = exp.get_similar(
+        img=["https://ultralytics.com/images/bus.jpg", "https://ultralytics.com/images/bus.jpg"],
+        limit=10,
+    )
+    print(similar.head())
+
+### Link to this sectionПостроение графиков похожих изображений#
+
+Ты также можешь построить графики похожих изображений, используя метод `plot_similar`. Этот метод принимает те же аргументы, что и `get_similar`, и отображает похожие изображения в виде сетки.
+
+Построение графиков похожих изображений
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    plt = exp.plot_similar(img="https://ultralytics.com/images/bus.jpg", limit=10)
+    plt.show()
+
+## Link to this section2\. Ask AI (запросы на естественном языке)#
+
+Эта функция позволяет фильтровать твой набор данных с использованием естественного языка, без написания SQL. Генератор запросов на базе ИИ преобразует твой запрос в SQL и возвращает соответствующие результаты. Например, ты можешь спросить: "покажи мне 100 изображений, на которых ровно один человек и 2 собаки. Там могут быть и другие объекты", и он сгенерирует запрос и покажет тебе эти результаты. Примечание: Эта функция использует LLM, поэтому результаты носят вероятностный характер и могут быть неточными.
+
+Ask AI
+    
+    
+    from ultralytics.data.explorer import plot_query_result
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    df = exp.ask_ai("show me 100 images with exactly one person and 2 dogs. There can be other objects too")
+    print(df.head())
+    
+    # plot the results
+    plt = plot_query_result(df)
+    plt.show()
+
+## Link to this section3\. SQL-запросы#
+
+Ты можешь выполнять SQL-запросы к своему набору данных, используя метод `sql_query`. Этот метод принимает SQL-запрос в качестве входных данных и возвращает pandas DataFrame с результатами.
+
+SQL-запрос
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    df = exp.sql_query("WHERE labels LIKE '%person%' AND labels LIKE '%dog%'")
+    print(df.head())
+
+### Link to this sectionПостроение графиков результатов SQL-запроса#
+
+Ты также можешь отобразить результаты SQL-запроса с помощью метода `plot_sql_query`. Этот метод принимает те же аргументы, что и `sql_query`, и отображает результаты в сетке.
+
+Построение графиков результатов SQL-запроса
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    # plot the SQL Query
+    exp.plot_sql_query("WHERE labels LIKE '%person%' AND labels LIKE '%dog%' LIMIT 10")
+
+## Link to this section4\. Работа с таблицей эмбеддингов#
+
+Ты также можешь работать с таблицей эмбеддингов напрямую. После того как таблица эмбеддингов создана, ты можешь получить к ней доступ через `Explorer.table`
+
+Совет
+
+Explorer работает с таблицами [LanceDB](https://lancedb.github.io/lancedb/) внутри системы. Ты можешь обращаться к этой таблице напрямую, используя объект `Explorer.table`, и выполнять «сырые» запросы, применять предварительную и последующую фильтрацию и т. д.
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer()
+    exp.create_embeddings_table()
+    table = exp.table
+
+Вот несколько примеров того, что ты можешь делать с этой таблицей:
+
+### Link to this sectionПолучение «сырых» эмбеддингов#
+
+Пример
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer()
+    exp.create_embeddings_table()
+    table = exp.table
+    
+    embeddings = table.to_pandas()["vector"]
+    print(embeddings)
+
+### Link to this sectionРасширенное создание запросов с предварительными и последующими фильтрами#
+
+Пример
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer(model="yolo11n.pt")
+    exp.create_embeddings_table()
+    table = exp.table
+    
+    # Dummy embedding
+    embedding = [i for i in range(256)]
+    rs = table.search(embedding).metric("cosine").where("").limit(10)
+
+### Link to this sectionСоздание векторного индекса#
+
+При работе с большими наборами данных ты можешь создать выделенный векторный индекс для более быстрого поиска. Это делается с помощью метода `create_index` в таблице LanceDB.
+    
+    
+    table.create_index(num_partitions=..., num_sub_vectors=...)
+
+## Link to this section5\. Применение эмбеддингов#
+
+Ты можешь использовать таблицу эмбеддингов для выполнения различных видов исследовательского анализа. Вот несколько примеров:
+
+### Link to this sectionИндекс сходства#
+
+В Explorer есть операция `similarity_index`:
+
+  * Она пытается оценить, насколько каждая точка данных похожа на остальные элементы набора данных.
+  * Это делается путем подсчета того, сколько эмбеддингов изображений находится ближе, чем `max_dist` к текущему изображению в созданном пространстве эмбеддингов, с учетом `top_k` похожих изображений за раз.
+
+
+
+Она возвращает pandas DataFrame со следующими столбцами:
+
+  * `idx`: Индекс изображения в наборе данных
+  * `im_file`: Путь к файлу изображения
+  * `count`: Количество изображений в наборе данных, которые ближе, чем `max_dist` к текущему изображению
+  * `sim_im_files`: Список путей к `count` похожим изображениям
+
+
+
+Совет
+
+Для заданного набора данных, модели, `max_dist` и `top_k` созданный индекс сходства будет использоваться повторно. В случае, если твой набор данных изменился или тебе просто нужно пересоздать индекс сходства, ты можешь передать `force=True`.
+
+Индекс сходства
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer()
+    exp.create_embeddings_table()
+    
+    sim_idx = exp.similarity_index()
+
+Ты можешь использовать индекс сходства для создания пользовательских условий для фильтрации набора данных. Например, ты можешь отфильтровать изображения, которые не похожи ни на одно другое изображение в наборе данных, используя следующий код:
+    
+    
+    import numpy as np
+    
+    sim_count = np.array(sim_idx["count"])
+    sim_idx["im_file"][sim_count > 30]
+
+### Link to this sectionВизуализация пространства эмбеддингов#
+
+Ты также можешь визуализировать пространство эмбеддингов, используя инструмент построения графиков по своему выбору. Например, вот простой пример с использованием Matplotlib:
+    
+    
+    import matplotlib.pyplot as plt
+    from sklearn.decomposition import PCA
+    
+    # Reduce dimensions using PCA to 3 components for visualization in 3D
+    pca = PCA(n_components=3)
+    reduced_data = pca.fit_transform(embeddings)
+    
+    # Create a 3D scatter plot using Matplotlib Axes3D
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    
+    # Scatter plot
+    ax.scatter(reduced_data[:, 0], reduced_data[:, 1], reduced_data[:, 2], alpha=0.5)
+    ax.set_title("3D Scatter Plot of Reduced 256-Dimensional Data (PCA)")
+    ax.set_xlabel("Component 1")
+    ax.set_ylabel("Component 2")
+    ax.set_zlabel("Component 3")
+    
+    plt.show()
+
+Начни создавать свои собственные отчеты по исследованию наборов данных компьютерного зрения, используя Explorer API. Для вдохновения ознакомься с [примером исследования VOC](/ru/datasets/explorer/explorer).
+
+## Link to this sectionПриложения, созданные с использованием Ultralytics Explorer#
+
+Попробуй наше [демо GUI](/ru/datasets/explorer/dashboard) на основе Explorer API
+
+## Link to this sectionЧАВО#
+
+### Link to this sectionДля чего используется Ultralytics Explorer API?#
+
+Ultralytics Explorer API разработан для комплексного исследования наборов данных. Он позволяет пользователям фильтровать и искать данные с помощью SQL-запросов, векторного поиска сходства и семантического поиска. Этот мощный Python API может обрабатывать большие наборы данных, что делает его идеальным для различных задач [компьютерного зрения](https://www.ultralytics.com/glossary/computer-vision-cv) с использованием моделей Ultralytics.
+
+### Link to this sectionКак установить Ultralytics Explorer API?#
+
+Чтобы установить Ultralytics Explorer API вместе с его зависимостями, используй следующую команду:
+    
+    
+    pip install ultralytics[explorer]
+
+Это автоматически установит все необходимые внешние библиотеки для работы функционала Explorer API. Для получения дополнительных сведений о настройке обратись к разделу по установке нашей документации.
+
+### Link to this sectionКак я могу использовать Ultralytics Explorer API для поиска сходства?#
+
+Ты можешь использовать Ultralytics Explorer API для выполнения поиска сходства, создав таблицу эмбеддингов и выполнив по ней запрос на поиск похожих изображений. Вот базовый пример:
+    
+    
+    from ultralytics import Explorer
+    
+    # Create an Explorer object
+    explorer = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    explorer.create_embeddings_table()
+    
+    # Search for similar images to a given image
+    similar_images_df = explorer.get_similar(img="path/to/image.jpg")
+    print(similar_images_df.head())
+
+Для получения более подробной информации посети раздел «Поиск сходства».
+
+### Link to this sectionКаковы преимущества использования LanceDB с Ultralytics Explorer?#
+
+LanceDB, используемый внутри Ultralytics Explorer, предоставляет масштабируемые дисковые таблицы эмбеддингов. Это гарантирует, что ты сможешь создавать и повторно использовать эмбеддинги для больших наборов данных, таких как COCO, не исчерпывая оперативную память. Эти таблицы создаются только один раз и могут использоваться повторно, что повышает эффективность работы с данными.
+
+### Link to this sectionКак работает функция Ask AI в Ultralytics Explorer API?#
+
+Функция Ask AI позволяет пользователям фильтровать наборы данных с помощью запросов на естественном языке. Эта функция использует LLM для преобразования этих запросов в SQL-запросы в фоновом режиме. Вот пример:
+    
+    
+    from ultralytics import Explorer
+    
+    # Create an Explorer object
+    explorer = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    explorer.create_embeddings_table()
+    
+    # Query with natural language
+    query_result = explorer.ask_ai("show me 100 images with exactly one person and 2 dogs. There can be other objects too")
+    print(query_result.head())
+
+Для получения дополнительных примеров ознакомься с разделом Ask AI.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/explorer/api.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[RIRizwanMunawar3](https://github.com/RizwanMunawar)[RAraimbekovm2](https://github.com/raimbekovm)[AYAyushExel2](https://github.com/AyushExel)[PDpderrenger1](https://github.com/pderrenger)[MImiles-deans-ultralytics1](https://github.com/miles-deans-ultralytics)[ONonuralpszr1](https://github.com/onuralpszr)[MAMatthewNoyce1](https://github.com/MatthewNoyce)[ANankanpy1](https://github.com/ankanpy)
+
+Создано 6 янв. 2024 г.Обновлено 2 недели назад
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

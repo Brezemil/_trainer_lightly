@@ -1,0 +1,218 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/yolo-thread-safe-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+# Link to this sectionYOLO モデルによるスレッドセーフな推論#
+
+マルチスレッド環境で YOLO モデルを実行するには、スレッドセーフを確保するために慎重な検討が必要です。Python の `threading` モジュールを使用すると、複数のスレッドを並行して実行できますが、これらのスレッド間で YOLO モデルを使用する際には、留意すべき重要な安全性の問題があります。このページでは、スレッドセーフな YOLO モデルの推論を作成する方法を解説します。
+
+  
+
+
+  
+**Watch:** How to Perform Thread Safe Inference with Ultralytics YOLO Models in Python | Multi-Threading 🚀 
+
+## Link to this sectionPython スレッドの理解#
+
+Python スレッドは、プログラムが複数の操作を同時に実行できるようにする並列処理の一形態です。しかし、Python のグローバルインタプリタロック（GIL）により、一度に実行できる Python バイトコードは 1 つのスレッドのみです。
+
+![Single-thread vs multi-thread inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/single-vs-multi-thread-examples.avif)
+
+これは制限のように聞こえますが、スレッドは依然として並行性を提供します。特に I/O バウンドな操作や、YOLO の基盤となる C ライブラリによって実行される操作のように、GIL を解放する操作を使用する場合に有効です。
+
+## Link to this section共有モデルインスタンスの危険性#
+
+YOLO モデルをスレッドの外でインスタンス化し、そのインスタンスを複数のスレッド間で共有すると、レースコンディションが発生する可能性があります。これは、同時アクセスによってモデルの内部状態が矛盾した形で変更されるためです。モデルやそのコンポーネントがスレッドセーフではない状態を保持している場合、特に問題となります。
+
+### Link to this sectionスレッドセーフではない例：単一モデルインスタンス#
+
+Python でスレッドを使用する際は、同時実行性の問題を引き起こす可能性のあるパターンを認識することが重要です。避けるべきパターンは、単一の YOLO モデルインスタンスを複数のスレッド間で共有することです。
+    
+    
+    # Unsafe: Sharing a single model instance across threads
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate the model outside the thread
+    shared_model = YOLO("yolo26n.pt")
+    
+    def predict(image_path):
+        """Predicts objects in an image using a preloaded YOLO model, take path string to image as argument."""
+        results = shared_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that share the same model instance
+    Thread(target=predict, args=("image1.jpg",)).start()
+    Thread(target=predict, args=("image2.jpg",)).start()
+
+上記の例では、`shared_model` が複数のスレッドによって使用されています。`predict` が複数のスレッドによって同時に実行される可能性があるため、予測不能な結果を招く恐れがあります。
+
+### Link to this sectionスレッドセーフではない例：複数のモデルインスタンス#
+
+同様に、複数の YOLO モデルインスタンスを使用する場合の安全ではないパターンは以下の通りです。
+    
+    
+    # Unsafe: Sharing multiple model instances across threads can still lead to issues
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate multiple models outside the thread
+    shared_model_1 = YOLO("yolo26n_1.pt")
+    shared_model_2 = YOLO("yolo26n_2.pt")
+    
+    def predict(model, image_path):
+        """Runs prediction on an image using a specified YOLO model, returning the results."""
+        results = model.predict(image_path)
+        # Process results
+    
+    # Starting threads with individual model instances
+    Thread(target=predict, args=(shared_model_1, "image1.jpg")).start()
+    Thread(target=predict, args=(shared_model_2, "image2.jpg")).start()
+
+モデルインスタンスが 2 つに分かれていても、同時実行性の問題のリスクは依然として存在します。`YOLO` の内部実装がスレッドセーフではない場合、別々のインスタンスを使用したとしても、それらがスレッドローカルではない基盤のリソースや状態を共有していれば、レースコンディションを防げない可能性があります。
+
+## Link to this sectionスレッドセーフな推論#
+
+スレッドセーフな推論を行うには、各スレッド内で個別の YOLO モデルをインスタンス化する必要があります。これにより、各スレッドが独自の独立したモデルインスタンスを持つようになり、レースコンディションのリスクが排除されます。
+
+### Link to this sectionスレッドセーフな例#
+
+安全な並列推論のために、各スレッド内で YOLO モデルをインスタンス化する方法は以下の通りです。
+    
+    
+    # Safe: Instantiating a single model inside each thread
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image using a new YOLO model instance in a thread-safe manner; takes image path as input."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that each have their own model instance
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+この例では、各スレッドが独自の `YOLO` インスタンスを作成します。これにより、あるスレッドが他のスレッドのモデル状態に干渉することを防ぎ、各スレッドが他のスレッドとの予期せぬ相互作用なしに安全に推論を実行できるようになります。
+
+## Link to this sectionThreadingLocked デコレータの使用#
+
+Ultralytics は、関数のスレッドセーフな実行を保証するために使用できる `ThreadingLocked` デコレータを提供しています。このデコレータはロックを使用して、一度に 1 つのスレッドのみが装飾された関数を実行できるようにします。
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.utils import ThreadingLocked
+    
+    # Create a model instance
+    model = YOLO("yolo26n.pt")
+    
+    # Decorate the predict method to make it thread-safe
+    @ThreadingLocked()
+    def thread_safe_predict(image_path):
+        """Thread-safe prediction using a shared model instance."""
+        results = model.predict(image_path)
+        return results
+    
+    # Now you can safely call this function from multiple threads
+
+`ThreadingLocked` デコレータは、モデルインスタンスをスレッド間で共有する必要があるものの、一度に 1 つのスレッドのみがアクセスできるようにしたい場合に特に役立ちます。このアプローチは、スレッドごとに新しいモデルインスタンスを作成する場合と比較してメモリを節約できますが、スレッドがロックの解放を待機する必要があるため、同時実行性が低下する可能性があります。
+
+## Link to this section結論#
+
+Python の `threading` で YOLO モデルを使用する場合は、常にそのスレッドを使用するスレッド内でモデルをインスタンス化し、スレッドセーフを確保してください。この慣行により、レースコンディションを回避し、推論タスクを確実に実行できます。
+
+より高度なシナリオやマルチスレッド推論パフォーマンスのさらなる最適化については、[multiprocessing](https://docs.python.org/3/library/multiprocessing.html) を使用したプロセスベースの並列処理、または専用のワーカープロセスを持つタスクキューの活用を検討してください。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionマルチスレッド Python 環境で YOLO モデルを使用する際、レースコンディションを回避するにはどうすればよいですか？#
+
+マルチスレッド Python 環境で Ultralytics YOLO モデルを使用する際にレースコンディションを防ぐには、各スレッド内で個別の YOLO モデルをインスタンス化してください。これにより、各スレッドが独自の独立したモデルインスタンスを持つことになり、モデル状態の同時変更を回避できます。
+
+例：
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image in a thread-safe manner."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+スレッドセーフの確保に関する詳細については、YOLO モデルによるスレッドセーフな推論 を参照してください。
+
+### Link to this sectionPython でマルチスレッド YOLO モデル推論を実行するためのベストプラクティスは何ですか？#
+
+Python でマルチスレッド YOLO モデル推論を安全に実行するには、以下のベストプラクティスに従ってください。
+
+  1. 単一のモデルインスタンスをスレッド間で共有するのではなく、各スレッド内で YOLO モデルをインスタンス化してください。
+  2. グローバルインタプリタロック（GIL）に関連する問題を回避するために、並列処理には Python の `multiprocessing` モジュールを使用してください。
+  3. YOLO の基盤となる C ライブラリによって実行される操作を使用して、GIL を解放してください。
+  4. メモリが懸念される場合は、共有モデルインスタンスに対して `ThreadingLocked` デコレータの使用を検討してください。
+
+
+
+スレッドセーフなモデルインスタンス化の例：
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Runs inference in a thread-safe manner with a new YOLO model instance."""
+        model = YOLO("yolo26n.pt")
+        results = model.predict(image_path)
+        # Process results
+    
+    # Initiate multiple threads
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+詳細な背景については、スレッドセーフな推論 のセクションを参照してください。
+
+### Link to this sectionなぜ各スレッドが独自の YOLO モデルインスタンスを持つべきなのですか？#
+
+各スレッドが独自の YOLO モデルインスタンスを持つべきなのは、レースコンディションを防ぐためです。単一のモデルインスタンスが複数のスレッド間で共有されると、同時アクセスによって予測不能な動作やモデルの内部状態の変更が発生する可能性があります。別々のインスタンスを使用することでスレッドの分離が確保され、マルチスレッドタスクが信頼性の高い安全なものになります。
+
+詳細なガイダンスについては、スレッドセーフではない例：単一モデルインスタンス および スレッドセーフな例 セクションを確認してください。
+
+### Link to this sectionPython のグローバルインタプリタロック（GIL）は YOLO モデルの推論にどのような影響を与えますか？#
+
+Python のグローバルインタプリタロック（GIL）は、一度に 1 つのスレッドのみが Python バイトコードを実行できるようにするため、CPU バウンドなマルチスレッドタスクのパフォーマンスを制限する可能性があります。しかし、I/O バウンドな操作や、YOLO の基盤となる C ライブラリのように GIL を解放するライブラリを使用するプロセスでは、依然として並行性を達成可能です。パフォーマンスを向上させるには、Python の `multiprocessing` モジュールを使用したプロセスベースの並列処理を検討してください。
+
+Python におけるスレッドの詳細については、Python スレッドの理解 セクションを参照してください。
+
+### Link to this sectionYOLO モデルの推論において、スレッド処理の代わりにプロセスベースの並列処理を使用する方が安全ですか？#
+
+はい、Python の `multiprocessing` モジュールを使用する方が安全であり、多くの場合、YOLO モデルの推論を並列実行するのに効率的です。プロセスベースの並列処理は個別のメモリ領域を作成するため、グローバルインタプリタロック（GIL）を回避し、同時実行性の問題のリスクを軽減します。各プロセスは独自の YOLO モデルインスタンスを持ち、独立して動作します。
+
+YOLO モデルによるプロセスベースの並列処理の詳細については、スレッドセーフな推論 のページを参照してください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+[GLglenn-jocher10](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+作成日 2023年11月12日更新日 2 週間前
+
+## コメント
+
+このページの内容
+
+AIで探索

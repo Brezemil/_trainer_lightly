@@ -1,0 +1,276 @@
+---
+source_url: https://docs.ultralytics.com/tr/integrations/amazon-sagemaker
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/amazon-sagemaker.md)
+
+# Link to this sectionYOLO26'yı Amazon SageMaker Uç Noktalarına Dağıtma Kılavuzu#
+
+Deploying advanced [computer vision](https://www.ultralytics.com/glossary/computer-vision-cv) models like [Ultralytics' YOLO26](https://github.com/ultralytics/ultralytics) on Amazon SageMaker Endpoints opens up a wide range of possibilities for various [machine learning](https://www.ultralytics.com/glossary/machine-learning-ml) applications. The key to effectively using these models lies in understanding their setup, configuration, and deployment processes. YOLO26 becomes even more powerful when integrated seamlessly with Amazon SageMaker, a robust and scalable machine learning service by AWS.
+
+Bu kılavuz, YOLO26 [PyTorch](https://www.ultralytics.com/glossary/pytorch) modellerini Amazon SageMaker Uç Noktalarında dağıtma sürecini adım adım anlatacaktır. AWS ortamını hazırlamanın, modeli uygun şekilde yapılandırmanın ve dağıtım için AWS CloudFormation ile AWS Cloud Development Kit (CDK) gibi araçları kullanmanın temellerini öğreneceksin.
+
+## Link to this sectionAmazon SageMaker#
+
+![Amazon SageMaker ML platform architecture](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/amazon-sagemaker-overview.avif)
+
+[Amazon SageMaker](https://aws.amazon.com/sagemaker/), makine öğrenimi modelleri oluşturma, eğitme ve dağıtma sürecini basitleştiren bir Amazon Web Services (AWS) makine öğrenimi hizmetidir. Makine öğrenimi iş akışlarının çeşitli yönlerini yönetmek için geniş bir araç yelpazesi sunar. Buna modelleri ayarlamak için otomatik özellikler, modelleri ölçekli olarak eğitme seçenekleri ve modelleri üretime dağıtmak için kolay yöntemler dahildir. SageMaker, popüler makine öğrenimi çerçevelerini destekleyerek çeşitli projeler için gereken esnekliği sunar. Özellikleri ayrıca veri etiketleme, iş akışı yönetimi ve performans analizini de kapsar.
+
+## Link to this sectionYOLO26'yı Amazon SageMaker Uç Noktalarında Dağıtma#
+
+YOLO26'yı Amazon SageMaker'da dağıtmak, gerçek zamanlı çıkarım için onun yönetilen ortamını kullanmanı ve otomatik ölçeklendirme gibi özelliklerden yararlanmanı sağlar. Aşağıdaki AWS mimarisine bir göz at.
+
+![AWS SageMaker YOLO training architecture](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/aws-architecture.avif)
+
+### Link to this sectionAdım 1: AWS Ortamını Kur#
+
+Öncelikle, aşağıdaki ön koşulların hazır olduğundan emin ol:
+
+  * Bir AWS Hesabı: Henüz bir hesabın yoksa, bir AWS hesabı oluştur.
+
+  * Yapılandırılmış IAM Rolleri: Amazon SageMaker, AWS CloudFormation ve Amazon S3 için gerekli izinlere sahip bir IAM rolüne ihtiyacın olacak. Bu rol, bu hizmetlere erişmesine izin veren politikalara sahip olmalıdır.
+
+  * AWS CLI: Henüz yüklü değilse, AWS Komut Satırı Arayüzü'nü (CLI) indirip yükle ve hesap bilgilerinle yapılandır. Kurulum için [AWS CLI talimatlarını](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) izle.
+
+  * AWS CDK: Henüz yüklü değilse, dağıtım için betik yazmada kullanılacak AWS Cloud Development Kit'i (CDK) yükle. Kurulum için [AWS CDK talimatlarını](https://docs.aws.amazon.com/cdk/v2/guide/#getting_started_install) izle.
+
+  * Yeterli Hizmet Kotası: Amazon SageMaker'da iki ayrı kaynak için yeterli kotalara sahip olduğunu onayla: uç nokta kullanımı için `ml.m5.4xlarge` ve not defteri örneği kullanımı için `ml.m5.4xlarge`. Bunların her biri en az bir kota değeri gerektirir. Mevcut kotaların bu gereksinimin altındaysa, her biri için artış talebinde bulunman önemlidir. [AWS Service Quotas belgelerindeki](https://docs.aws.amazon.com/servicequotas/latest/userguide/request-quota-increase.html#quota-console-increase) ayrıntılı talimatları izleyerek kota artışı talebinde bulunabilirsin.
+
+
+
+
+### Link to this sectionAdım 2: YOLO26 SageMaker Deposunu Klonla#
+
+Bir sonraki adım, YOLO26'yı SageMaker'da dağıtmak için gereken kaynakları içeren belirli AWS deposunu klonlamaktır. GitHub'da barındırılan bu depo, gerekli CDK betiklerini ve yapılandırma dosyalarını içerir.
+
+  * GitHub Deposunu Klonla: host-yolov8-on-sagemaker-endpoint deposunu klonlamak için terminalinde aşağıdaki komutu çalıştır:
+        
+        git clone https://github.com/aws-samples/host-yolov8-on-sagemaker-endpoint.git
+
+  * Klonlanan Dizine Git: Dizini klonlanan depoya değiştir:
+        
+        cd host-yolov8-on-sagemaker-endpoint/yolov8-pytorch-cdk
+
+
+
+
+### Link to this sectionAdım 3: CDK Ortamını Kur#
+
+Artık gerekli koda sahip olduğuna göre, AWS CDK ile dağıtım yapmak için ortamını kur.
+
+  * Bir Python Sanal Ortamı Oluştur: Bu, Python ortamını ve bağımlılıklarını izole eder. Çalıştır:
+        
+        python3 -m venv .venv
+
+  * Sanal Ortamı Etkinleştir:
+        
+        source .venv/bin/activate
+
+  * Bağımlılıkları Yükle: Proje için gerekli Python bağımlılıklarını yükle:
+        
+        pip3 install -r requirements.txt
+
+  * AWS CDK Kitaplığını Yükselt: AWS CDK kitaplığının en son sürümüne sahip olduğundan emin ol:
+        
+        pip install --upgrade aws-cdk-lib
+
+
+
+
+### Link to this sectionAdım 4: AWS CloudFormation Yığınını Oluştur#
+
+  * CDK Uygulamasını Sentezle: CDK kodundan AWS CloudFormation şablonunu oluştur:
+        
+        cdk synth
+
+  * CDK Uygulamasını Önyükle (Bootstrap): AWS ortamını CDK dağıtımı için hazırla:
+        
+        cdk bootstrap
+
+  * Yığını Dağıt: Bu, gerekli AWS kaynaklarını oluşturacak ve modelini dağıtacaktır:
+        
+        cdk deploy
+
+
+
+
+### Link to this sectionAdım 5: YOLO Modelini Dağıt#
+
+Before diving into the deployment instructions, be sure to check out the range of [YOLO26 models offered by Ultralytics](/tr/models). This will help you choose the most appropriate model for your project requirements.
+
+AWS CloudFormation Yığınını oluşturduktan sonra, bir sonraki adım YOLO26'yı dağıtmaktır.
+
+  * Not Defteri Örneğini Aç: AWS Konsoluna git ve Amazon SageMaker hizmetine git. Panodan "Notebook Instances" öğesini seç, ardından CDK dağıtım betiğin tarafından oluşturulan not defteri örneğini bul. Jupyter ortamına erişmek için not defteri örneğini aç.
+
+  * inference.py Dosyasına Eriş ve Değiştir: SageMaker not defteri örneğini Jupyter'de açtıktan sonra, inference.py dosyasını bul. inference.py içindeki output_fn işlevini aşağıda gösterildiği gibi düzenle ve komut dosyasında hiçbir sözdizimi hatası olmadığından emin olarak değişikliklerini kaydet.
+        
+        import json
+        
+        def output_fn(prediction_output):
+            """Formats model outputs as JSON string, extracting attributes like boxes, masks, keypoints."""
+            print("Executing output_fn from inference.py ...")
+            infer = {}
+            for result in prediction_output:
+                if result.boxes is not None:
+                    infer["boxes"] = result.boxes.numpy().data.tolist()
+                if result.masks is not None:
+                    infer["masks"] = result.masks.numpy().data.tolist()
+                if result.keypoints is not None:
+                    infer["keypoints"] = result.keypoints.numpy().data.tolist()
+                if result.obb is not None:
+                    infer["obb"] = result.obb.numpy().data.tolist()
+                if result.probs is not None:
+                    infer["probs"] = result.probs.numpy().data.tolist()
+            return json.dumps(infer)
+
+  * 1_DeployEndpoint.ipynb Kullanarak Uç Noktayı Dağıt: Jupyter ortamında, sm-notebook dizininde bulunan 1_DeployEndpoint.ipynb not defterini aç. Not defterindeki talimatları izle ve YOLO26 modelini indirmek, güncellenmiş çıkarım koduyla paketlemek ve bir Amazon S3 kovasına yüklemek için hücreleri çalıştır. Not defteri, YOLO26 modeli için bir SageMaker uç noktası oluşturma ve dağıtma konusunda sana rehberlik edecektir.
+
+
+
+
+### Link to this sectionAdım 6: Dağıtımını Test Et#
+
+Artık YOLO26 modelin dağıtıldığına göre, performansını ve işlevselliğini test etmek önemlidir.
+
+  * Test Not Defterini Aç: Aynı Jupyter ortamında, yine sm-notebook dizininde bulunan 2_TestEndpoint.ipynb not defterini bul ve aç.
+
+  * Test Not Defterini Çalıştır: Dağıtılan SageMaker uç noktasını test etmek için not defterindeki talimatları izle. Bu, uç noktaya bir görüntü göndermeyi ve çıkarımları çalıştırmayı içerir. Ardından, aşağıda gösterildiği gibi modelin performansını ve [doğruluğunu](https://www.ultralytics.com/glossary/accuracy) görselleştirmek için çıktıyı çizeceksin.
+
+
+
+
+![Testing Results YOLO26](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/testing-results-yolov8.avif)
+
+  * Kaynakları Temizle: Test not defteri ayrıca uç noktayı ve barındırılan modeli temizleme sürecinde sana rehberlik edecektir. Özellikle dağıtılan modeli hemen kullanmayı planlamıyorsan, bu maliyetleri ve kaynakları etkili bir şekilde yönetmek için önemli bir adımdır.
+
+
+
+### Link to this sectionAdım 7: İzleme ve Yönetim#
+
+Testten sonra, dağıtılan modelinin sürekli izlenmesi ve yönetilmesi çok önemlidir.
+
+  * Amazon CloudWatch ile İzle: [Amazon CloudWatch](https://aws.amazon.com/cloudwatch/) kullanarak SageMaker uç noktanın performansını ve sağlığını düzenli olarak kontrol et.
+
+  * Uç Noktayı Yönet: Uç noktanın devam eden yönetimi için SageMaker konsolunu kullan. Bu, gerektiğinde modeli ölçeklendirmeyi, güncellemeyi veya yeniden dağıtmayı içerir.
+
+
+
+
+Bu adımları tamamlayarak, Amazon SageMaker Uç Noktalarında bir YOLO26 modelini başarıyla dağıtmış ve test etmiş olacaksın. Bu süreç, sana makine öğrenimi dağıtımı için AWS hizmetlerini kullanma konusunda pratik deneyim kazandırmakla kalmaz, aynı zamanda gelecekte diğer gelişmiş modelleri dağıtman için de temel oluşturur.
+
+## Link to this sectionÖzet#
+
+Bu kılavuz, AWS CloudFormation ve AWS Cloud Development Kit (CDK) kullanarak YOLO26'yı Amazon SageMaker Uç Noktalarında dağıtma sürecini adım adım anlattı. Süreç, gerekli GitHub deposunu klonlamayı, CDK ortamını kurmayı, AWS hizmetlerini kullanarak modeli dağıtmayı ve SageMaker üzerindeki performansını test etmeyi içerir.
+
+Daha fazla teknik ayrıntı için AWS Makine Öğrenimi Blogundaki [bu makaleye](https://aws.amazon.com/blogs/machine-learning/hosting-yolov8-pytorch-model-on-amazon-sagemaker-endpoints/) başvur. Çeşitli özellikler ve işlevler hakkında daha fazla bilgi edinmek için resmi [Amazon SageMaker Belgelerine](https://docs.aws.amazon.com/sagemaker/latest/dg/realtime-endpoints.html) de göz atabilirsin.
+
+Farklı YOLO26 entegrasyonları hakkında daha fazla bilgi edinmek ister misin? Makine öğrenimi projelerini geliştirebilecek ek araçları ve yetenekleri keşfetmek için [Ultralytics entegrasyon kılavuzu sayfasına](/tr/integrations) git.
+
+## Link to this sectionSSS#
+
+### Link to this sectionUltralytics YOLO26 modelini Amazon SageMaker Uç Noktalarına nasıl dağıtırım?#
+
+Ultralytics YOLO26 modelini Amazon SageMaker Uç Noktalarına dağıtmak için şu adımları izle:
+
+  1. **AWS Ortamını Kur** : Bir AWS Hesabına, gerekli izinlere sahip IAM rollerine ve yapılandırılmış AWS CLI'ya sahip olduğundan emin ol. Henüz yapılmadıysa AWS CDK'yi yükle ([AWS CDK talimatlarına](https://docs.aws.amazon.com/cdk/v2/guide/#getting_started_install) bak).
+  2. **YOLO26 SageMaker Deposunu Klonla** : 
+         
+         git clone https://github.com/aws-samples/host-yolov8-on-sagemaker-endpoint.git
+         cd host-yolov8-on-sagemaker-endpoint/yolov8-pytorch-cdk
+
+  3. **CDK Ortamını Kur** : Bir Python sanal ortamı oluştur, etkinleştir, bağımlılıkları yükle ve AWS CDK kitaplığını yükselt. 
+         
+         python3 -m venv .venv
+         source .venv/bin/activate
+         pip3 install -r requirements.txt
+         pip install --upgrade aws-cdk-lib
+
+  4. **AWS CDK kullanarak Dağıt** : CloudFormation yığınını sentezle ve dağıt, ortamı önyükle. 
+         
+         cdk synth
+         cdk bootstrap
+         cdk deploy
+
+
+
+
+Daha fazla ayrıntı için belgeler bölümünü incele.
+
+### Link to this sectionYOLO26'yı Amazon SageMaker'da dağıtmak için ön koşullar nelerdir?#
+
+YOLO26'yı Amazon SageMaker'da dağıtmak için aşağıdaki ön koşulların hazır olduğundan emin ol:
+
+  1. **AWS Hesabı** : Etkin bir AWS hesabı ([buradan kaydol](https://aws.amazon.com/)).
+  2. **IAM Rolleri** : SageMaker, CloudFormation ve Amazon S3 için izinlere sahip yapılandırılmış IAM rolleri.
+  3. **AWS CLI** : Yüklenmiş ve yapılandırılmış AWS Komut Satırı Arayüzü ([AWS CLI kurulum kılavuzu](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)).
+  4. **AWS CDK** : Yüklenmiş AWS Cloud Development Kit ([CDK kurulum kılavuzu](https://docs.aws.amazon.com/cdk/v2/guide/#getting_started_install)).
+  5. **Hizmet Kotaları** : Hem uç nokta hem de not defteri kullanımı için yeterli `ml.m5.4xlarge` örneği kotası ([kota artışı talep et](https://docs.aws.amazon.com/servicequotas/latest/userguide/request-quota-increase.html#quota-console-increase)).
+
+
+
+Ayrıntılı kurulum için bu bölüme bak.
+
+### Link to this sectionNeden Amazon SageMaker'da Ultralytics YOLO26 kullanmalıyım?#
+
+Amazon SageMaker'da Ultralytics YOLO26 kullanmak çeşitli avantajlar sunar:
+
+  1. **Ölçeklenebilirlik ve Yönetim** : SageMaker, gerçek zamanlı çıkarım ihtiyaçlarında yardımcı olan otomatik ölçeklendirme gibi özelliklere sahip yönetilen bir ortam sağlar.
+  2. **AWS Hizmetleriyle Entegrasyon** : Veri depolama için S3, kod olarak altyapı için CloudFormation ve izleme için CloudWatch gibi diğer AWS hizmetleriyle sorunsuz entegrasyon.
+  3. **Dağıtım Kolaylığı** : AWS CDK betikleri kullanılarak basitleştirilmiş kurulum ve kolaylaştırılmış dağıtım süreçleri.
+  4. **Performans** : Büyük ölçekli çıkarım görevlerini verimli bir şekilde çalıştırmak için Amazon SageMaker'ın yüksek performanslı altyapısından yararlan.
+
+
+
+SageMaker kullanmanın avantajları hakkında daha fazla bilgiyi giriş bölümünde bulabilirsin.
+
+### Link to this sectionAmazon SageMaker'da YOLO26 için çıkarım mantığını özelleştirebilir miyim?#
+
+Evet, Amazon SageMaker'da YOLO26 için çıkarım mantığını özelleştirebilirsin:
+
+  1. **Modify`inference.py`**: Locate and customize the `output_fn` function in the `inference.py` file to tailor output formats.
+         
+         import json
+         
+         def output_fn(prediction_output):
+             """Formats model outputs as JSON string, extracting attributes like boxes, masks, keypoints."""
+             infer = {}
+             for result in prediction_output:
+                 if result.boxes is not None:
+                     infer["boxes"] = result.boxes.numpy().data.tolist()
+                 # Add more processing logic if necessary
+             return json.dumps(infer)
+
+  2. **Güncellenmiş Modeli Dağıt** : Bu değişiklikleri dahil etmek için sağlanan Jupyter not defterlerini (`1_DeployEndpoint.ipynb`) kullanarak modeli yeniden dağıttığından emin ol.
+
+
+
+
+Değiştirilen modeli dağıtmak için ayrıntılı adımlara bak.
+
+### Link to this sectionAmazon SageMaker'da dağıtılan YOLO26 modelini nasıl test edebilirim?#
+
+Amazon SageMaker'da dağıtılan YOLO26 modelini test etmek için:
+
+  1. **Test Not Defterini Aç** : SageMaker Jupyter ortamındaki `2_TestEndpoint.ipynb` not defterini bul.
+  2. **Not Defterini Çalıştır** : Uç noktaya bir görüntü göndermek, çıkarım yapmak ve sonuçları görüntülemek için not defterindeki talimatları izle.
+  3. **Sonuçları Görselleştir** : Algılanan nesnelerin etrafındaki sınırlayıcı kutular gibi performans metriklerini görselleştirmek için yerleşik çizim işlevlerini kullan.
+
+
+
+Kapsamlı test talimatları için test bölümünü ziyaret et.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/amazon-sagemaker.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)[RIRizwanMunawar1](https://github.com/RizwanMunawar)[AMambitious-octopus1](https://github.com/ambitious-octopus)[SEsergiuwaxmann1](https://github.com/sergiuwaxmann)[ABabirami-vina1](https://github.com/abirami-vina)
+
+Oluşturulma 3 Oca 2024Güncellenme 4 ay önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

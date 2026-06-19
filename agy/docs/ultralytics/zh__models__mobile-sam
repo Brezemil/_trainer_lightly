@@ -1,0 +1,255 @@
+---
+source_url: https://docs.ultralytics.com/zh/models/mobile-sam
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/mobile-sam.md)
+
+![MobileSAM 轻量级图像分割模型标志](https://raw.githubusercontent.com/ChaoningZhang/MobileSAM/master/assets/logo2.png)
+
+# Link to this sectionMobile Segment Anything (MobileSAM)#
+
+MobileSAM 是一款紧凑、高效的图像分割模型，专为移动和边缘设备打造。MobileSAM 旨在将 Meta 的 Segment Anything Model ([SAM](/zh/models/sam)) 的强大功能引入计算受限的环境中，它在保持与原始 SAM 流水线兼容的同时，能够提供近乎实时的分割效果。无论你是在开发实时应用程序还是进行轻量级部署，MobileSAM 都能以远低于前代模型的体积和速度要求，提供出色的分割结果。
+
+  
+
+
+  
+**Watch:** How to Run Inference with MobileSAM using Ultralytics | Step-by-Step Guide 🎉 
+
+MobileSAM 已被应用于多种项目中，包括 [Grounding-SAM](https://github.com/IDEA-Research/Grounded-Segment-Anything)、[AnyLabeling](https://github.com/vietanhdev/anylabeling) 以及 [Segment Anything in 3D](https://github.com/Jumpat/SegmentAnythingin3D)。
+
+MobileSAM 在单块 GPU 上使用 10 万张图像的数据集（原始图像的 1%）训练不到一天即可完成。训练代码将在未来发布。
+
+## Link to this section可用模型、支持的任务和操作模式#
+
+下表概述了可用的 MobileSAM 模型、其预训练权重、支持的任务，以及与不同操作模式（如 [推理](/zh/modes/predict)、[验证](/zh/modes/val)、[训练](/zh/modes/train) 和 [导出](/zh/modes/export)）的兼容性。支持的模式用 ✅ 表示，不支持的模式用 ❌ 表示。
+
+模型类型| 预训练权重| 支持的任务| 推理| 验证| 训练| 导出  
+---|---|---|---|---|---|---  
+MobileSAM| [mobile_sam.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/mobile_sam.pt)| [实例分割](/zh/tasks/segment)| ✅| ❌| ❌| ❌  
+  
+## Link to this sectionMobileSAM 与 YOLO 的比较#
+
+下表对比了 Meta 的 SAM 变体、MobileSAM 以及包括 [YOLO26n-seg](/zh/models/yolo26) 在内的 Ultralytics 分割模型之间的差异：
+
+模型| 大小  
+(MB)| 参数量  
+(M)| 速度 (CPU)  
+(ms/im)  
+---|---|---|---  
+Meta SAM-b| 375| 93.7| 41703  
+Meta SAM2-b| 162| 80.8| 28867  
+Meta SAM2-t| 78.1| 38.9| 23430  
+MobileSAM| MobileSAM| 10.1| 23802  
+FastSAM-s 使用 YOLOv8 [主干网络](https://www.ultralytics.com/glossary/backbone)| 23.9| 11.8| 58.0  
+Ultralytics YOLOv8n-seg| **7.1** (小 11.0 倍)| **3.4** (少 11.4 倍)| **24.8** (快 945 倍)  
+Ultralytics YOLO11n-seg| **6.2** (小 12.6 倍)| **2.9** (少 13.4 倍)| **24.3** (快 964 倍)  
+Ultralytics YOLO26n-seg| **6.7** (小 11.7 倍)| **2.7** (少 14.4 倍)| **25.2** (快 930 倍)  
+  
+此比较展示了 SAM 变体与 YOLO 分割模型在模型大小和速度上的显著差异。尽管 SAM 模型提供了独特的自动分割能力，但 YOLO 模型（特别是 YOLOv8n-seg、YOLO11n-seg 和 YOLO26n-seg）在体积、速度和计算效率方面都具有显著优势。
+
+SAM 速度使用 PyTorch 测量，YOLO 速度使用 ONNX Runtime 测量。测试在配备 16GB 内存的 2025 款 Apple M4 Air 上运行，环境为 `torch==2.10.0`、`ultralytics==8.4.31` 和 `onnxruntime==1.24.4`。若要复现这些结果：
+
+示例
+    
+    
+    from ultralytics import ASSETS, SAM, YOLO, FastSAM
+    
+    # Profile SAM2-t, SAM2-b, SAM-b, MobileSAM
+    for file in ["sam_b.pt", "sam2_b.pt", "sam2_t.pt", "mobile_sam.pt"]:
+        model = SAM(file)
+        model.info()
+        model(ASSETS)
+    
+    # Profile FastSAM-s
+    model = FastSAM("FastSAM-s.pt")
+    model.info()
+    model(ASSETS)
+    
+    # Profile YOLO models (ONNX)
+    for file_name in ["yolov8n-seg.pt", "yolo11n-seg.pt", "yolo26n-seg.pt"]:
+        model = YOLO(file_name)
+        model.info()
+        onnx_path = model.export(format="onnx", dynamic=True)
+        model = YOLO(onnx_path)
+        model(ASSETS)
+
+## Link to this section从 SAM 适配到 MobileSAM#
+
+MobileSAM 保留了与原始 [SAM](/zh/models/sam) 相同的流水线，包括预处理、后处理和所有接口。这意味着你可以以最小的改动将工作流从 SAM 迁移到 MobileSAM。
+
+主要区别在于图像编码器：MobileSAM 用小得多的 Tiny-ViT 编码器（5M 参数）替换了原始的 ViT-H 编码器（637M 参数）。在单个 GPU 上，MobileSAM 处理一张图像大约需要 12ms（编码器 8ms，掩码解码器 4ms）。
+
+### Link to this section基于 ViT 的图像编码器比较#
+
+图像编码器| 原始 SAM| MobileSAM  
+---|---|---  
+参数量| 637M| 500 万  
+速度| 452ms| 8ms  
+  
+### Link to this section提示引导的掩码解码器#
+
+掩码解码器| 原始 SAM| MobileSAM  
+---|---|---  
+参数量| 387.6 万| 387.6 万  
+速度| 4ms| 4ms  
+  
+### Link to this section完整流水线比较#
+
+完整流水线 (编码+解码)| 原始 SAM| MobileSAM  
+---|---|---  
+参数量| 641M| 966 万  
+速度| 456ms| 12ms  
+  
+下文通过点提示和框提示演示了 MobileSAM 和原始 SAM 的性能。
+
+![使用点作为提示的图像](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/mask-box.avif)
+
+![使用框作为提示的图像](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/mask-box.avif)
+
+MobileSAM 比 FastSAM 小约 7 倍，快约 5 倍。更多详情，请访问 [MobileSAM 项目页面](https://github.com/ChaoningZhang/MobileSAM)。
+
+## Link to this section在 Ultralytics 中测试 MobileSAM#
+
+正如原始 [SAM](/zh/models/sam) 一样，Ultralytics 提供了简单的接口来测试 MobileSAM，支持点提示和框提示。
+
+### Link to this section模型下载#
+
+从 [Ultralytics 资源库](https://github.com/ultralytics/assets/releases/download/v8.4.0/mobile_sam.pt) 下载 MobileSAM 预训练权重。
+
+### Link to this section点提示#
+
+示例
+    
+    
+    from ultralytics import SAM
+    
+    # Load the model
+    model = SAM("mobile_sam.pt")
+    
+    # Predict a segment based on a single point prompt
+    model.predict("ultralytics/assets/zidane.jpg", points=[900, 370], labels=[1])
+    
+    # Predict multiple segments based on multiple points prompt
+    model.predict("ultralytics/assets/zidane.jpg", points=[[400, 370], [900, 370]], labels=[1, 1])
+    
+    # Predict a segment based on multiple points prompt per object
+    model.predict("ultralytics/assets/zidane.jpg", points=[[[400, 370], [900, 370]]], labels=[[1, 1]])
+    
+    # Predict a segment using both positive and negative prompts.
+    model.predict("ultralytics/assets/zidane.jpg", points=[[[400, 370], [900, 370]]], labels=[[1, 0]])
+
+### Link to this section框提示#
+
+示例
+    
+    
+    from ultralytics import SAM
+    
+    # Load the model
+    model = SAM("mobile_sam.pt")
+    
+    # Predict a segment based on a single box prompt
+    model.predict("ultralytics/assets/zidane.jpg", bboxes=[439, 437, 524, 709])
+    
+    # Predict multiple segments based on multiple box prompts
+    model.predict("ultralytics/assets/zidane.jpg", bboxes=[[439, 437, 524, 709], [114, 196, 313, 708]])
+
+`MobileSAM` 和 `SAM` 共享相同的 API。有关更多使用详情，请参阅 [SAM 文档](/zh/models/sam)。
+
+### Link to this section使用检测模型自动构建分割数据集#
+
+要使用 Ultralytics 框架自动 [标注你的数据集](https://www.ultralytics.com/annotate)，请按照如下方式使用 `auto_annotate` 函数：
+
+示例
+    
+    
+    from ultralytics.data.annotator import auto_annotate
+    
+    auto_annotate(data="path/to/images", det_model="yolo26x.pt", sam_model="mobile_sam.pt")
+
+参数| 类型| 默认值| 描述  
+---|---|---|---  
+`data`| `str`| 必填| 包含目标图像的目录路径，用于标注或分割。  
+`det_model`| `str`| `'yolo26x.pt'`| 用于初始目标检测的 YOLO 检测模型路径。  
+`sam_model`| `str`| `'sam_b.pt'`| 用于分割的 SAM 模型路径（支持 SAM、SAM 2、MobileSAM 和 SAM 3 权重）。  
+`device`| `str`| `''`| 计算设备（例如 'cuda:0'、'cpu' 或 '' 表示自动设备检测）。  
+`conf`| `float`| `0.25`| 用于过滤弱检测的 YOLO 检测置信度阈值。  
+`iou`| `float`| `0.45`| 用于非极大值抑制（Non-Maximum Suppression）以过滤重叠边界框的 IoU 阈值。  
+`imgsz`| `int`| `640`| 用于调整图像大小的输入尺寸（必须是 32 的倍数）。  
+`max_det`| `int`| `300`| 为了内存效率，每张图像的最大检测数。  
+`classes`| `list[int]`| `None`| 要检测的类别索引列表（例如，`[0, 1]` 表示人和自行车）。  
+`output_dir`| `str`| `None`| 标注的保存目录（默认：`<data>_auto_annotate_labels` 同级目录）。  
+  
+## Link to this section引用与致谢#
+
+如果 MobileSAM 对你的研究或开发有所帮助，请考虑引用以下论文：
+
+引用
+    
+    
+    @article{mobile_sam,
+      title={Faster Segment Anything: Towards Lightweight SAM for Mobile Applications},
+      author={Zhang, Chaoning and Han, Dongshen and Qiao, Yu and Kim, Jung Uk and Bae, Sung Ho and Lee, Seungkyu and Hong, Choong Seon},
+      journal={arXiv preprint arXiv:2306.14289},
+      year={2023}
+    }
+
+阅读 [arXiv 上的完整 MobileSAM 论文](https://arxiv.org/pdf/2306.14289)。
+
+## Link to this section常见问题解答#
+
+### Link to this section什么是 MobileSAM，它与原始 SAM 模型有何不同？#
+
+MobileSAM 是一个轻量级、快速的 [image segmentation](https://www.ultralytics.com/glossary/image-segmentation) 模型，专为移动端和边缘应用而优化。它保持了与原始 SAM 相同的流水线，但将大型 ViT-H 编码器（637M 参数）替换为紧凑的 Tiny-ViT 编码器（5M 参数）。这使得 MobileSAM 比原始 SAM 的体积小约 5 倍，速度快 7 倍，每张图像的处理时间约为 12ms，而 SAM 为 456ms。在 [MobileSAM GitHub repository](https://github.com/ChaoningZhang/MobileSAM) 上了解更多关于 MobileSAM 实现的信息。
+
+### Link to this section我该如何在 Ultralytics 中测试 MobileSAM？#
+
+在 Ultralytics 中测试 MobileSAM 非常简单。你可以使用点（Point）和框（Box）提示来预测分割区域。例如，使用点提示：
+    
+    
+    from ultralytics import SAM
+    
+    # Load the model
+    model = SAM("mobile_sam.pt")
+    
+    # Predict a segment based on a point prompt
+    model.predict("ultralytics/assets/zidane.jpg", points=[900, 370], labels=[1])
+
+更多详细信息，请参阅 在 Ultralytics 中测试 MobileSAM 部分。
+
+### Link to this section为什么我应该在移动应用中使用 MobileSAM？#
+
+MobileSAM 因其轻量级设计和快速的推理速度，非常适合移动和边缘应用。与原始 SAM 相比，MobileSAM 体积小了约 5 倍，速度快了 7 倍，使其能够适应计算资源有限的设备上的实时分割任务。其高效性使得移动设备能够执行 [实时图像分割](https://www.ultralytics.com/glossary/real-time-inference) 而无需明显的延迟。此外，MobileSAM 支持针对移动性能优化的 [推理模式](/zh/modes/predict)。
+
+### Link to this sectionMobileSAM 是如何训练的，训练代码是否可用？#
+
+MobileSAM 是在单个 GPU 上使用 10 万张图像数据集（原始数据集的 1%）在不到一天的时间内训练完成的。虽然训练代码将在未来发布，但你目前可以从 [MobileSAM GitHub 仓库](https://github.com/ChaoningZhang/MobileSAM) 获取预训练权重和实现细节。
+
+### Link to this sectionMobileSAM 的主要应用场景有哪些？#
+
+MobileSAM 旨在为移动和边缘环境提供快速、高效的图像分割。主要应用场景包括：
+
+  * **面向移动应用的实时[目标检测和分割](https://www.ultralytics.com/glossary/object-detection)**
+  * **在计算能力有限的设备上进行低延迟图像处理**
+  * **集成到人工智能驱动的移动应用中** ，用于增强现实 (AR)、分析等场景
+
+
+
+有关应用场景和性能的更多详情，请参阅 从 SAM 适配到 MobileSAM 以及 [关于 MobileSAM 应用的 Ultralytics 博客](https://www.ultralytics.com/blog/applications-of-meta-ai-segment-anything-model-2-sam-2)。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/mobile-sam.md)
+
+[GLglenn-jocher25](https://github.com/glenn-jocher)[RIRizwanMunawar6](https://github.com/RizwanMunawar)[RAraimbekovm2](https://github.com/raimbekovm)[PDpderrenger2](https://github.com/pderrenger)[LALaughing-q1](https://github.com/Laughing-q)[Y-Y-T-G1](https://github.com/Y-T-G)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+已创建 2023年11月12日已更新 上周
+
+## 评论
+
+本页内容
+
+使用 AI 探索

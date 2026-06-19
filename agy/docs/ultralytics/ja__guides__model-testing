@@ -1,0 +1,177 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/model-testing
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-testing.md)
+
+# Link to this sectionコンピュータビジョンモデルのテスト方法#
+
+## Link to this sectionはじめに#
+
+モデルのテストとは、[学習済みモデル](/ja/guides/model-training-tips)が、精選されたベンチマークデータではなく、これまで見たことのない実世界のデータ（移動中、照明不足、あるいは一部が隠れているオブジェクトなど）に対してどのようなパフォーマンスを発揮するかを確認することです。[モデル評価](/ja/guides/model-evaluation-insights)がラベル付きデータセット上のメトリクスを測定するのに対し、テストはデプロイ前にモデルの学習済み動作が[アプリケーションの目標](/ja/guides/defining-project-goals)と一致しているかを検証します。本ガイドでは、テストデータの準備、Ultralytics YOLO26モデルのテスト、および[過学習](https://www.ultralytics.com/glossary/overfitting)、学習不足、データ漏洩の検知について解説します。
+
+  
+
+
+  
+**Watch:** How to Test Machine Learning Models | Avoid Data Leakage in Computer Vision 🚀 
+
+## Link to this sectionモデルのテストとモデルの評価の違い#
+
+モデルのテストとモデルの評価は、[コンピュータビジョンプロジェクトの2つの異なるステップ](/ja/guides/steps-of-a-cv-project)です。評価はラベル付きデータセットのメトリクスを用いてパフォーマンスを測定し、テストはモデルの学習済み動作がデプロイ環境に近い条件下で機能するかを確認します。
+
+例えば、犬と猫を認識するように[コンピュータビジョン](https://www.ultralytics.com/glossary/computer-vision-cv)モデルを学習させ、ペットショップで動物の監視にモデルをデプロイしたいとします。モデル評価フェーズでは、ラベル付きデータセットを使用して[精度](https://www.ultralytics.com/glossary/accuracy)、[適合率](https://www.ultralytics.com/glossary/precision)、[再現率](https://www.ultralytics.com/glossary/recall)などのメトリクスを算出します。例えば、そのデータセット内では猫と犬を98%の精度で識別できるかもしれません。
+
+評価後、ペットショップの画像を使用してモデルをテストし、より多様で現実的な条件下で猫や犬をどれだけ正確に識別できるかを確認します。移動中やさまざまな照明条件下、あるいは玩具や家具などで部分的に隠れている場合に、正しく猫や犬をラベル付けできるかをチェックします。モデルのテストは、制御された評価環境の外でもモデルが期待通りに機能することを確認するためのものです。
+
+## Link to this sectionモデルテストの準備#
+
+コンピュータービジョンの[データセット](/ja/guides/preprocessing-annotated-data)は通常、現実世界の状況をシミュレートするためにトレーニングセットとテストセットに分割されます。[トレーニングデータ](https://www.ultralytics.com/glossary/training-data)はモデルを学習させ、テストデータはモデルがこれまで見たことのない例に対してどのように動作するかを検証します。[Ultralytics Platform](https://platform.ultralytics.com)はデータセットの構成とアノテーションを一元管理するため、ラベル付けされたテストセットを構築する際に役立ちます。
+
+テスト前の注意点
+
+  * リアルな表現：これまで見たことのないテストデータは、モデルがデプロイ時に処理するデータと類似している必要があります。これにより、モデルの能力をリアルに把握できます。
+  * 十分なサイズ：テストデータセットは、モデルのパフォーマンスに関する信頼性の高い洞察を提供するために十分な大きさである必要があります。
+
+
+
+## Link to this sectionYOLO26モデルのテスト方法#
+
+学習済みYOLO26モデルのテストには、ラベル付きテスト分割で検証して定量的なメトリクスを得る方法と、新しい画像で予測を行い動作を定性的に検査するという、2つの補完的なワークフローが含まれます。
+
+### Link to this sectionラベル付きテスト分割による検証#
+
+[検証モード](/ja/modes/val)は、モデルの予測と正解ラベルを比較し、検出モデルの適合率、再現率、mAP50、mAP50-95を報告します。また、混同行列や適合率-再現率曲線などの視覚的な補助資料も保存され、モデルがうまく機能していない特定の領域を特定するのに役立ちます。
+
+使用方法
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained model or your own trained checkpoint, e.g. "path/to/best.pt"
+    model = YOLO("yolo26n.pt")
+    
+    # Validate; add split="test" if your dataset YAML defines a test split
+    metrics = model.val(data="coco8.yaml")
+    print(metrics.box.map)  # mAP50-95
+
+デフォルトでは、検証はデータセットの `val` 分割で実行されます。保持されたテストセットでのパフォーマンスを測定するには、データセットのYAMLファイルで `test:` 分割を定義し、`split="test"` を渡します。
+
+### Link to this section新しい画像での予測#
+
+[予測モード](/ja/modes/predict)は、ラベルを必要とせずに新しい未知のデータに対してモデルを実行します。パフォーマンスメトリクスは生成されませんが、アノテーション付きの出力を保存することで、モデルが実世界の画像（例：テスト画像フォルダ全体）に対してどのように動作するかをレビューできます。
+
+使用方法
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained model or your own trained checkpoint, e.g. "path/to/best.pt"
+    model = YOLO("yolo26n.pt")
+    
+    # Run predictions on a folder of test images and save annotated results
+    results = model.predict(source="path/to/test_images", save=True)
+
+カスタム学習前の事前学習済みモデルのテスト
+
+カスタム学習に投資する前にYOLO26がアプリケーションに適しているかを確認するには、事前学習済みチェックポイントを使用して独自の画像で予測モードを実行します。モデルは[COCO](/ja/datasets/detect/coco)のようなデータセットで事前学習されているため、その結果から特定のコンテキストでどの程度機能するかの目安を得られます。
+
+### Link to this section検証モードと予測モードの比較#
+
+モード| 目的| ラベルが必要| 出力  
+---|---|---|---  
+[検証](/ja/modes/val)| 正解データに対するパフォーマンスの定量化| はい| 適合率、再現率、mAP50、mAP50-95、混同行列、PR曲線  
+[予測](/ja/modes/predict)| 新しいラベルなしデータでのモデル動作の検査| いいえ| アノテーション付き画像と予測結果、メトリクスはなし  
+  
+## Link to this sectionテスト結果の分析方法#
+
+予測とメトリクスが得られたら、モデルがどこで、なぜ失敗しているかを掘り下げて分析します。
+
+  * 誤分類された画像：モデルが誤分類した画像を特定・レビューし、問題の原因を理解します。
+  * エラー分析：エラーの種類（例：偽陽性 vs 偽陰性）とその潜在的な原因を理解するために徹底的なエラー分析を行います。
+  * バイアスと公平性：モデルの予測にバイアスがないか確認します。特に人種、性別、年齢などの機密属性が含まれる場合、データの異なるサブセット間でモデルが等しく機能することを確認します。
+
+
+
+## Link to this section機械学習における過学習と学習不足#
+
+[機械学習](https://www.ultralytics.com/glossary/machine-learning-ml)モデル、特にコンピュータビジョンモデルをテストする際は、過学習と[学習不足](https://www.ultralytics.com/glossary/underfitting)に注意することが重要です。これらの問題はモデルが新しいデータでどれだけうまく機能するかに大きな影響を与えます。
+
+問題| 一般的な兆候| 対処方法  
+---|---|---  
+過学習| 学習精度は高いが検証精度が低い。画像内のわずかな変化や無関係な詳細に対する過敏反応。| ドロップアウトなどの[正則化](https://www.ultralytics.com/glossary/regularization)の適用、学習データセットの増量、モデルアーキテクチャの単純化。  
+学習不足| 学習セットですら精度が低い。明らかな特徴やオブジェクトの認識で一貫した失敗。| より複雑なモデルの使用、より関連性の高い特徴量の提供、学習[エポック](https://www.ultralytics.com/glossary/epoch)の増加。  
+  
+重要なのは、学習データセットと検証データセットの両方で良好に機能するようにバランスを取ることです。テスト中にメトリクスを定期的に監視し、予測結果を視覚的に検査することで、両極端への偏りを防ぐことができます。
+
+![Comparison of underfitting, appropriate fitting, and overfitting on the same dataset](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/overfitting-underfitting-appropriate-fitting.avif)
+
+## Link to this sectionコンピュータビジョンにおけるデータ漏洩とその回避方法#
+
+データ漏洩は、学習データセット外の情報が誤ってモデルの学習に使用されたときに発生します。学習中はモデルが非常に高精度に見えるかもしれませんが、データ漏洩が発生していると、未知のデータに対してはうまく機能しません。
+
+漏洩は特定が難しく、学習データに含まれる隠れたバイアスから発生することがよくあります。
+
+バイアスの種類| 外見的な兆候  
+---|---  
+カメラバイアス| 異なる角度、照明、影、カメラの動きが不要なパターンをもたらす  
+オーバーレイバイアス| ロゴ、タイムスタンプ、その他の画像内のオーバーレイがモデルを誤導する  
+フォントとオブジェクトのバイアス| 特定のクラスに頻繁に現れる特定のフォントやオブジェクトがモデルの学習を歪める  
+空間バイアス| 前景と背景の不均衡、[バウンディングボックス](https://www.ultralytics.com/glossary/bounding-box)の分布、オブジェクトの位置が学習に影響を与える  
+ラベルとドメインのバイアス| 不正確なラベルやデータ型のシフトが漏洩を招く  
+  
+### Link to this sectionデータ漏洩の検知と回避方法#
+
+データ漏洩を見つけるには、モデルの結果が驚くほど良すぎないかを確認し、特定の1つの特徴量が他より重要視されていないか調べ、モデルの決定が直感的に理にかなっているかを確認し、データが処理前に正しく分割されていたかを再確認します。
+
+これを防ぐには、異なるカメラや環境で撮影された画像やビデオを含む多様なデータセットを使用し、特定の時間帯にのみポジティブサンプルが採取されているといった隠れたバイアスがないかデータを注意深く見直します。データ漏洩を回避することで、実環境でのコンピュータビジョンモデルの信頼性が向上します。
+
+## Link to this sectionモデルテストの次のステップ#
+
+モデルのテスト後、次のステップは結果次第です。モデルが良好に機能すれば、実世界環境へデプロイできます。結果が不十分であれば、改善が必要です。これには、エラーの分析、[より多くのデータの収集](/ja/guides/data-collection-and-annotation)、データ品質の向上、[ハイパーパラメータの調整](/ja/guides/hyperparameter-tuning)、モデルの再学習などが含まれます。
+
+## Link to this section結論#
+
+保持されたテスト分割での検証、実世界画像での予測、過学習やデータ漏洩のチェックを含む厳格なモデルテストこそが、評価されただけのモデルを信頼できるものへと変えます。テストで判明した問題にデプロイ前に対応すれば、本番環境で意図した通りに機能する可能性が大幅に高まります。疑問がある場合は、[Ultralytics GitHubリポジトリ](https://github.com/ultralytics/ultralytics)や[Ultralytics Discordサーバー](https://discord.com/invite/ultralytics)でコミュニティに質問してください。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionコンピュータビジョンにおけるモデル評価とモデルテストの主な違いは何ですか？#
+
+モデル評価はラベル付きデータセット上のメトリクスでパフォーマンスを測定する一方、モデルテストはデプロイ条件に近い未知のデータでのモデルの挙動を確認します。評価は制御されたデータセットから精度やmAPのような数値を生成しますが、テストは変化する照明、動き、遮蔽物の中で学習済み挙動が維持されるかを明らかにします。実例についてはモデルのテストとモデルの評価の違いを参照してください。
+
+### Link to this sectionUltralytics YOLO26モデルを複数の画像でテストするにはどうすればよいですか？#
+
+[予測モード](/ja/modes/predict)を使用し、`source` にフォルダパスを渡します。YOLO26はフォルダ内の全画像に対して実行され、レビュー用にアノテーション付き結果を保存できます。予測モードではメトリクスは計算されません。ラベル付きセットでパフォーマンスを定量化するには、代わりに[検証モード](/ja/modes/val)を使用してください。両方のワークフローはYOLO26モデルのテスト方法に示されています。
+
+### Link to this sectionYOLO26の検証では、テストセット上でどのようなメトリクスが報告されますか？#
+
+検出モデルの場合、検証では適合率、再現率、mAP50、mAP50-95が報告され、混同行列や適合率-再現率曲線を含むプロットが保存されます。デフォルトの `val` 分割ではなく専用のテスト分割で検証するには、データセットのYAMLファイルで `test:` を定義し、`split="test"` を渡します。各メトリクスの解釈については、[パフォーマンスメトリクスガイド](/ja/guides/yolo-performance-metrics)を参照してください。
+
+### Link to this sectionコンピュータビジョンモデルに過学習や学習不足の兆候が見られる場合、どうすればよいですか？#
+
+過学習の場合は、ドロップアウトなどの正則化手法を適用する、学習データセットを増やす、あるいはモデルアーキテクチャを単純化してください。学習不足の場合は、より複雑なモデルを使用する、より関連性の高い特徴量を提供する、あるいは学習エポック数を増やしてください。各問題の兆候と対応する修正は機械学習における過学習と学習不足にまとめられています。
+
+### Link to this sectionコンピュータビジョンにおいてデータ漏洩を検知し回避するにはどうすればよいですか？#
+
+テストパフォーマンスが驚くほど良い場合や、単一の特徴量が予測を支配している場合、あるいはモデルの決定が直感的に意味をなさない場合はデータ漏洩を疑ってください。異なるカメラや環境からの多様なデータセットを使用し、隠れたバイアスがないかデータを見直し、処理前に学習/テスト分割が行われたことを検証することで漏洩を防ぎます。一般的なバイアスの種類についてはコンピュータビジョンにおけるデータ漏洩を参照してください。
+
+### Link to this sectionコンピュータビジョンモデルをテストした後は、どのようなステップを取るべきですか？#
+
+結果がプロジェクトの目標を満たしていればモデルをデプロイし、そうでなければデプロイ前に改善を行います。これにはエラー分析、[より多様なデータの収集](/ja/guides/data-collection-and-annotation)、データ品質の向上、[ハイパーパラメータのチューニング](/ja/guides/hyperparameter-tuning)、再学習が含まれます。修正が機能したかを確認するため、変更のたびにテストを繰り返してください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-testing.md)
+
+[GLglenn-jocher8](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[RAraimbekovm1](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)[ABabirami-vina1](https://github.com/abirami-vina)
+
+作成日 2024年7月3日更新日 3 日前
+
+## コメント
+
+このページの内容
+
+AIで探索

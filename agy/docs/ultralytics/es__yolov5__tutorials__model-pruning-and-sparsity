@@ -1,0 +1,162 @@
+---
+source_url: https://docs.ultralytics.com/es/yolov5/tutorials/model-pruning-and-sparsity
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-pruning-and-sparsity.md)
+
+# Link to this sectionPoda y escasez de modelos en YOLOv5#
+
+📚 Esta guía explica cómo aplicar la **poda** a modelos YOLOv5 🚀 para crear redes más eficientes manteniendo el rendimiento.
+
+## Link to this section¿Qué es la poda de modelos?#
+
+La [poda de modelos](https://www.ultralytics.com/glossary/model-pruning) es una técnica utilizada para reducir el tamaño y la complejidad de las redes neuronales eliminando los parámetros (pesos y conexiones) menos importantes. Este proceso crea un modelo más eficiente con varios beneficios:
+
+  * Reducción del tamaño del modelo para facilitar el despliegue en dispositivos con recursos limitados
+  * Velocidades de inferencia más rápidas con un impacto mínimo en la precisión
+  * Menor uso de memoria y consumo de energía
+  * Mayor eficiencia general para aplicaciones en tiempo real
+
+
+
+La poda funciona identificando y eliminando los parámetros que contribuyen mínimamente al rendimiento del modelo, lo que resulta en un modelo más ligero con una precisión similar.
+
+## Link to this sectionAntes de empezar#
+
+Clona el repositorio e instala [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) en un entorno [**Python >=3.8.0**](https://www.python.org/), incluido [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). Los [modelos](https://github.com/ultralytics/yolov5/tree/master/models) y los [conjuntos de datos](https://github.com/ultralytics/yolov5/tree/master/data) se descargan automáticamente desde la última [versión](https://github.com/ultralytics/yolov5/releases) de YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+## Link to this sectionComprobar el rendimiento de referencia#
+
+Antes de podar, establece un rendimiento de referencia para comparar. Este comando prueba YOLOv5x en COCO val2017 a un tamaño de imagen de 640 píxeles. `yolov5x.pt` es el modelo más grande y preciso disponible. Otras opciones son `yolov5s.pt`, `yolov5m.pt` y `yolov5l.pt`, o tu propio punto de control tras entrenar un conjunto de datos personalizado `./weights/best.pt`. Para más detalles sobre todos los modelos disponibles, consulta la [tabla](https://github.com/ultralytics/yolov5#pretrained-checkpoints) del README.
+    
+    
+    python val.py --weights yolov5x.pt --data coco.yaml --img 640 --half
+
+Salida:
+    
+    
+    val: data=/content/yolov5/data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, workers=8, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True, dnn=False
+    YOLOv5 🚀 v6.0-224-g4c40933 torch 1.10.0+cu111 CUDA:0 (Tesla V100-SXM2-16GB, 16160MiB)
+    
+    Fusing layers...
+    Model Summary: 444 layers, 86705005 parameters, 0 gradients
+    val: Scanning '/content/datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupt: 100% 5000/5000 [00:00<?, ?it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [01:12<00:00,  2.16it/s]
+                     all       5000      36335      0.732      0.628      0.683      0.496
+    Speed: 0.1ms pre-process, 5.2ms inference, 1.7ms NMS per image at shape (32, 3, 640, 640)  # <--- base speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-2/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.507  # <--- base mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.689
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.552
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.345
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.559
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.652
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.381
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.630
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.682
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.526
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.731
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.829
+    Results saved to runs/val/exp
+
+## Link to this sectionAplicar poda a YOLOv5x (30% de escasez)#
+
+Podemos aplicar la poda al modelo usando el comando `torch_utils.prune()` definido en `utils/torch_utils.py`. Para probar un modelo podado, actualizamos `val.py` para podar YOLOv5x a una escasez de 0.3 (30% de los pesos establecidos a cero):
+
+![YOLOv5 model pruning to 30% sparsity code](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sparsity-test-yolov5x-coco.avif)
+
+Salida con 30% de poda:
+    
+    
+    val: data=/content/yolov5/data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, workers=8, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True, dnn=False
+    YOLOv5 🚀 v6.0-224-g4c40933 torch 1.10.0+cu111 CUDA:0 (Tesla V100-SXM2-16GB, 16160MiB)
+    
+    Fusing layers...
+    Model Summary: 444 layers, 86705005 parameters, 0 gradients
+    Pruning model...  0.3 global sparsity
+    val: Scanning '/content/datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupt: 100% 5000/5000 [00:00<?, ?it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [01:11<00:00,  2.19it/s]
+                     all       5000      36335      0.724      0.614      0.671      0.478
+    Speed: 0.1ms pre-process, 5.2ms inference, 1.7ms NMS per image at shape (32, 3, 640, 640)  # <--- prune speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-3/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.489  # <--- prune mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.677
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.537
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.334
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.542
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.635
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.370
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.612
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.664
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.496
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.722
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.803
+    Results saved to runs/val/exp-3
+
+## Link to this sectionAnálisis de resultados#
+
+A partir de los resultados, podemos observar:
+
+  * **Se logró un 30% de escasez** : el 30% de los parámetros de peso del modelo en las capas `nn.Conv2d` ahora son cero
+  * **El tiempo de inferencia permanece sin cambios** : a pesar de la poda, la velocidad de procesamiento es prácticamente la misma
+  * **Impacto mínimo en el rendimiento** : mAP cayó ligeramente de 0.507 a 0.489 (solo un 3.6% de reducción)
+  * **Reducción del tamaño del modelo** : el modelo podado requiere menos memoria para su almacenamiento
+
+
+
+Esto demuestra que la poda puede reducir significativamente la complejidad del modelo con solo un impacto menor en el rendimiento, lo que la convierte en una técnica de optimización eficaz para el despliegue en entornos con recursos limitados.
+
+## Link to this sectionAjuste fino de modelos podados#
+
+Para obtener los mejores resultados, los modelos podados deben ajustarse tras la poda para recuperar la precisión. Esto se puede hacer mediante:
+
+  1. La aplicación de la poda con un nivel de escasez deseado
+  2. El entrenamiento del modelo podado durante unas cuantas épocas con una tasa de aprendizaje más baja
+  3. La evaluación del modelo podado ajustado frente a la referencia
+
+
+
+Este proceso ayuda a que los parámetros restantes se adapten para compensar las conexiones eliminadas, recuperando a menudo la mayor parte o la totalidad de la precisión original.
+
+## Link to this sectionEntornos admitidos#
+
+Ultralytics ofrece una gama de entornos listos para usar, cada uno preinstalado con dependencias esenciales como [CUDA](https://developer.nvidia.com/cuda), [CUDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/) y [PyTorch](https://pytorch.org/), para poner en marcha tus proyectos.
+
+  * **Notebooks con GPU gratuita** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [Guía de inicio rápido de GCP](/es/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [Guía de inicio rápido de AWS](/es/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [Guía de inicio rápido de AzureML](/es/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Guía de inicio rápido de Docker](/es/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionEstado del proyecto#
+
+[![CI de YOLOv5](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+Esta insignia indica que todas las pruebas de Integración Continua (CI) de [GitHub Actions de YOLOv5](https://github.com/ultralytics/yolov5/actions) se están superando correctamente. Estas pruebas de CI verifican rigurosamente la funcionalidad y el rendimiento de YOLOv5 en varios aspectos clave: [entrenamiento](https://github.com/ultralytics/yolov5/blob/master/train.py), [validación](https://github.com/ultralytics/yolov5/blob/master/val.py), [inferencia](https://github.com/ultralytics/yolov5/blob/master/detect.py), [exportación](https://github.com/ultralytics/yolov5/blob/master/export.py) y [benchmarks](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). Garantizan un funcionamiento consistente y fiable en macOS, Windows y Ubuntu, con pruebas realizadas cada 24 horas y tras cada nueva confirmación (commit).
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-pruning-and-sparsity.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Creado hace 3 díasActualizado hace 3 días
+
+## Comentarios
+
+En esta página
+
+Explora con IA

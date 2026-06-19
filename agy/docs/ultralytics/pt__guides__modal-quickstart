@@ -1,0 +1,204 @@
+---
+source_url: https://docs.ultralytics.com/pt/guides/modal-quickstart
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/modal-quickstart.md)
+
+# Link to this sectionGuia de Início Rápido do Modal para Ultralytics#
+
+Este guia fornece uma introdução abrangente à execução do [Ultralytics YOLO26](/pt/models/yolo26) no [Modal](https://modal.com/), cobrindo inferência com GPU serverless e treinamento de modelos.
+
+## Link to this sectionO que é o Modal?#
+
+[Modal](https://modal.com/) é uma plataforma de [computação em nuvem](https://www.ultralytics.com/glossary/cloud-computing) serverless para cargas de trabalho de IA e [machine learning](https://www.ultralytics.com/glossary/machine-learning-ml). Ele lida com provisionamento, escalonamento e execução automaticamente — você escreve código Python localmente e o Modal executa na nuvem com acesso à GPU. Isso o torna ideal para executar modelos de [deep learning](https://www.ultralytics.com/glossary/deep-learning-dl) como o YOLO26 sem gerenciar infraestrutura.
+
+## Link to this sectionO que você aprenderá#
+
+  * Configurando o Modal e autenticando
+  * Executando inferência do YOLO26 no Modal
+  * Usando GPUs para inferência mais rápida
+  * Treinando modelos YOLO26 no Modal
+
+
+
+## Link to this sectionPré-requisitos#
+
+  * Uma conta Modal (inscreva-se gratuitamente em [modal.com](https://modal.com/))
+  * Python 3.9 ou posterior instalado na sua máquina local
+
+
+
+## Link to this sectionInstalação#
+
+Instale o pacote Python do Modal e autentique-se:
+    
+    
+    pip install modal
+    
+    
+    modal token new
+
+Autenticação
+
+O comando `modal token new` abrirá uma janela do navegador para autenticar sua conta Modal. Após a autenticação, você pode executar comandos do Modal a partir do terminal.
+
+## Link to this sectionExecutando Inferência do YOLO26#
+
+Crie um novo arquivo Python chamado `modal_yolo.py` com o seguinte código:
+    
+    
+    """
+    Modal + Ultralytics YOLO26 Quickstart
+    Run: modal run modal_yolo.py.
+    """
+    
+    import modal
+    
+    app = modal.App("ultralytics-yolo")
+    
+    image = modal.Image.debian_slim(python_version="3.11").apt_install("libgl1", "libglib2.0-0").pip_install("ultralytics")
+    
+    @app.function(image=image)
+    def predict(image_url: str):
+        """Run YOLO26 inference on an image URL."""
+        from ultralytics import YOLO
+    
+        model = YOLO("yolo26n.pt")
+        results = model(image_url)
+    
+        for r in results:
+            print(f"Detected {len(r.boxes)} objects:")
+            for box in r.boxes:
+                print(f"  - {model.names[int(box.cls)]}: {float(box.conf):.2f}")
+    
+    @app.local_entrypoint()
+    def main():
+        """Test inference with sample image."""
+        predict.remote("https://ultralytics.com/images/bus.jpg")
+
+Execute a inferência:
+    
+    
+    modal run modal_yolo.py
+
+Saída esperada:
+    
+    
+    ✓ Initialized. View run at https://modal.com/apps/your-username/main/ap-xxxxxxxx
+    ✓ Created objects.
+    ├── 🔨 Created mount modal_yolo.py
+    └── 🔨 Created function predict.
+    Downloading https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt to 'yolo26n.pt'...
+    Downloading https://ultralytics.com/images/bus.jpg to 'bus.jpg'...
+    image 1/1 /root/bus.jpg: 640x480 4 persons, 1 bus, 377.8ms
+    Speed: 5.8ms preprocess, 377.8ms inference, 0.3ms postprocess per image at shape (1, 3, 640, 480)
+    
+    Detected 5 objects:
+      - bus: 0.92
+      - person: 0.91
+      - person: 0.91
+      - person: 0.87
+      - person: 0.53
+    ✓ App completed.
+
+Você pode monitorar a execução da sua função no painel do Modal:
+
+![Modal Dashboard Function Calls](https://cdn.jsdelivr.net/gh/ultralytics/assets@fda2504f1e5dab2f437097ac7b99a7da984e4243/docs/modal-dashboard-function-calls.avif)
+
+## Link to this sectionUsando GPU para Inferência mais Rápida#
+
+Adicione uma GPU à sua função especificando o parâmetro `gpu`:
+    
+    
+    @app.function(image=image, gpu="T4")  # Options: "T4", "A10G", "A100", "H100"
+    def predict_gpu(image_url: str):
+        """Run YOLO26 inference on GPU."""
+        from ultralytics import YOLO
+    
+        model = YOLO("yolo26n.pt")
+        results = model(image_url)
+        print(results[0].boxes)
+
+GPU| Memória| Ideal Para  
+---|---|---  
+T4| 16 GB| Inferência, treinamento de modelo pequeno  
+A10G| 24 GB| Trabalhos de treinamento médios  
+A100| 40 GB| Treinamento em grande escala  
+H100| 80 GB| Desempenho máximo  
+  
+## Link to this sectionTreinando o YOLO26 no Modal#
+
+Para treinamento, use uma GPU e [Volumes](https://modal.com/docs/guide/volumes) do Modal para armazenamento persistente. Crie um novo arquivo Python chamado `train_yolo.py`:
+    
+    
+    import modal
+    
+    app = modal.App("ultralytics-training")
+    
+    volume = modal.Volume.from_name("yolo-training-vol", create_if_missing=True)
+    
+    image = modal.Image.debian_slim(python_version="3.11").apt_install("libgl1", "libglib2.0-0").pip_install("ultralytics")
+    
+    @app.function(image=image, gpu="T4", timeout=3600, volumes={"/data": volume})
+    def train():
+        """Train YOLO26 model on Modal."""
+        from ultralytics import YOLO
+    
+        model = YOLO("yolo26n.pt")
+        model.train(data="coco8.yaml", epochs=3, imgsz=640, project="/data/runs")
+    
+    @app.local_entrypoint()
+    def main():
+        train.remote()
+
+Execute o treinamento:
+    
+    
+    modal run train_yolo.py
+
+Persistência de Volume
+
+Os Volumes do Modal mantêm os dados entre as execuções das funções. Pesos treinados são salvos em `/data/runs/detect/train/weights/`.
+
+Parabéns! Você configurou com sucesso o Ultralytics YOLO26 no Modal. Para continuar aprendendo:
+
+  * Explore a [documentação do Ultralytics YOLO26](/pt/models/yolo26) para recursos avançados
+  * Aprenda sobre [treinamento de modelos personalizados](/pt/modes/train) com seus próprios conjuntos de dados
+  * Visite a [documentação do Modal](https://modal.com/docs) para recursos avançados da plataforma
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionComo escolho a GPU certa para minha carga de trabalho do YOLO26?#
+
+Para inferência, uma NVIDIA T4 (16 GB) geralmente é suficiente e econômica. Para treinamento ou modelos maiores como o YOLO26x, considere GPUs A10G ou A100.
+
+### Link to this sectionQuanto custa executar o YOLO26 no Modal?#
+
+O Modal utiliza preços por segundo. Taxas aproximadas: CPU ~$0.05/hora, T4 ~$0.59/hora, A10G ~$1.10/hora, A100 ~$2.10/hora. Verifique os [preços do Modal](https://modal.com/pricing) para as taxas atuais.
+
+### Link to this sectionPosso usar meu próprio modelo YOLO treinado de forma personalizada?#
+
+Sim! Carregue modelos personalizados a partir de um Volume do Modal:
+    
+    
+    model = YOLO("/data/my_custom_model.pt")
+
+Para mais informações sobre o treinamento de modelos personalizados, consulte o [guia de treinamento](/pt/modes/train).
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/modal-quickstart.md)
+
+[RAraimbekovm1](https://github.com/raimbekovm)
+
+Criado mês passadoAtualizado mês passado
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

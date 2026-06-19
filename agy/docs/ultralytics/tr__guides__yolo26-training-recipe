@@ -1,0 +1,234 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/yolo26-training-recipe
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo26-training-recipe.md)
+
+# Link to this sectionYOLO26 Eğitim Reçetesi#
+
+## Link to this sectionGiriş#
+
+This guide documents the exact [training](/tr/modes/train) recipe used to produce the official [YOLO26](/tr/models/yolo26) pretrained checkpoints on [COCO](/tr/datasets/detect/coco). Every [hyperparameter](https://www.ultralytics.com/glossary/hyperparameter-tuning) shown here is already embedded in the released `.pt` weights and can be inspected programmatically.
+
+Resmi kontrol noktalarının içine nelerin dahil olduğunu bilmek (sadece mimariyi değil, performanslarını şekillendiren [öğrenme oranı](https://www.ultralytics.com/glossary/learning-rate) programlarını, veri artırma boru hatlarını ve kayıp ağırlıklarını da) [ince ayar](https://www.ultralytics.com/glossary/fine-tuning) yaparken daha iyi kararlar almana yardımcı olur: hangi [veri artırma yöntemlerinin](/tr/guides/yolo-data-augmentation) tutulacağı, hangi [kayıp fonksiyonu](https://www.ultralytics.com/glossary/loss-function) ağırlıklarının ayarlanacağı ve veri kümesi boyutun için hangi iyileştirici (optimizer) ayarlarının en iyi sonucu vereceği gibi.
+
+## Link to this sectionEğitime Genel Bakış#
+
+Tüm YOLO26 temel modelleri, **[batch size](https://www.ultralytics.com/glossary/batch-size) 128** ile **MuSGD** iyileştiricisi kullanılarak **640x640** çözünürlükte COCO üzerinde eğitilmiştir. Tek bir çalıştırmada rastgele ağırlıklardan başlamak yerine, modeller önceden eğitilmiş ara ağırlıklardan başlatılmış ve [evrimsel arama](/tr/guides/hyperparameter-tuning#genetic-evolution-and-mutation) ile bulunan hiperparametrelerle iyileştirilmiştir. Her model boyutu için tam eğitim günlükleri ve metrikleri [Ultralytics Platform](https://platform.ultralytics.com/ultralytics/yolo26) üzerinde mevcuttur:
+
+Tüm boyutlardaki temel tasarım tercihleri:
+
+  * **Uçtan uca eğitim** (`end2end=True`), NMS içermeyen birebir başlık (one-to-one head) ile
+  * **[MuSGD](/tr/modes/train#musgd-optimizer) iyileştiricisi**, ağırlık matrisleri için (conv ve linear ağırlıkları gibi `ndim >= 2` olan parametreler) Muon tarzı ortogonalleştirilmiş güncellemelerle SGD'yi birleştirir
+  * **Yoğun mozaik artırma** (~0.9-1.0 olasılık), son 10 dönemde devre dışı bırakılmıştır (`close_mosaic=10`)
+  * Farklı boyutlardaki nesneleri yönetmek için **agresif ölçek artırma** (0.56-0.95)
+  * Geometrik bozulmayı düşük tutmak için çoğu boyutta **minimal döndürme/kaydırma**
+
+
+
+## Link to this sectionYOLO26 Kontrol Noktası Eğitim Argümanlarını İnceleme#
+
+Her Ultralytics kontrol noktası, onu üretmek için kullanılan tam eğitim yapılandırmasını saklar, böylece bu sayfadaki her sayıyı kendin doğrulayabilirsin:
+
+Kontrol noktası eğitim argümanlarını incele
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    print(model.ckpt["train_args"])
+
+Çıktı, bu sayfada belgelenen her reçete değeri dahil olmak üzere 100'den fazla girdinin tam yapılandırmasını listeler. `yolo26n.pt` için bir kesit:
+    
+    
+    batch: 128
+    ...
+    box: 5.62767
+    ...
+    close_mosaic: 10
+    cls: 0.56099
+    ...
+    dfl: 9.03871
+    ...
+    epochs: 245
+    ...
+    lr0: 0.0054
+    lrf: 0.04952
+    ...
+    optimizer: MuSGD
+
+Bu, resmi sürümler ve kendi ince ayarlı modellerin dahil olmak üzere herhangi bir `.pt` kontrol noktası için çalışır. Yapılandırılabilir eğitim argümanlarının tam listesi için [eğitim yapılandırması referansına](/tr/usage/cfg) bak.
+
+## Link to this sectionModel Boyutuna Göre YOLO26 Eğitim Hiperparametreleri#
+
+Aşağıdaki tablolar reçeteyi kategoriye göre gruplandırır; iyileştirici ve program, kayıp ağırlıkları ve veri artırma. Her değer doğrudan yayınlanan kontrol noktalarına gömülü olan `train_args`'tan gelir.
+
+### Link to this sectionİyileştirici ve Öğrenme Oranı#
+
+Bu iyileştirici ve program ayarları, her boyut için COCO ön eğitimini yönlendirdi; N modelinin diğerlerinden nasıl ayrıldığına dikkat et:
+
+Ayar| N| S| M| L| X  
+---|---|---|---|---|---  
+`optimizer`| MuSGD| MuSGD| MuSGD| MuSGD| MuSGD  
+`lr0`| 0.0054| 0.00038| 0.00038| 0.00038| 0.00038  
+`lrf`| 0.0495| 0.882| 0.882| 0.882| 0.882  
+`momentum`| 0.947| 0.948| 0.948| 0.948| 0.948  
+`weight_decay`| 0.00064| 0.00027| 0.00027| 0.00027| 0.00027  
+`warmup_epochs`| 0.98| 0.99| 0.99| 0.99| 0.99  
+`epochs`| 245| 70| 80| 60| 40  
+`batch`| 128| 128| 128| 128| 128  
+`imgsz`| 640| 640| 640| 640| 640  
+  
+Öğrenme oranı stratejisi
+
+N modeli, dik bir azalma (`lrf=0.0495`) ile daha yüksek bir başlangıç öğrenme oranı kullanırken, S/M/L/X modelleri daha yumuşak bir programla (`lrf=0.882`) çok daha düşük bir başlangıç LR'si kullandı. Bu, küçük ve büyük modellerin farklı yakınsama dinamiklerini yansıtır; küçük modellerin etkili bir şekilde öğrenmek için daha agresif güncellemelere ihtiyacı vardır.
+
+### Link to this sectionKayıp Ağırlıkları#
+
+Kayıp ağırlıkları, tespit kaybının üç bileşenini dengeler: [sınırlayıcı kutu](https://www.ultralytics.com/glossary/bounding-box) IoU regresyonu (`box`), sınıflandırma (`cls`) ve bir kutu mesafesi regresyon terimi (`dfl`). DFL içermeyen YOLO26'nın, `dfl` kazancını dağılım odaklı kayıp yerine normalleştirilmiş kutu mesafeleri üzerinde bir L1 kaybını ağırlıklandırmak için yeniden amaçladığına dikkat et:
+
+Ayar| N| S| M| L| X  
+---|---|---|---|---|---  
+`box`| 5.63| 9.83| 9.83| 9.83| 9.83  
+`cls`| 0.56| 0.65| 0.65| 0.65| 0.65  
+`dfl`| 9.04| 0.96| 0.96| 0.96| 0.96  
+  
+N modeli `dfl` mesafe regresyon terimine öncelik verirken, S/M/L/X modelleri ağırlığı IoU tabanlı kutu regresyonuna kaydırır. Sınıflandırma kaybı tüm boyutlarda nispeten tutarlı kalır.
+
+### Link to this sectionVeri Artırma Boru Hattı#
+
+Her tekniğin ayrıntılı açıklaması için [YOLO Veri Artırma rehberine](/tr/guides/yolo-data-augmentation) bak.
+
+Ayar| N| S| M| L| X  
+---|---|---|---|---|---  
+[`mosaic`](/tr/guides/yolo-data-augmentation#mosaic-mosaic)| 0.909| 0.992| 0.992| 0.992| 0.992  
+[`mixup`](/tr/guides/yolo-data-augmentation#mixup-mixup)| 0.012| 0.05| 0.427| 0.427| 0.427  
+[`copy_paste`](/tr/guides/yolo-data-augmentation#copy-paste-copy_paste)| 0.075| 0.404| 0.304| 0.404| 0.404  
+[`scale`](/tr/guides/yolo-data-augmentation#scale-scale)| 0.562| 0.9| 0.95| 0.95| 0.95  
+[`fliplr`](/tr/guides/yolo-data-augmentation#flip-left-right-fliplr)| 0.606| 0.304| 0.304| 0.304| 0.304  
+[`degrees`](/tr/guides/yolo-data-augmentation#rotation-degrees)| 1.11| ~0| ~0| ~0| ~0  
+[`shear`](/tr/guides/yolo-data-augmentation#shear-shear)| 1.46| ~0| ~0| ~0| ~0  
+[`translate`](/tr/guides/yolo-data-augmentation#translation-translate)| 0.071| 0.275| 0.275| 0.275| 0.275  
+[`hsv_h`](/tr/guides/yolo-data-augmentation#hue-adjustment-hsv_h)| 0.014| 0.013| 0.013| 0.013| 0.013  
+[`hsv_s`](/tr/guides/yolo-data-augmentation#saturation-adjustment-hsv_s)| 0.645| 0.353| 0.353| 0.353| 0.353  
+[`hsv_v`](/tr/guides/yolo-data-augmentation#brightness-adjustment-hsv_v)| 0.566| 0.194| 0.194| 0.194| 0.194  
+[`bgr`](/tr/guides/yolo-data-augmentation#bgr-channel-swap-bgr)| 0.106| 0.0| 0.0| 0.0| 0.0  
+  
+`~0` olarak gösterilen değerler gerçek kontrol noktalarında 0.01'in altındadır (örneğin, S modeli için `degrees=0.00012`) — veri artırma etkili bir şekilde devre dışıdır.
+
+Daha büyük modeller genel olarak daha agresif veri artırma (daha yüksek mixup, copy-paste ve ölçek) kullanır, çünkü daha fazla kapasiteye sahiptirler ve daha güçlü [düzenlileştirmeden](https://www.ultralytics.com/glossary/regularization) faydalanırlar. N modeli, anlamlı döndürme, kaydırma ve BGR artırmasına sahip tek boyuttur.
+
+### Link to this sectionDahili Eğitim Parametreleri#
+
+İleri düzey: dahili boru hattı parametreleri
+
+Kontrol noktaları ayrıca dahili eğitim boru hattında kullanılan ancak `default.yaml` içinde kullanıcı tarafından yapılandırılabilir ayarlar olarak gösterilmeyen parametreleri de içerir:
+
+Ayar| Açıklama| N| S| M| L| X  
+---|---|---|---|---|---|---  
+`muon_w`| MuSGD'deki Muon güncelleme ağırlığı| 0.528| 0.436| 0.436| 0.436| 0.436  
+`sgd_w`| MuSGD'deki SGD güncelleme ağırlığı| 0.674| 0.479| 0.479| 0.479| 0.479  
+`cls_w`| Dahili sınıflandırma ağırlığı| 2.74| 3.48| 3.48| 3.48| 3.48  
+`o2m`| Bire çok başlık kayıp ağırlığı| 1.0| 0.705| 0.705| 0.705| 0.705  
+`topk`| En iyi k etiket ataması| 8| 5| 5| 5| 5  
+  
+İnce ayar yaparken ne anlama geldiklerini öğrenmek için bu parametrelerle ilgili SSS girişine bakabilirsin.
+
+## Link to this sectionYOLO26'ya Kendi Veri Setinde İnce Ayar Yapma#
+
+YOLO26'ya kendi veri setinde ince ayar yaparken, tam ön eğitim tarifini tekrarlamana gerek yoktur. Önceden eğitilmiş ağırlıklar, COCO eğitiminden gelen artırma ve optimizasyon bilgisini zaten içerir. Daha genel eğitim en iyi uygulamaları için [Model Eğitimi İpuçları](/tr/guides/model-training-tips) bölümüne bakabilirsin.
+
+### Link to this sectionVarsayılan Ayarlarla İnce Ayar Yap#
+
+Varsayılan ayarlarla ince ayar yap
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    results = model.train(data="your-dataset.yaml", epochs=100, imgsz=640)
+
+Varsayılan ayarlarla ince ayar yapmak güçlü bir temel oluşturur. Sadece özel bir nedenin varsa hiperparametreleri değiştir.
+
+### Link to this sectionYOLO26 Hiperparametreleri Ne Zaman Ayarlanmalı?#
+
+**Küçük veri setleri ( < 1.000 görsel):**
+
+  * Artırma gücünü azalt: `mosaic=0.5`, `mixup=0.0`, `copy_paste=0.0`
+  * Öğrenme oranını düşür: `lr0=0.001`
+  * Sabır ile daha az [epok](https://www.ultralytics.com/glossary/epoch) kullan: `epochs=50`, `patience=20`
+  * Omurga katmanlarını dondurmayı düşün: `freeze=10`
+
+
+
+**Büyük veri setleri ( > 50.000 görsel):**
+
+  * Ön eğitim tarifine daha yakın kal
+  * Daha uzun çalıştırmalar için `optimizer=MuSGD` kullanmayı düşün
+  * Artırmayı artır: `mosaic=1.0`, `mixup=0.3`, `scale=0.9`
+
+
+
+**Alana özgü görseller (hava, tıbbi, su altı):**
+
+  * Dikey yönelim değişiyorsa `flipud=0.5` değerini artır
+  * Nesneler rastgele açılarda görünüyorsa `degrees` değerini artır
+  * Aydınlatma koşulları COCO'dan önemli ölçüde farklıysa `hsv_s` ve `hsv_v` değerlerini ayarla
+
+
+
+Otomatik hiperparametre optimizasyonu için [Hiperparametre Ayarlama kılavuzuna](/tr/guides/hyperparameter-tuning) bakabilirsin.
+
+### Link to this sectionBir Model Boyutu Seç#
+
+Model| En İyi Kullanım| Yığın Boyutu Rehberi  
+---|---|---  
+YOLO26n| Edge cihazlar, mobil, CPU'da gerçek zamanlı| Tüketici GPU'larında büyük yığınlar (64-128)  
+YOLO26s| Dengeli hız ve doğruluk| Orta yığınlar (32-64)  
+YOLO26m| Orta düzey hesaplamayla daha yüksek doğruluk| Daha küçük yığınlar (16-32)  
+YOLO26l| GPU mevcut olduğunda yüksek doğruluk| Küçük yığınlar (8-16) veya çoklu GPU  
+YOLO26x| Maksimum doğruluk, sunucu dağıtımı| Küçük yığınlar (4-8) veya çoklu GPU  
+  
+Dışa aktarma ve dağıtım seçenekleri için [Dışa Aktarma kılavuzuna](/tr/modes/export) ve [Model Dağıtım Seçeneklerine](/tr/guides/model-deployment-options) bakabilirsin.
+
+## Link to this sectionSonuç#
+
+YOLO26 kontrol noktaları, içlerine gömülü tam eğitim tarifleriyle gelir, bu nedenle her model boyutunun arkasındaki kesin hiperparametreler her zaman bir `train_args` sorgusu uzaklığındadır. Varsayılan ayarlardan ince ayara başla, bu sayfadaki tabloları kullanarak dikkatlice ayarla ve her değişikliği kendi doğrulama setinle doğrula. Yol boyunca soruların olursa, [Ultralytics GitHub deposunda](https://github.com/ultralytics/ultralytics) veya [Ultralytics Discord sunucusunda](https://discord.com/invite/ultralytics) topluluğa sorabilirsin.
+
+## Link to this sectionSSS#
+
+### Link to this sectionHerhangi bir kontrol noktası için kullanılan kesin hiperparametreleri nasıl görebilirim?#
+
+Kontrol noktasını `torch.load()` ile yükle ve `train_args` anahtarına eriş ya da Ultralytics API'si ile `model.ckpt["train_args"]` kullan. Tam örnekler için YOLO26 Kontrol Noktası Eğitim Argümanlarını İnceleme bölümüne bakabilirsin.
+
+### Link to this sectionNeden her model boyutu için epok sayıları farklı?#
+
+Daha büyük modeller, daha fazla kapasiteleri yakınsamayı hızlandırdığı için COCO'da genellikle daha az epoka ihtiyaç duyarlar — N modeli için 245 epok gerekliyken X modeli 40 epokta eğitilmiştir — ancak sayılar kesinlikle monoton değildir (S modeli 70, M modeli 80 kullandı). Kendi veri setin üzerinde ince ayar yaparken, optimum epok sayısı model boyutuna değil, veri setinin boyutuna ve karmaşıklığına bağlıdır. Doğru durdurma noktasını otomatik olarak bulmak için erken durdurma (`patience`) özelliğini kullan.
+
+### Link to this sectionİnce ayar için MuSGD kullanmalı mıyım?#
+
+Genellikle seçim yapmana gerek yoktur: varsayılan `optimizer=auto` ile Ultralytics, daha uzun eğitim koşuları (>10.000 yineleme) için otomatik olarak **MuSGD** 'yi, daha kısa olanlar içinse **AdamW** 'yi seçer. İstersen açıkça `optimizer=MuSGD` olarak ayarlayabilirsin. MuSGD'nin nasıl çalıştığı hakkında daha fazla bilgi için [eğitim belgelerine](/tr/modes/train#musgd-optimizer) bakabilirsin.
+
+### Link to this sectionKontrol noktasındaki `muon_w`, `sgd_w`, `cls_w`, `o2m` ve `topk` nedir?#
+
+Bunlar, temel kontrol noktalarını üreten eğitim hattından gelen dahili parametrelerdir ve tekrarlanabilirlik için `train_args` içinde kaydedilmiştir. Bunlar `default.yaml` içinde kullanıcı tarafından yapılandırılabilir ayarlar değildir ve `model.train()`'e gönderilmeleri geçersiz argüman hatasına neden olur — genel paket bunları okumaz. İnce ayar yaparken bunları ayarlamana gerek yoktur; model boyutuna göre değerleri için Dahili Eğitim Parametreleri bölümüne bakabilirsin.
+
+### Link to this sectionÖn eğitimi sıfırdan tam olarak tekrarlayabilir miyim?#
+
+Tam olarak değil — kontrol noktaları, genel kod tabanında bulunmayan ek özelliklere (yapılandırılabilir `o2m` ağırlıkları ve `cls_w` gibi) sahip dahili bir eğitim dalı kullanılarak üretilmiştir. Genel Ultralytics paketi ile bu sayfada belgelenen hiperparametreleri kullanarak çok yakın sonuçlar elde edebilirsin, ancak tam bir üretim dahili dalı gerektirir.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo26-training-recipe.md)
+
+[RAraimbekovm2](https://github.com/raimbekovm)[Y-Y-T-G1](https://github.com/Y-T-G)
+
+Oluşturulma 2 ay önceGüncellenme geçen hafta
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

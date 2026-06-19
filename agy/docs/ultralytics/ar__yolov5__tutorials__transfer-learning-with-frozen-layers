@@ -1,0 +1,175 @@
+---
+source_url: https://docs.ultralytics.com/ar/yolov5/tutorials/transfer-learning-with-frozen-layers
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/transfer-learning-with-frozen-layers.md)
+
+# Link to this sectionالتعلم بنقل المعرفة مع تجميد الطبقات في YOLOv5#
+
+📚 يشرح هذا الدليل كيفية **تجميد** طبقات [YOLOv5](https://github.com/ultralytics/yolov5) 🚀 عند تنفيذ [التعلم بنقل المعرفة](https://www.ultralytics.com/glossary/transfer-learning). يعد التعلم بنقل المعرفة تقنية قوية في [تعلم الآلة (ML)](https://www.ultralytics.com/glossary/machine-learning-ml) تسمح لك بإعادة تدريب النموذج بسرعة على بيانات جديدة دون الحاجة لإعادة تدريب الشبكة بالكامل من الصفر. من خلال تجميد أوزان الطبقات الأولية وتحديث معلمات الطبقات اللاحقة فقط، يمكنك تقليل متطلبات الموارد الحوسبية ووقت التدريب بشكل كبير. ومع ذلك، قد يؤثر هذا النهج بشكل طفيف على [دقة](https://www.ultralytics.com/glossary/accuracy) النموذج النهائي.
+
+## Link to this sectionقبل البدء#
+
+أولاً، قم بنسخ مستودع YOLOv5 وتثبيت التبعيات الضرورية المدرجة في [`requirements.txt`](https://github.com/ultralytics/yolov5/blob/master/requirements.txt). تأكد من توفر بيئة [**Python >=3.8.0**](https://www.python.org/) مع تثبيت [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). سيتم تنزيل [النماذج](https://github.com/ultralytics/yolov5/tree/master/models) المدربة مسبقًا و[مجموعات البيانات](https://github.com/ultralytics/yolov5/tree/master/data) المطلوبة تلقائيًا من أحدث [إصدار](https://github.com/ultralytics/yolov5/releases) لـ YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone repository
+    cd yolov5
+    pip install -r requirements.txt # install dependencies
+
+## Link to this sectionكيفية عمل تجميد الطبقات#
+
+عند تجميد طبقات في [شبكة عصبية](https://www.ultralytics.com/glossary/neural-network-nn)، فإنك تمنع تحديث معاملاتها (الأوزان والانحيازات) أثناء عملية التدريب. في PyTorch، يتم تحقيق ذلك عن طريق ضبط سمة `requires_grad` لموترات الطبقة على `False`. ونتيجة لذلك، لا يتم حساب التدرجات لهذه الطبقات أثناء [الانتشار العكسي](https://www.ultralytics.com/glossary/backpropagation)، مما يوفر الحوسبة والذاكرة.
+
+إليك كيفية تنفيذ YOLOv5 لتجميد الطبقات في [برنامج التدريب](https://github.com/ultralytics/yolov5/blob/master/train.py) الخاص به:
+    
+    
+    # Freeze specified layers
+    freeze = [f"model.{x}." for x in range(freeze)]  # Define layers to freeze based on module index
+    for k, v in model.named_parameters():
+        v.requires_grad = True  # Ensure all parameters are initially trainable
+        if any(x in k for x in freeze):
+            print(f"Freezing layer: {k}")
+            v.requires_grad = False  # Disable gradient calculation for frozen layers
+
+## Link to this sectionاستكشاف بنية النموذج#
+
+يعد فهم بنية نموذج YOLOv5 أمراً بالغ الأهمية لاتخاذ قرار بشأن الطبقات التي سيتم تجميدها. يمكنك فحص أسماء جميع الوحدات ومعلماتها باستخدام مقتطف Python التالي:
+    
+    
+    # Assuming 'model' is your loaded YOLOv5 model instance
+    for name, param in model.named_parameters():
+        print(name)
+    
+    """
+    Example Output:
+    model.0.conv.conv.weight
+    model.0.conv.bn.weight
+    model.0.conv.bn.bias
+    model.1.conv.weight
+    model.1.bn.weight
+    model.1.bn.bias
+    model.2.cv1.conv.weight
+    model.2.cv1.bn.weight
+    ...
+    """
+
+تتكون بنية YOLOv5 عادةً من [backbone](https://www.ultralytics.com/glossary/backbone) (الطبقات 0-9 في التكوينات القياسية مثل YOLOv5s/m/l/x) المسؤولة عن [استخراج الميزات](https://www.ultralytics.com/glossary/feature-extraction)، وhead (الطبقات المتبقية) التي تقوم بـ [اكتشاف الكائنات](https://www.ultralytics.com/glossary/object-detection).
+    
+    
+    # Example YOLOv5 v6.0 backbone structure
+    backbone:
+        # [from, number, module, args]
+        - [-1, 1, Conv, [64, 6, 2, 2]]  # Layer 0: Initial convolution (P1/2 stride)
+        - [-1, 1, Conv, [128, 3, 2]] # Layer 1: Downsampling convolution (P2/4 stride)
+        - [-1, 3, C3, [128]]          # Layer 2: C3 module
+        - [-1, 1, Conv, [256, 3, 2]] # Layer 3: Downsampling convolution (P3/8 stride)
+        - [-1, 6, C3, [256]]          # Layer 4: C3 module
+        - [-1, 1, Conv, [512, 3, 2]] # Layer 5: Downsampling convolution (P4/16 stride)
+        - [-1, 9, C3, [512]]          # Layer 6: C3 module
+        - [-1, 1, Conv, [1024, 3, 2]]# Layer 7: Downsampling convolution (P5/32 stride)
+        - [-1, 3, C3, [1024]]         # Layer 8: C3 module
+        - [-1, 1, SPPF, [1024, 5]]    # Layer 9: Spatial Pyramid Pooling Fast
+    
+    # Example YOLOv5 v6.0 head structure
+    head:
+        - [-1, 1, Conv, [512, 1, 1]] # Layer 10
+        - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # Layer 11
+        - [[-1, 6], 1, Concat, [1]] # Layer 12: Concatenate with backbone P4 (from layer 6)
+        - [-1, 3, C3, [512, False]] # Layer 13: C3 module
+        # ... subsequent head layers for feature fusion and detection
+
+## Link to this sectionخيارات التجميد#
+
+يمكنك التحكم في الطبقات التي يتم تجميدها باستخدام الوسيط `--freeze` في أمر التدريب. يحدد هذا الوسيط فهرس أول وحدة _غير مجمدة_ ؛ سيتم تجميد أوزان جميع الوحدات التي تسبق هذا الفهرس. استخدم `model.model` (وهو `nn.Sequential`) لفحص ترتيب الوحدات إذا كنت بحاجة إلى التأكد من أي الفهارس تتوافق مع كتلة معينة.
+
+### Link to this sectionتجميد الـ backbone فقط#
+
+لتجميد الـ backbone بالكامل (الطبقات من 0 إلى 9)، وهو أمر شائع عند تكييف النموذج مع فئات كائنات جديدة مع الاحتفاظ بقدرات استخراج الميزات العامة المستفادة من مجموعة بيانات ضخمة مثل [COCO](https://docs.ultralytics.com/datasets/detect/coco):
+    
+    
+    python train.py --weights yolov5m.pt --data your_dataset.yaml --freeze 10
+
+تكون هذه الاستراتيجية فعالة عندما تشترك مجموعة بياناتك المستهدفة في ميزات بصرية منخفضة المستوى مماثلة (الحواف، الأنسجة) مع بيانات التدريب الأصلية (مثل COCO) ولكنها تحتوي على فئات كائنات مختلفة.
+
+### Link to this sectionتجميد كل شيء باستثناء طبقات الاكتشاف النهائية#
+
+لتجميد الشبكة بأكملها تقريباً، مع ترك طبقات الالتفاف النهائية فقط (جزء من وحدة `Detect`، وعادةً ما تكون الوحدة الأخيرة، على سبيل المثال، الوحدة 24 في YOLOv5s) قابلة للتدريب:
+    
+    
+    python train.py --weights yolov5m.pt --data your_dataset.yaml --freeze 24
+
+يعد هذا النهج مفيداً عندما تحتاج بشكل أساسي إلى تعديل النموذج لعدد مختلف من فئات المخرجات مع الحفاظ على الغالبية العظمى من الميزات المكتسبة سليمة. وهو يتطلب أقل قدر من الموارد الحوسبية لـ [الضبط الدقيق](https://www.ultralytics.com/glossary/fine-tuning).
+
+## Link to this sectionمقارنة الأداء#
+
+لتوضيح تأثيرات تجميد الطبقات، قمنا بتدريب YOLOv5m على [مجموعة بيانات Pascal VOC](https://docs.ultralytics.com/datasets/detect/voc) لمدة 50 [دورة تدريبية (epochs)](https://www.ultralytics.com/glossary/epoch)، بدءاً من [أوزان](https://www.ultralytics.com/glossary/model-weights) COCO الرسمية المدربة مسبقاً (`yolov5m.pt`). قارنا بين ثلاثة سيناريوهات: تدريب جميع الطبقات (`--freeze 0`)، تجميد الـ backbone (`--freeze 10`)، وتجميد كل شيء باستثناء طبقات الاكتشاف النهائية (`--freeze 24`).
+    
+    
+    # Example command for training with backbone frozen
+    python train.py --batch 48 --weights yolov5m.pt --data voc.yaml --epochs 50 --cache --img 512 --hyp data/hyps/hyp.VOC.yaml --freeze 10
+
+### Link to this sectionنتائج الدقة#
+
+تظهر النتائج أن تجميد الطبقات يمكن أن يسرع التدريب بشكل كبير ولكنه قد يؤدي إلى انخفاض طفيف في [mAP (متوسط دقة متوسط)](https://www.ultralytics.com/glossary/mean-average-precision-map) النهائي. يؤدي تدريب جميع الطبقات عموماً إلى الحصول على أفضل دقة، بينما يوفر تجميد المزيد من الطبقات تدريباً أسرع على حساب احتمالية انخفاض الأداء.
+
+![نتائج mAP50 للتدريب مقارنةً باستراتيجيات تجميد مختلفة](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/freezing-training-map50-results.avif) _مقارنة mAP50 أثناء التدريب_
+
+![نتائج mAP50-95 للتدريب مقارنةً باستراتيجيات تجميد مختلفة](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/freezing-training-map50-95-results.avif) _مقارنة mAP50-95 أثناء التدريب_
+
+![YOLOv5 frozen layer training performance](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/table-results.avif) *Summary table of performance metrics* 
+
+### Link to this sectionاستخدام الموارد#
+
+يؤدي تجميد المزيد من الطبقات إلى تقليل متطلبات ذاكرة [GPU](https://www.ultralytics.com/glossary/gpu-graphics-processing-unit) والاستخدام الإجمالي بشكل كبير. وهذا يجعل التعلم بنقل المعرفة مع الطبقات المجمدة خياراً جذاباً عند العمل بموارد أجهزة محدودة، مما يسمح بتدريب نماذج أكبر أو استخدام أحجام صور أكبر مما قد يكون ممكناً بخلاف ذلك.
+
+![نسبة ذاكرة GPU المخصصة أثناء التدريب](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/training-gpu-memory-allocated-percent.avif) _ذاكرة GPU المخصصة (%)_
+
+![نسبة استخدام ذاكرة GPU أثناء التدريب](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/training-gpu-memory-utilization-percent.avif) _استخدام GPU (%)_
+
+## Link to this sectionمتى تستخدم تجميد الطبقات#
+
+يعد تجميد الطبقات أثناء التعلم بنقل المعرفة مفيداً بشكل خاص في عدة حالات:
+
+  1. **موارد حوسبية محدودة** : إذا كانت لديك قيود على ذاكرة GPU أو قوة المعالجة.
+  2. **مجموعات بيانات صغيرة** : عندما تكون مجموعة بياناتك المستهدفة أصغر بكثير من مجموعة بيانات التدريب المسبق الأصلية، يساعد التجميد في منع [الإفراط في التخصيص (overfitting)](https://www.ultralytics.com/glossary/overfitting).
+  3. **نماذج أولية سريعة** : عندما تحتاج إلى تكييف نموذج موجود بسرعة لمهمة أو مجال جديد للتقييم الأولي.
+  4. **نطاقات ميزات متشابهة** : إذا كانت الميزات منخفضة المستوى في مجموعة بياناتك الجديدة مشابهة جداً لتلك الموجودة في مجموعة البيانات التي تم تدريب النموذج عليها مسبقاً.
+
+
+
+اكتشف المزيد حول فروق التعلم بنقل المعرفة الدقيقة في [مدخل المصطلحات](https://www.ultralytics.com/glossary/transfer-learning) الخاص بنا وفكر في تقنيات مثل [ضبط المعلمات التشعبية](https://docs.ultralytics.com/guides/hyperparameter-tuning) لتحسين الأداء.
+
+## Link to this sectionالبيئات المدعومة#
+
+تقدم Ultralytics بيئات متنوعة جاهزة للاستخدام مع التبعيات الأساسية مثل [CUDA](https://developer.nvidia.com/cuda)، و[CuDNN](https://developer.nvidia.com/cudnn)، و[Python](https://www.python.org/)، و[PyTorch](https://pytorch.org/) مثبتة مسبقاً.
+
+  * **دفاتر ملاحظات مجانية لوحدات معالجة الرسومات** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [GCP Quickstart Guide](/ar/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [دليل البدء السريع لـ AWS](/ar/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [دليل البدء السريع لـ AzureML](/ar/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [دليل البدء السريع لـ Docker](/ar/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionحالة المشروع#
+
+[![YOLOv5 Continuous Integration Status](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+يؤكد هذا الشارة أن جميع اختبارات التكامل المستمر (CI) لـ [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) تجتاز بنجاح. تقوم اختبارات CI هذه بتقييم وظائف وأداء YOLOv5 بدقة عبر العمليات الرئيسية: [التدريب](https://github.com/ultralytics/yolov5/blob/master/train.py)، [التحقق](https://github.com/ultralytics/yolov5/blob/master/val.py)، [الاستدلال](https://github.com/ultralytics/yolov5/blob/master/detect.py)، [التصدير](https://github.com/ultralytics/yolov5/blob/master/export.py)، و[المقاييس](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). وهي تضمن تشغيلاً ثابتاً وموثوقاً على أنظمة macOS وWindows وUbuntu، وتعمل تلقائياً كل 24 ساعة ومع كل التزام كود جديد.
+
+المساهمون
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/transfer-learning-with-frozen-layers.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+تم الإنشاء قبل 3 أيامتم التحديث قبل 3 أيام
+
+## التعليقات
+
+في هذه الصفحة
+
+استكشف باستخدام الذكاء الاصطناعي

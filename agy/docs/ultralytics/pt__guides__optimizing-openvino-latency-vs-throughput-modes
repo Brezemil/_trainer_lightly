@@ -1,0 +1,188 @@
+---
+source_url: https://docs.ultralytics.com/pt/guides/optimizing-openvino-latency-vs-throughput-modes
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+# Link to this sectionOtimização de Inferência OpenVINO para YOLO#
+
+![OpenVINO Ecosystem](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/openvino-ecosystem.avif)
+
+## Link to this sectionIntrodução#
+
+Ao implementar modelos de [deep learning](https://www.ultralytics.com/glossary/deep-learning-dl), especialmente aqueles voltados para [detecção de objetos](https://www.ultralytics.com/glossary/object-detection), como os modelos Ultralytics YOLO, obter um desempenho ideal é crucial. Este guia explora o uso do [Intel's OpenVINO toolkit](https://docs.ultralytics.com/integrations/openvino) para otimizar a inferência, com foco em latência e throughput. Quer estejas a trabalhar em aplicações de consumo ou implementações em larga escala, compreender e aplicar estas estratégias de otimização garantirá que os teus modelos funcionem de forma eficiente em vários dispositivos.
+
+## Link to this sectionOtimização para Latência#
+
+A otimização de latência é vital para aplicações que exigem uma resposta imediata de um único modelo a partir de uma única entrada, algo típico em cenários de consumo. O objetivo é minimizar o atraso entre a entrada e o resultado da inferência. No entanto, obter baixa latência envolve uma consideração cuidadosa, especialmente ao executar inferências concorrentes ou gerir vários modelos.
+
+### Link to this sectionPrincipais Estratégias para Otimização de Latência:#
+
+  * **Inferência Única por Dispositivo:** A maneira mais simples de obter baixa latência é limitar a uma inferência de cada vez por dispositivo. Concorrência adicional frequentemente leva a um aumento da latência.
+  * **Aproveitando Sub-Dispositivos:** Dispositivos como CPUs multi-socket ou GPUs multi-tile podem executar múltiplos pedidos com um aumento mínimo de latência ao utilizar os seus sub-dispositivos internos.
+  * **Dicas de Desempenho do OpenVINO:** Utilizar `ov::LATENCY` do OpenVINO para a propriedade `ov::performance_mode` durante a compilação do modelo simplifica o ajuste de desempenho, oferecendo uma abordagem agnóstica em relação ao dispositivo e preparada para o futuro.
+
+
+
+### Link to this sectionGerindo a Latência da Primeira Inferência:#
+
+  * **Caching de Modelos:** Para mitigar o tempo de carregamento e compilação do modelo que impacta a latência, utiliza o caching de modelos sempre que possível. Para cenários onde o caching não é viável, os CPUs geralmente oferecem os tempos de carregamento de modelo mais rápidos.
+  * **Mapeamento de Modelo vs. Leitura:** Para reduzir os tempos de carregamento, o OpenVINO substituiu a leitura do modelo por mapeamento. No entanto, se o modelo estiver num drive removível ou de rede, considera usar `ov::enable_mmap(false)` para voltar à leitura.
+  * **Seleção de Dispositivo AUTO:** Este modo inicia a inferência no CPU, mudando para um acelerador assim que estiver pronto, reduzindo de forma transparente a latência da primeira inferência.
+
+
+
+## Link to this sectionOtimização para Throughput#
+
+A otimização de throughput é crucial para cenários que atendem a inúmeros pedidos de inferência simultaneamente, maximizando a [utilização de recursos](https://www.ultralytics.com/blog/measuring-ai-performance-to-weigh-the-impact-of-your-innovations) sem sacrificar significativamente o desempenho do pedido individual.
+
+### Link to this sectionAbordagens para Otimização de Throughput:#
+
+  1. **Dicas de Desempenho do OpenVINO:** Um método de alto nível e preparado para o futuro para melhorar o throughput em vários dispositivos usando dicas de desempenho.
+         
+         import openvino.properties.hint as hints
+         
+         config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+         compiled_model = core.compile_model(model, "GPU", config)
+
+  2. **Batching Explícito e Streams:** Uma abordagem mais granular que envolve batching explícito e o uso de streams para ajuste de desempenho avançado.
+
+
+
+
+### Link to this sectionConcebendo Aplicações Orientadas para Throughput:#
+
+Para maximizar o throughput, as aplicações devem:
+
+  * Processar entradas em paralelo, aproveitando ao máximo as capacidades do dispositivo.
+  * Decompor o fluxo de dados em pedidos de inferência concorrentes, agendados para execução paralela.
+  * Utilizar a Async API com callbacks para manter a eficiência e evitar a inanição do dispositivo.
+
+
+
+### Link to this sectionExecução Multi-Dispositivo:#
+
+O modo multi-dispositivo do OpenVINO simplifica a escala de throughput ao equilibrar automaticamente os pedidos de inferência entre dispositivos sem exigir gestão de dispositivos ao nível da aplicação.
+
+## Link to this sectionGanhos de Desempenho no Mundo Real#
+
+A implementação de otimizações do OpenVINO com modelos Ultralytics YOLO pode trazer melhorias significativas de desempenho. Como demonstrado em [benchmarks](https://docs.ultralytics.com/integrations/openvino#openvino-yolov8-benchmarks), os utilizadores podem experienciar velocidades de inferência até 3x mais rápidas em CPUs Intel, com acelerações ainda maiores possíveis em toda a gama de hardware da Intel, incluindo GPUs integrados, GPUs dedicados e VPUs.
+
+Por exemplo, ao executar modelos YOLOv8 em CPUs Intel Xeon, as versões otimizadas pelo OpenVINO superam consistentemente os seus equivalentes PyTorch em termos de tempo de inferência por imagem, sem comprometer a [precisão](https://www.ultralytics.com/glossary/accuracy).
+
+## Link to this sectionImplementação Prática#
+
+Para exportar e otimizar o teu modelo Ultralytics YOLO para o OpenVINO, podes usar a funcionalidade [export](https://docs.ultralytics.com/modes/export):
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to OpenVINO format
+    model.export(format="openvino", half=True)  # Export with FP16 precision
+
+Após exportar, podes executar a inferência com o modelo otimizado:
+    
+    
+    # Load the OpenVINO model
+    ov_model = YOLO("yolo26n_openvino_model/")
+    
+    # Run inference with performance hints for latency
+    results = ov_model("path/to/image.jpg", verbose=True)
+
+## Link to this sectionConclusão#
+
+Otimizar modelos Ultralytics YOLO para latência e throughput com o OpenVINO pode melhorar significativamente o desempenho da tua aplicação. Ao aplicar cuidadosamente as estratégias descritas neste guia, os programadores podem garantir que os seus modelos funcionam de forma eficiente, satisfazendo as exigências de vários cenários de implementação. Lembra-te, a escolha entre otimizar para latência ou throughput depende das necessidades específicas da tua aplicação e das características do ambiente de implementação.
+
+Para informações técnicas mais detalhadas e as últimas atualizações, consulta a [documentação do OpenVINO](https://docs.openvino.ai/2024/index.html) e o [repositório do Ultralytics YOLO](https://github.com/ultralytics/ultralytics). Estes recursos fornecem guias aprofundados, tutoriais e apoio da comunidade para ajudar-te a tirar o máximo proveito dos teus modelos de deep learning.
+
+* * *
+
+Garantir que os teus modelos alcancem um desempenho ideal não é apenas sobre ajustar configurações; é sobre compreender as necessidades da tua aplicação e tomar decisões informadas. Quer estejas a otimizar para [respostas em tempo real](https://www.ultralytics.com/blog/real-time-inferences-in-vision-ai-solutions-are-making-an-impact) ou a maximizar o throughput para processamento em larga escala, a combinação de modelos Ultralytics YOLO e OpenVINO oferece um kit de ferramentas poderoso para os programadores implementarem soluções de IA de alto desempenho.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionComo otimizo modelos Ultralytics YOLO para baixa latência usando OpenVINO?#
+
+A otimização de modelos Ultralytics YOLO para baixa latência envolve várias estratégias chave:
+
+  1. **Inferência Única por Dispositivo:** Limita as inferências a uma de cada vez por dispositivo para minimizar atrasos.
+  2. **Aproveitando Sub-Dispositivos:** Utiliza dispositivos como CPUs multi-socket ou GPUs multi-tile que podem lidar com múltiplos pedidos com um aumento mínimo de latência.
+  3. **Dicas de Desempenho do OpenVINO:** Usa `ov::LATENCY` do OpenVINO durante a compilação do modelo para um ajuste simplificado e agnóstico ao dispositivo.
+
+
+
+Para mais dicas práticas sobre a otimização de latência, verifica a secção de Otimização de Latência do nosso guia.
+
+### Link to this sectionPor que devo usar o OpenVINO para otimizar o throughput do Ultralytics YOLO?#
+
+O OpenVINO melhora o throughput dos modelos Ultralytics YOLO maximizando a utilização dos recursos do dispositivo sem sacrificar o desempenho. Os principais benefícios incluem:
+
+  * **Dicas de Desempenho:** Ajuste de desempenho simples e de alto nível em todos os dispositivos.
+  * **Batching Explícito e Streams:** Ajuste fino para desempenho avançado.
+  * **Execução Multi-Dispositivo:** Equilíbrio automático de carga de inferência, facilitando a gestão ao nível da aplicação.
+
+
+
+Exemplo de configuração:
+    
+    
+    import openvino.properties.hint as hints
+    
+    config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+    compiled_model = core.compile_model(model, "GPU", config)
+
+Sabe mais sobre a otimização de throughput na secção de Otimização de Throughput do nosso guia detalhado.
+
+### Link to this sectionQual é a melhor prática para reduzir a latência da primeira inferência no OpenVINO?#
+
+Para reduzir a latência da primeira inferência, considera estas práticas:
+
+  1. **Caching de Modelos:** Usa o caching de modelos para diminuir os tempos de carregamento e compilação.
+  2. **Mapeamento de Modelo vs. Leitura:** Usa o mapeamento (`ov::enable_mmap(true)`) por padrão, mas muda para a leitura (`ov::enable_mmap(false)`) se o modelo estiver num drive removível ou de rede.
+  3. **Seleção de Dispositivo AUTO:** Utiliza o modo AUTO para começar com inferência no CPU e transitar para um acelerador sem interrupções.
+
+
+
+Para estratégias detalhadas sobre a gestão da latência da primeira inferência, consulta a secção de Gestão da Latência da Primeira Inferência.
+
+### Link to this sectionComo equilibrar a otimização de latência e throughput com Ultralytics YOLO e OpenVINO?#
+
+Equilibrar a otimização de latência e throughput requer a compreensão das necessidades da tua aplicação:
+
+  * **Otimização de Latência:** Ideal para aplicações em tempo real que exigem respostas imediatas (ex: aplicações de consumo).
+  * **Otimização de Throughput:** Melhor para cenários com muitas inferências concorrentes, maximizando o uso de recursos (ex: implementações em larga escala).
+
+
+
+Usar as dicas de desempenho de alto nível e os modos multi-dispositivo do OpenVINO pode ajudar a encontrar o equilíbrio certo. Escolhe as [Dicas de desempenho do OpenVINO](https://docs.ultralytics.com/integrations/openvino#openvino-performance-hints) adequadas com base nos teus requisitos específicos.
+
+### Link to this sectionPosso usar modelos Ultralytics YOLO com outras estruturas de IA além do OpenVINO?#
+
+Sim, os modelos Ultralytics YOLO são altamente versáteis e podem ser integrados com várias estruturas de IA. As opções incluem:
+
+  * **TensorRT:** Para otimização de GPU NVIDIA, segue o [guia de integração do TensorRT](https://docs.ultralytics.com/integrations/tensorrt).
+  * **CoreML:** Para dispositivos Apple, consulta as nossas [instruções de exportação do CoreML](https://docs.ultralytics.com/integrations/coreml).
+  * **[TensorFlow](https://www.ultralytics.com/glossary/tensorflow).js:** Para aplicações web e Node.js, vê o [guia de conversão do TF.js](https://docs.ultralytics.com/integrations/tfjs).
+
+
+
+Explora mais integrações na [página de Integrações do Ultralytics](https://docs.ultralytics.com/integrations).
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+Criado 17 de mar. de 2024Atualizado mês passado
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

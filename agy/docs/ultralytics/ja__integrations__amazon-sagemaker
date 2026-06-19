@@ -1,0 +1,276 @@
+---
+source_url: https://docs.ultralytics.com/ja/integrations/amazon-sagemaker
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/amazon-sagemaker.md)
+
+# Link to this sectionAmazon SageMaker EndpointsでYOLO26をデプロイするためのガイド#
+
+Deploying advanced [computer vision](https://www.ultralytics.com/glossary/computer-vision-cv) models like [Ultralytics' YOLO26](https://github.com/ultralytics/ultralytics) on Amazon SageMaker Endpoints opens up a wide range of possibilities for various [machine learning](https://www.ultralytics.com/glossary/machine-learning-ml) applications. The key to effectively using these models lies in understanding their setup, configuration, and deployment processes. YOLO26 becomes even more powerful when integrated seamlessly with Amazon SageMaker, a robust and scalable machine learning service by AWS.
+
+本ガイドでは、YOLO26 [PyTorch](https://www.ultralytics.com/glossary/pytorch)モデルをAmazon SageMaker Endpointsにデプロイする手順を順を追って説明します。AWS環境の準備、モデルの適切な構成、そしてデプロイのためのAWS CloudFormationやAWS Cloud Development Kit (CDK)などのツールの使用方法の基本を学ぶことができます。
+
+## Link to this sectionAmazon SageMaker#
+
+![Amazon SageMaker ML platform architecture](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/amazon-sagemaker-overview.avif)
+
+[Amazon SageMaker](https://aws.amazon.com/sagemaker/)は、機械学習モデルの構築、トレーニング、デプロイのプロセスを簡素化するAmazon Web Services (AWS)の機械学習サービスです。機械学習ワークフローの様々な側面を処理するための幅広いツールを提供します。これには、モデルチューニングの自動化機能、大規模なモデルトレーニングのオプション、本番環境へのモデルデプロイの簡単な手法が含まれます。SageMakerは主要な機械学習フレームワークをサポートしており、多様なプロジェクトに必要な柔軟性を提供します。その機能は、データラベリング、ワークフロー管理、パフォーマンス分析もカバーしています。
+
+## Link to this sectionAmazon SageMaker EndpointsへのYOLO26のデプロイ#
+
+YOLO26をAmazon SageMakerにデプロイすると、リアルタイム推論用のマネージド環境を使用でき、オートスケーリングなどの機能を活用できます。以下のAWSアーキテクチャをご覧ください。
+
+![AWS SageMaker YOLO training architecture](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/aws-architecture.avif)
+
+### Link to this sectionステップ 1: AWS環境のセットアップ#
+
+まず、以下の前提条件が満たされていることを確認してください。
+
+  * AWSアカウント: まだお持ちでない場合は、AWSアカウントにサインアップしてください。
+
+  * 構成済みのIAMロール: Amazon SageMaker、AWS CloudFormation、Amazon S3に必要な権限を持つIAMロールが必要です。このロールには、これらのサービスへのアクセスを許可するポリシーが適用されている必要があります。
+
+  * AWS CLI: まだインストールされていない場合は、AWS Command Line Interface (CLI)をダウンロードしてインストールし、アカウント詳細で構成してください。インストールの詳細については、[AWS CLIの手順](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)に従ってください。
+
+  * AWS CDK: まだインストールされていない場合は、デプロイのスクリプト作成に使用するAWS Cloud Development Kit (CDK)をインストールしてください。インストールの詳細については、[AWS CDKの手順](https://docs.aws.amazon.com/cdk/v2/guide/#getting_started_install)に従ってください。
+
+  * 十分なサービスクォータ: Amazon SageMakerにおいて、エンドポイント使用用の`ml.m5.4xlarge`と、ノートブックインスタンス使用用の`ml.m5.4xlarge`の2つの異なるリソースに対して十分なクォータがあることを確認してください。それぞれ最低1つのクォータ値が必要です。現在のクォータがこの要件を下回っている場合は、それぞれについて引き上げを申請することが重要です。[AWS Service Quotasドキュメント](https://docs.aws.amazon.com/servicequotas/latest/userguide/request-quota-increase.html#quota-console-increase)の詳細な手順に従って、クォータの引き上げを申請できます。
+
+
+
+
+### Link to this sectionステップ 2: YOLO26 SageMakerリポジトリのクローン#
+
+次のステップは、SageMakerでYOLO26をデプロイするためのリソースを含む、特定のAWSリポジトリをクローンすることです。GitHubでホストされているこのリポジトリには、必要なCDKスクリプトと設定ファイルが含まれています。
+
+  * GitHubリポジトリのクローン: ターミナルで次のコマンドを実行し、host-yolov8-on-sagemaker-endpointリポジトリをクローンします。
+        
+        git clone https://github.com/aws-samples/host-yolov8-on-sagemaker-endpoint.git
+
+  * クローンしたディレクトリへの移動: ディレクトリをクローンしたリポジトリに変更します。
+        
+        cd host-yolov8-on-sagemaker-endpoint/yolov8-pytorch-cdk
+
+
+
+
+### Link to this sectionステップ 3: CDK環境のセットアップ#
+
+必要なコードを入手したので、AWS CDKでデプロイするための環境をセットアップします。
+
+  * Python仮想環境の作成: これにより、Python環境と依存関係が分離されます。以下を実行してください。
+        
+        python3 -m venv .venv
+
+  * 仮想環境の有効化:
+        
+        source .venv/bin/activate
+
+  * 依存関係のインストール: プロジェクトに必要なPython依存関係をインストールします。
+        
+        pip3 install -r requirements.txt
+
+  * AWS CDKライブラリのアップグレード: AWS CDKライブラリの最新バージョンがあることを確認してください。
+        
+        pip install --upgrade aws-cdk-lib
+
+
+
+
+### Link to this sectionステップ 4: AWS CloudFormationスタックの作成#
+
+  * CDKアプリケーションの合成: CDKコードからAWS CloudFormationテンプレートを生成します。
+        
+        cdk synth
+
+  * CDKアプリケーションのブートストラップ: CDKデプロイ用にAWS環境を準備します。
+        
+        cdk bootstrap
+
+  * スタックのデプロイ: これにより、必要なAWSリソースが作成され、モデルがデプロイされます。
+        
+        cdk deploy
+
+
+
+
+### Link to this sectionステップ 5: YOLOモデルのデプロイ#
+
+デプロイの手順に入る前に、[Ultralyticsが提供するYOLO26モデルの範囲](/ja/models)を必ず確認してください。これは、プロジェクトの要件に最も適したモデルを選択するのに役立ちます。
+
+AWS CloudFormationスタックを作成した後、次のステップはYOLO26をデプロイすることです。
+
+  * ノートブックインスタンスを開く: AWSコンソールにアクセスし、Amazon SageMakerサービスへ移動します。ダッシュボードから「Notebook Instances」を選択し、CDKデプロイスクリプトによって作成されたノートブックインスタンスを見つけます。ノートブックインスタンスを開いてJupyter環境にアクセスします。
+
+  * inference.pyへのアクセスと修正: JupyterでSageMakerノートブックインスタンスを開いた後、inference.pyファイルを見つけます。inference.py内のoutput_fn関数を以下のように編集し、スクリプトへの変更を保存します。その際、構文エラーがないことを確認してください。
+        
+        import json
+        
+        def output_fn(prediction_output):
+            """Formats model outputs as JSON string, extracting attributes like boxes, masks, keypoints."""
+            print("Executing output_fn from inference.py ...")
+            infer = {}
+            for result in prediction_output:
+                if result.boxes is not None:
+                    infer["boxes"] = result.boxes.numpy().data.tolist()
+                if result.masks is not None:
+                    infer["masks"] = result.masks.numpy().data.tolist()
+                if result.keypoints is not None:
+                    infer["keypoints"] = result.keypoints.numpy().data.tolist()
+                if result.obb is not None:
+                    infer["obb"] = result.obb.numpy().data.tolist()
+                if result.probs is not None:
+                    infer["probs"] = result.probs.numpy().data.tolist()
+            return json.dumps(infer)
+
+  * 1_DeployEndpoint.ipynbを使用したエンドポイントのデプロイ: Jupyter環境で、sm-notebookディレクトリにある1_DeployEndpoint.ipynbノートブックを開きます。ノートブック内の指示に従い、セルを実行してYOLO26モデルをダウンロードし、更新された推論コードとパッケージ化して、Amazon S3バケットにアップロードします。ノートブックは、YOLO26モデル用のSageMakerエンドポイントを作成およびデプロイする手順をガイドします。
+
+
+
+
+### Link to this sectionステップ 6: デプロイのテスト#
+
+YOLO26モデルがデプロイされたので、そのパフォーマンスと機能をテストすることが重要です。
+
+  * テストノートブックを開く: 同じJupyter環境内で、sm-notebookディレクトリにある2_TestEndpoint.ipynbノートブックを見つけて開きます。
+
+  * テストノートブックの実行: ノートブック内の指示に従って、デプロイされたSageMakerエンドポイントをテストします。これには、エンドポイントへ画像を送信し、推論を実行することが含まれます。次に、以下に示すように、出力をプロットしてモデルのパフォーマンスと[精度](https://www.ultralytics.com/glossary/accuracy)を可視化します。
+
+
+
+
+![Testing Results YOLO26](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/testing-results-yolov8.avif)
+
+  * リソースのクリーンアップ: テストノートブックは、エンドポイントとホストされたモデルをクリーンアップするプロセスもガイドします。これは、特にデプロイしたモデルをすぐに使用する予定がない場合に、コストとリソースを効果的に管理するための重要なステップです。
+
+
+
+### Link to this sectionステップ 7: 監視と管理#
+
+テストの後、デプロイされたモデルの継続的な監視と管理が不可欠です。
+
+  * Amazon CloudWatchによる監視: [Amazon CloudWatch](https://aws.amazon.com/cloudwatch/)を使用して、SageMakerエンドポイントのパフォーマンスと健全性を定期的にチェックしてください。
+
+  * エンドポイントの管理: エンドポイントの継続的な管理にはSageMakerコンソールを使用します。これには、必要に応じたモデルのスケーリング、更新、再デプロイが含まれます。
+
+
+
+
+これらのステップを完了することで、Amazon SageMaker Endpoints上でYOLO26モデルのデプロイとテストが成功しているはずです。このプロセスは、機械学習デプロイのためにAWSサービスを使用する実践的な経験を積むだけでなく、将来他の高度なモデルをデプロイするための基盤となります。
+
+## Link to this sectionまとめ#
+
+本ガイドでは、AWS CloudFormationとAWS Cloud Development Kit (CDK)を使用して、Amazon SageMaker Endpoints上でYOLO26をデプロイする手順を順を追って説明しました。このプロセスには、必要なGitHubリポジトリのクローン、CDK環境のセットアップ、AWSサービスを使用したモデルのデプロイ、およびSageMaker上でのパフォーマンスのテストが含まれます。
+
+技術的な詳細については、AWS Machine Learningブログの[こちらの記事](https://aws.amazon.com/blogs/machine-learning/hosting-yolov8-pytorch-model-on-amazon-sagemaker-endpoints/)を参照してください。また、公式の[Amazon SageMakerドキュメント](https://docs.aws.amazon.com/sagemaker/latest/dg/realtime-endpoints.html)で、様々な機能や詳細についてのインサイトを確認することもできます。
+
+異なるYOLO26の統合についてさらに詳しく知りたいですか？[Ultralytics統合ガイドページ](/ja/integrations)にアクセスして、機械学習プロジェクトを強化できる追加のツールや機能を見つけてください。
+
+## Link to this sectionFAQ#
+
+### Link to this sectionUltralytics YOLO26モデルをAmazon SageMaker Endpointsにデプロイするにはどうすればよいですか？#
+
+Ultralytics YOLO26モデルをAmazon SageMaker Endpointsにデプロイするには、以下の手順に従ってください。
+
+  1. **AWS環境のセットアップ** : AWSアカウント、必要な権限を持つIAMロール、および設定済みのAWS CLIがあることを確認します。まだインストールしていない場合は、AWS CDKをインストールします（[AWS CDKの手順](https://docs.aws.amazon.com/cdk/v2/guide/#getting_started_install)を参照）。
+  2. **YOLO26 SageMakerリポジトリのクローン** : 
+         
+         git clone https://github.com/aws-samples/host-yolov8-on-sagemaker-endpoint.git
+         cd host-yolov8-on-sagemaker-endpoint/yolov8-pytorch-cdk
+
+  3. **CDK環境のセットアップ** : Python仮想環境を作成して有効化し、依存関係をインストールして、AWS CDKライブラリをアップグレードします。 
+         
+         python3 -m venv .venv
+         source .venv/bin/activate
+         pip3 install -r requirements.txt
+         pip install --upgrade aws-cdk-lib
+
+  4. **AWS CDKを使用したデプロイ** : CloudFormationスタックを合成およびデプロイし、環境をブートストラップします。 
+         
+         cdk synth
+         cdk bootstrap
+         cdk deploy
+
+
+
+
+詳細については、ドキュメントセクションを確認してください。
+
+### Link to this sectionYOLO26をAmazon SageMakerにデプロイするための前提条件は何ですか？#
+
+YOLO26をAmazon SageMakerにデプロイするには、以下の前提条件を確認してください。
+
+  1. **AWSアカウント** : 有効なAWSアカウント（[こちらからサインアップ](https://aws.amazon.com/)）。
+  2. **IAMロール** : SageMaker、CloudFormation、Amazon S3に対する権限を持つ構成済みのIAMロール。
+  3. **AWS CLI** : インストールおよび設定済みのAWS Command Line Interface（[AWS CLIインストールガイド](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)）。
+  4. **AWS CDK** : インストール済みのAWS Cloud Development Kit（[CDKセットアップガイド](https://docs.aws.amazon.com/cdk/v2/guide/#getting_started_install)）。
+  5. **サービスクォータ** : エンドポイントとノートブックの両方の使用に対して、`ml.m5.4xlarge`インスタンスのための十分なクォータ（[クォータの引き上げを申請](https://docs.aws.amazon.com/servicequotas/latest/userguide/request-quota-increase.html#quota-console-increase)）。
+
+
+
+詳細なセットアップについては、こちらのセクションを参照してください。
+
+### Link to this sectionAmazon SageMakerでUltralytics YOLO26を使用すべき理由は何ですか？#
+
+Amazon SageMakerでUltralytics YOLO26を使用することには、いくつかの利点があります。
+
+  1. **スケーラビリティと管理** : SageMakerは、リアルタイム推論のニーズに役立つオートスケーリング機能などを備えたマネージド環境を提供します。
+  2. **AWSサービスとの統合** : データストレージのためのS3、Infrastructure as CodeのためのCloudFormation、監視のためのCloudWatchなど、他のAWSサービスとシームレスに統合できます。
+  3. **デプロイの容易さ** : AWS CDKスクリプトを使用した簡素化されたセットアップと、効率的なデプロイプロセス。
+  4. **パフォーマンス** : Amazon SageMakerの高性能インフラストラクチャを活用して、大規模な推論タスクを効率的に実行できます。
+
+
+
+SageMakerを使用する利点の詳細については、はじめにセクションをご覧ください。
+
+### Link to this sectionAmazon SageMaker上でYOLO26の推論ロジックをカスタマイズできますか？#
+
+はい、Amazon SageMaker上でYOLO26の推論ロジックをカスタマイズできます。
+
+  1. **Modify`inference.py`**: Locate and customize the `output_fn` function in the `inference.py` file to tailor output formats.
+         
+         import json
+         
+         def output_fn(prediction_output):
+             """Formats model outputs as JSON string, extracting attributes like boxes, masks, keypoints."""
+             infer = {}
+             for result in prediction_output:
+                 if result.boxes is not None:
+                     infer["boxes"] = result.boxes.numpy().data.tolist()
+                 # Add more processing logic if necessary
+             return json.dumps(infer)
+
+  2. **更新されたモデルのデプロイ** : これらの変更を含めるために、提供されたJupyterノートブック（`1_DeployEndpoint.ipynb`）を使用してモデルを再デプロイしてください。
+
+
+
+
+修正されたモデルのデプロイについては、詳細なステップを参照してください。
+
+### Link to this sectionAmazon SageMakerにデプロイされたYOLO26モデルをテストするにはどうすればよいですか？#
+
+Amazon SageMakerにデプロイされたYOLO26モデルをテストするには、以下を行います。
+
+  1. **テストノートブックを開く** : SageMaker Jupyter環境内にある`2_TestEndpoint.ipynb`ノートブックを見つけます。
+  2. **ノートブックの実行** : ノートブックの指示に従って画像をエンドポイントへ送信し、推論を実行して結果を表示します。
+  3. **結果の可視化** : 組み込みのプロット機能を使用して、検出されたオブジェクトの周りのバウンディングボックスなど、パフォーマンスメトリクスを可視化します。
+
+
+
+包括的なテスト手順については、テストセクションにアクセスしてください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/amazon-sagemaker.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)[RIRizwanMunawar1](https://github.com/RizwanMunawar)[AMambitious-octopus1](https://github.com/ambitious-octopus)[SEsergiuwaxmann1](https://github.com/sergiuwaxmann)[ABabirami-vina1](https://github.com/abirami-vina)
+
+作成日 2024年1月3日更新日 4 か月前
+
+## コメント
+
+このページの内容
+
+AIで探索

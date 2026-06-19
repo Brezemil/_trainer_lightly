@@ -1,0 +1,305 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/sahi-tiled-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+# Link to this sectionUltralytics Docs: YOLO26をSAHIで使用したスライス推論#
+
+[![Open SAHI for Sliced Inference In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/notebooks/blob/main/notebooks/how-to-use-ultralytics-yolo-with-sahi.ipynb)
+
+YOLO26を[SAHI](https://github.com/obss/sahi)（Slicing Aided Hyper Inference）で使用する方法に関するUltralyticsドキュメントへようこそ。この包括的なガイドは、YOLO26とSAHIを実装するために必要なすべての基本知識を提供することを目的としています。SAHIとは何か、大規模アプリケーションにおいてスライス推論がなぜ重要なのか、そしてこれらの機能をYOLO26と統合して[物体検出](https://www.ultralytics.com/glossary/object-detection)性能を向上させる方法について詳しく解説します。
+
+![SAHI tiled inference for small objects](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sahi-sliced-inference-overview.avif)
+
+## Link to this sectionSAHIの紹介#
+
+SAHI（Slicing Aided Hyper Inference）は、大規模画像や高解像度画像向けに物体検出アルゴリズムを最適化するために設計された革新的なライブラリです。その主な機能は、画像を扱いやすいサイズに分割（スライス）し、各スライスで物体検出を実行してから、結果を結合して元に戻すというものです。SAHIはYOLOシリーズを含む幅広い物体検出モデルと互換性があり、計算リソースの最適化を図りつつ柔軟性を提供します。
+
+  
+
+
+  
+**Watch:** How to use SAHI with Ultralytics YOLO26 to Detect Small Objects | Slicing Aided Hyper Inference 🚀 
+
+### Link to this sectionSAHIの主な特徴#
+
+  * **シームレスな統合** : SAHIはYOLOモデルと簡単に統合できるため、コードを大幅に変更することなく、スライスや検出を開始できます。
+  * **リソース効率** : 大きな画像を小さなパーツに分割することで、SAHIはメモリ使用量を最適化し、限られたリソースのハードウェアでも高品質な検出を実行できるようにします。
+  * **高い[精度](https://www.ultralytics.com/glossary/accuracy)**: SAHIは、結合プロセス中に重なり合う検出ボックスをマージするスマートなアルゴリズムを採用することで、検出精度を維持します。
+
+
+
+## Link to this sectionスライス推論とは？#
+
+スライス推論とは、大きかったり解像度が高かったりする画像を小さなセグメント（スライス）に細分化し、それらのスライスに対して物体検出を行い、最後に結合して元の画像上の物体位置を再構成する手法です。この手法は、計算リソースが限られている場合や、メモリ不足を引き起こす可能性のある超高解像度画像を扱う際に非常に有用です。
+
+### Link to this sectionスライス推論の利点#
+
+  * **計算負荷の低減** : 画像スライスが小さくなることで処理が高速化され、メモリ消費も抑えられるため、低スペックなハードウェアでもスムーズな動作が可能になります。
+
+  * **検出品質の保持** : 各スライスは独立して処理されるため、関心対象の物体を捉えるのに十分なスライスサイズであれば、物体検出の品質が低下することはありません。
+
+  * **拡張性の向上** : この手法により、さまざまなサイズや解像度の画像間で物体検出をより容易に拡張できるため、衛星画像から医療診断に至るまで、幅広い用途に最適です。
+
+
+
+
+YOLO26 without SAHI| YOLO26 with SAHI  
+---|---  
+![YOLO26 without SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-without-sahi.avif)| ![YOLO26 with SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-with-sahi.avif)  
+  
+## Link to this sectionインストールと準備#
+
+### Link to this sectionインストール#
+
+開始するには、SAHIとUltralyticsの最新バージョンをインストールします。
+    
+    
+    pip install -U ultralytics sahi
+
+### Link to this sectionモジュールのインポートとリソースのダウンロード#
+
+テスト画像をダウンロードする方法は以下の通りです。
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+## Link to this sectionYOLO26を使用した標準推論#
+
+### Link to this sectionモデルのインスタンス化#
+
+以下のように、物体検出のためにYOLO26モデルをインスタンス化できます。
+    
+    
+    from sahi import AutoDetectionModel
+    
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        confidence_threshold=0.3,
+        device="cpu",  # or 'cuda:0'
+    )
+
+### Link to this section標準予測の実行#
+
+画像パスを使用して標準的な推論を実行します。
+    
+    
+    from sahi.predict import get_prediction
+    
+    result = get_prediction("demo_data/small-vehicles1.jpeg", detection_model)
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+
+### Link to this section結果の可視化#
+
+予測されたバウンディングボックスとマスクをエクスポートおよび可視化します。
+    
+    
+    from PIL import Image
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionYOLO26を使用したスライス推論#
+
+スライスの寸法と重なり率を指定してスライス推論を実行します。
+    
+    
+    from PIL import Image
+    from sahi.predict import get_sliced_prediction
+    
+    result = get_sliced_prediction(
+        "demo_data/small-vehicles1.jpeg",
+        detection_model,
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+    
+    # Export results
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this section予測結果の取り扱い#
+
+SAHIは`PredictionResult`オブジェクトを提供しており、これをさまざまなアノテーション形式に変換できます。
+    
+    
+    # Access the object prediction list
+    object_prediction_list = result.object_prediction_list
+    
+    # Convert to COCO annotation, COCO prediction, imantics, and fiftyone formats
+    result.to_coco_annotations()[:3]
+    result.to_coco_predictions(image_id=1)[:3]
+    result.to_imantics_annotations()[:3]
+    result.to_fiftyone_detections()[:3]
+
+## Link to this sectionバッチ予測#
+
+画像のディレクトリに対してバッチ予測を行うには、以下のようにします。
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+これで、YOLO26とSAHIを使用して、標準推論およびスライス推論の両方を行う準備が整いました。
+
+## Link to this section引用と謝辞#
+
+研究や開発作業でSAHIを使用する場合は、元のSAHIの論文を引用し、著者に謝辞を述べてください。
+
+引用
+    
+    
+    @article{akyon2022sahi,
+      title={Slicing Aided Hyper Inference and Fine-tuning for Small Object Detection},
+      author={Akyon, Fatih Cagatay and Altinuc, Sinan Onur and Temizel, Alptekin},
+      journal={2022 IEEE International Conference on Image Processing (ICIP)},
+      doi={10.1109/ICIP46576.2022.9897990},
+      pages={966-970},
+      year={2022}
+    }
+
+[コンピュータビジョン](https://www.ultralytics.com/glossary/computer-vision-cv)コミュニティにとって非常に価値のあるこのリソースを作成・維持してくださったSAHI研究グループに感謝いたします。SAHIとその開発者の詳細については、[SAHI GitHubリポジトリ](https://github.com/obss/sahi)をご覧ください。
+
+## Link to this sectionFAQ#
+
+### Link to this section物体検出のスライス推論において、YOLO26をSAHIと統合するにはどうすればよいですか？#
+
+Ultralytics YOLO26とSAHI（Slicing Aided Hyper Inference）を統合したスライス推論を行うことで、高解像度画像を扱いやすいスライスに分割し、物体検出タスクを最適化できます。この手法はメモリ使用量を改善し、高い検出精度を保証します。開始するには、ultralyticsライブラリとsahiライブラリをインストールする必要があります。
+    
+    
+    pip install -U ultralytics sahi
+
+次に、テスト画像をダウンロードします。
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+詳細な手順については、スライス推論ガイドを参照してください。
+
+### Link to this section大きな画像での物体検出において、YOLO26とSAHIを併用すべき理由は何ですか？#
+
+大きな画像での物体検出において、Ultralytics YOLO26とSAHIを併用することにはいくつかの利点があります。
+
+  * **計算負荷の低減** : 小さなスライスは処理が高速でメモリ消費も少ないため、限られたリソースのハードウェアでも高品質な検出を実行できます。
+  * **検出精度の維持** : SAHIはインテリジェントなアルゴリズムを使用して重なり合うボックスをマージするため、検出品質が維持されます。
+  * **拡張性の向上** : さまざまな画像サイズや解像度間で物体検出タスクをスケールできるため、衛星画像分析や医療診断など、多様なアプリケーションに最適です。
+
+
+
+スライス推論の利点についての詳細は、ドキュメントをご覧ください。
+
+### Link to this sectionYOLO26とSAHIを使用する際、予測結果を可視化できますか？#
+
+はい、YOLO26とSAHIを使用する際に予測結果を可視化できます。結果をエクスポートして可視化する方法は以下の通りです。
+    
+    
+    from PIL import Image
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    processed_image.show()
+
+このコマンドで、可視化された予測結果が指定したディレクトリに保存され、画像をロードしてノートブックやアプリケーション上で確認できます。詳細なガイドについては、標準推論セクションをご覧ください。
+
+### Link to this sectionSAHIはYOLO26の物体検出を向上させるためにどのような機能を提供しますか？#
+
+SAHI（Slicing Aided Hyper Inference）は、Ultralytics YOLO26による物体検出を補完するいくつかの機能を提供します。
+
+  * **シームレスな統合** : SAHIはYOLOモデルと簡単に統合でき、コードの修正を最小限に抑えられます。
+  * **リソース効率** : 大きな画像を小さなスライスに分割するため、メモリ使用量と速度が最適化されます。
+  * **高い精度** : 結合プロセス中に重なり合う検出ボックスを効果的にマージすることで、高い検出精度を維持します。
+
+
+
+詳細な理解については、SAHIの主な特徴をお読みください。
+
+### Link to this sectionYOLO26とSAHIを使用した大規模な推論プロジェクトをどのように扱えばよいですか？#
+
+YOLO26とSAHIを使用した大規模な推論プロジェクトを扱うには、以下のベストプラクティスに従ってください。
+
+  1. **必要なライブラリのインストール** : ultralyticsとsahiの最新バージョンがインストールされていることを確認してください。
+  2. **スライス推論の設定** : プロジェクト固有の最適なスライス寸法と重なり率を決定します。
+  3. **バッチ予測の実行** : SAHIの機能を活用して、画像のディレクトリに対してバッチ予測を実行し、効率を高めます。
+
+
+
+バッチ予測の例：
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="path/to/yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+より詳細な手順については、バッチ予測のセクションをご覧ください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar8](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[COCoderUni1](https://github.com/CoderUni)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+作成日 2023年11月12日更新日 先月
+
+## コメント
+
+このページの内容
+
+AIで探索

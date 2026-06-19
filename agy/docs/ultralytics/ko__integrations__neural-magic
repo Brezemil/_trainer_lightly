@@ -1,0 +1,213 @@
+---
+source_url: https://docs.ultralytics.com/ko/integrations/neural-magic
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/neural-magic.md)
+
+# Link to this sectionNeural Magic의 DeepSparse 엔진을 사용한 YOLO26 추론 최적화#
+
+[객체 탐지](https://www.ultralytics.com/glossary/object-detection) 모델인 [Ultralytics YOLO26](https://www.ultralytics.com/)을 다양한 하드웨어에 배포할 때, 최적화와 같은 고유한 문제에 직면할 수 있습니다. 바로 이때 YOLO26과 Neural Magic의 DeepSparse 엔진 통합이 필요합니다. 이는 YOLO26 모델이 실행되는 방식을 변환하여 CPU에서 직접 GPU 수준의 성능을 구현할 수 있도록 합니다.
+
+이 가이드는 Neural Magic의 DeepSparse를 사용하여 YOLO26을 배포하는 방법, 추론을 실행하는 방법, 그리고 최적화 상태를 확인하기 위한 성능 벤치마킹 방법을 안내합니다.
+
+SparseML 지원 종료(EOL)
+
+Neural Magic은 [2025년 1월 Red Hat에 인수되었으며](https://www.redhat.com/en/about/press-releases/red-hat-completes-acquisition-neural-magic-fuel-optimized-generative-ai-innovation-across-hybrid-cloud), 기존 `deepsparse`, `sparseml`, `sparsezoo`, `sparsify` 라이브러리의 커뮤니티 버전 지원을 종료합니다. 자세한 내용은 [`sparsify` GitHub 저장소의 Readme에 게시된 공지 사항](https://github.com/neuralmagic/sparsify/blob/5eb26a4e21b497ce573d10024e318a5ce48a7f9c/README.md#-2025-end-of-life-announcement-deepsparse-sparseml-sparsezoo-and-sparsify)을 참조하십시오.
+
+## Link to this sectionNeural Magic의 DeepSparse#
+
+![Neural Magic's DeepSparse Overview](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/neural-magic-deepsparse-overview.avif)
+
+[Neural Magic의 DeepSparse](https://github.com/neuralmagic/deepsparse/blob/main/README.md)는 CPU에서 신경망 실행을 최적화하도록 설계된 추론 런타임입니다. 이는 희소성(sparsity), 가지치기(pruning), 양자화(quantization)와 같은 고급 기술을 적용하여 정확도를 유지하면서도 계산 요구량을 획기적으로 줄여줍니다. DeepSparse는 다양한 기기에서 효율적이고 확장 가능한 [신경망](https://www.ultralytics.com/glossary/neural-network-nn) 실행을 위한 민첩한 솔루션을 제공합니다.
+
+## Link to this sectionYOLO26과 Neural Magic의 DeepSparse 통합 이점#
+
+DeepSparse를 사용하여 YOLO26을 배포하는 방법을 알아보기 전에, DeepSparse 사용의 이점을 이해해 보겠습니다. 주요 장점은 다음과 같습니다:
+
+  * **향상된 추론 속도** : 최대 525 FPS(YOLO11n 기준)를 달성하여, 기존 방식 대비 YOLO의 추론 성능을 크게 향상합니다.
+
+
+
+![Neural Magic DeepSparse inference acceleration](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/enhanced-inference-speed.avif)
+
+  * **최적화된 모델 효율성** : 가지치기와 양자화를 사용하여 YOLO26의 효율성을 높이고, [정확도](https://www.ultralytics.com/glossary/accuracy)를 유지하면서도 모델 크기와 계산 요구량을 줄입니다.
+
+
+
+![Neural Magic model optimization and pruning](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/optimized-model-efficiency.avif)
+
+  * **표준 CPU에서의 고성능** : CPU에서 GPU와 유사한 성능을 제공하여, 다양한 애플리케이션에 대해 더 접근하기 쉽고 비용 효율적인 옵션을 제공합니다.
+
+  * **간소화된 통합 및 배포** : 이미지 및 비디오 주석 기능을 포함하여 YOLO26을 애플리케이션에 쉽게 통합할 수 있는 사용자 친화적인 도구를 제공합니다.
+
+  * **다양한 모델 유형 지원** : 표준 및 희소성 최적화 YOLO26 모델 모두와 호환되어 배포 유연성을 높여줍니다.
+
+  * **비용 효율적이고 확장 가능한 솔루션** : 운영 비용을 절감하고 고급 객체 탐지 모델의 확장 가능한 배포를 지원합니다.
+
+
+
+
+## Link to this sectionNeural Magic의 DeepSparse 기술은 어떻게 작동할까요?#
+
+Neural Magic의 DeepSparse 기술은 신경망 연산에서 인간 두뇌의 효율성으로부터 영감을 받았습니다. 이는 두뇌의 핵심 원리 두 가지를 채택합니다:
+
+  * **희소성(Sparsity)** : 희소화 과정은 [딥러닝](https://www.ultralytics.com/glossary/deep-learning-dl) 네트워크에서 중복된 정보를 가지치기하여 정확도를 저해하지 않으면서도 더 작고 빠른 모델을 만드는 과정입니다. 이 기술은 네트워크 크기와 계산 요구 사항을 크게 줄여줍니다.
+
+  * **참조의 지역성(Locality of Reference)** : DeepSparse는 네트워크를 Tensor Columns으로 분할하는 고유한 실행 방식을 사용합니다. 이러한 열은 CPU 캐시 내에 완전히 들어맞도록 깊이 우선 방식으로 실행됩니다. 이 접근 방식은 두뇌의 효율성을 모방하여 데이터 이동을 최소화하고 CPU 캐시 활용도를 극대화합니다.
+
+
+
+
+![How Neural Magic's DeepSparse Technology Works ](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/neural-magic-deepsparse-technology.avif)
+
+## Link to this section사용자 지정 데이터셋으로 학습된 YOLO26의 희소 버전 생성#
+
+Neural Magic의 오픈 소스 모델 저장소인 [SparseZoo](https://github.com/neuralmagic/sparsezoo/blob/main/README.md)는 [사전 희소화된 YOLO26 모델 체크포인트 모음](https://github.com/neuralmagic/sparsezoo/blob/main/README.md)을 제공합니다. Ultralytics와 원활하게 통합된 [SparseML](https://github.com/neuralmagic/sparseml)을 사용하면, 사용자는 직관적인 명령줄 인터페이스(CLI)를 통해 특정 데이터셋에서 이러한 희소 체크포인트를 손쉽게 파인튜닝할 수 있습니다.
+
+자세한 내용은 [Neural Magic의 SparseML YOLO26 문서](https://github.com/neuralmagic/sparseml/tree/main/integrations/ultralytics-yolov8)를 확인하십시오.
+
+## Link to this section사용 방법: DeepSparse를 사용한 YOLO26 배포#
+
+Neural Magic의 DeepSparse로 YOLO26을 배포하는 과정은 몇 가지 간단한 단계로 이루어집니다. 사용 지침을 살펴보기 전에, [Ultralytics에서 제공하는 다양한 YOLO26 모델](/ko/models)을 확인하십시오. 이는 프로젝트 요구 사항에 가장 적합한 모델을 선택하는 데 도움이 됩니다. 시작하는 방법은 다음과 같습니다.
+
+### Link to this section1단계: 설치#
+
+필수 패키지를 설치하려면 다음을 실행하십시오:
+
+설치
+    
+    
+    # Install the required packages
+    pip install deepsparse[yolov8]
+
+### Link to this section2단계: YOLO26을 ONNX 형식으로 내보내기#
+
+DeepSparse 엔진은 [ONNX 형식](/ko/integrations/onnx)의 YOLO26 모델을 필요로 합니다. DeepSparse와의 호환성을 위해 모델을 이 형식으로 내보내는 것이 필수적입니다. 다음 명령을 사용하여 YOLO26 모델을 내보내십시오:
+
+모델 내보내기
+    
+    
+    # Export YOLO26 model to ONNX format
+    yolo task=detect mode=export model=yolo26n.pt format=onnx opset=13
+
+이 명령은 `yolo26n.onnx` 모델을 디스크에 저장합니다.
+
+### Link to this section3단계: 배포 및 추론 실행#
+
+YOLO26 모델이 ONNX 형식으로 준비되면, DeepSparse를 사용하여 배포하고 추론을 실행할 수 있습니다. 이는 직관적인 Python API를 통해 쉽게 수행할 수 있습니다:
+
+배포 및 추론 실행
+    
+    
+    from deepsparse import Pipeline
+    
+    # Specify the path to your YOLO26 ONNX model
+    model_path = "path/to/yolo26n.onnx"
+    
+    # Set up the DeepSparse Pipeline
+    yolo_pipeline = Pipeline.create(task="yolov8", model_path=model_path)
+    
+    # Run the model on your images
+    images = ["path/to/image.jpg"]
+    pipeline_outputs = yolo_pipeline(images=images)
+
+### Link to this section4단계: 성능 벤치마킹#
+
+YOLO26 모델이 DeepSparse에서 최적으로 작동하는지 확인하는 것이 중요합니다. 처리량(throughput)과 지연 시간(latency)을 분석하기 위해 모델 성능을 [벤치마크](/ko/modes/benchmark)할 수 있습니다:
+
+벤치마킹
+    
+    
+    # Benchmark performance
+    deepsparse.benchmark model_path="path/to/yolo26n.onnx" --scenario=sync --input_shapes="[1,3,640,640]"
+
+### Link to this section5단계: 추가 기능#
+
+DeepSparse는 이미지 주석 및 데이터셋 평가와 같이 애플리케이션에서 YOLO26을 실용적으로 통합하기 위한 추가 기능을 제공합니다.
+
+추가 기능
+    
+    
+    # For image annotation
+    deepsparse.yolov8.annotate --source "path/to/image.jpg" --model_filepath "path/to/yolo26n.onnx"
+    
+    # For evaluating model performance on a dataset
+    deepsparse.yolov8.eval --model_path "path/to/yolo26n.onnx"
+
+annotate 명령을 실행하면 지정된 이미지를 처리하여 객체를 탐지하고, 바운딩 박스와 분류가 포함된 주석 이미지를 저장합니다. 주석이 달린 이미지는 annotation-results 폴더에 저장됩니다. 이는 모델의 탐지 기능을 시각적으로 확인하는 데 도움이 됩니다.
+
+![Neural Magic annotation feature interface](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/image-annotation-feature.avif)
+
+eval 명령 실행 후에는 [정밀도(precision)](https://www.ultralytics.com/glossary/precision), [재현율(recall)](https://www.ultralytics.com/glossary/recall), [mAP](https://www.ultralytics.com/glossary/mean-average-precision-map) (평균 정밀도)과 같은 상세한 출력 지표를 얻게 됩니다. 이는 데이터셋에 대한 모델 성능을 종합적으로 파악할 수 있게 해주며, 특정 사용 사례에 맞춰 YOLO26 모델을 파인튜닝하고 최적화하여 높은 정확도와 효율성을 보장하는 데 유용합니다.
+
+## Link to this section요약#
+
+이 가이드에서는 Ultralytics의 YOLO26과 Neural Magic의 DeepSparse 엔진 통합에 대해 살펴보았습니다. 이 통합이 어떻게 CPU 플랫폼에서 YOLO26의 성능을 향상시키고 GPU 수준의 효율성과 고급 신경망 희소성 기술을 제공하는지 강조했습니다.
+
+자세한 정보와 고급 사용법은 [Neural Magic의 DeepSparse 문서](https://www.redhat.com/en/about/press-releases/red-hat-completes-acquisition-neural-magic-fuel-optimized-generative-ai-innovation-across-hybrid-cloud)를 방문하십시오. 또한 [YOLO26 통합 가이드 살펴보기](https://github.com/neuralmagic/deepsparse/tree/main/src/deepsparse/yolov8#yolov8-inference-pipelines) 및 [YouTube 워크스루 세션 시청](https://www.youtube.com/watch?v=qtJ7bdt52x8)도 가능합니다.
+
+또한, 다양한 YOLO26 통합에 대한 폭넓은 이해를 원하시면 [Ultralytics 통합 가이드 페이지](/ko/integrations)를 방문하여 다른 흥미로운 통합 가능성을 확인해 보십시오.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionNeural Magic의 DeepSparse 엔진은 무엇이며 YOLO26 성능을 어떻게 최적화합니까?#
+
+Neural Magic의 DeepSparse 엔진은 희소성, 가지치기, 양자화와 같은 고급 기술을 통해 CPU에서 신경망 실행을 최적화하도록 설계된 추론 런타임입니다. DeepSparse와 YOLO26을 통합하면 표준 CPU에서 GPU와 유사한 성능을 달성할 수 있으며, 정확도를 유지하면서도 추론 속도, 모델 효율성 및 전반적인 성능을 크게 향상시킬 수 있습니다. 자세한 내용은 Neural Magic의 DeepSparse 섹션을 확인하십시오.
+
+### Link to this sectionNeural Magic의 DeepSparse를 사용하여 YOLO26을 배포하려면 필요한 패키지를 어떻게 설치해야 합니까?#
+
+Neural Magic의 DeepSparse로 YOLO26을 배포하기 위해 필요한 패키지를 설치하는 방법은 간단합니다. CLI를 사용하여 쉽게 설치할 수 있습니다. 실행해야 할 명령은 다음과 같습니다:
+    
+    
+    pip install deepsparse[yolov8]
+
+설치가 완료되면, 설치 섹션의 단계에 따라 환경을 설정하고 YOLO26에서 DeepSparse를 사용하기 시작하십시오.
+
+### Link to this sectionDeepSparse에서 사용할 YOLO26 모델을 ONNX 형식으로 어떻게 변환합니까?#
+
+DeepSparse와 호환되는 ONNX 형식으로 YOLO26 모델을 변환하려면 다음 CLI 명령을 사용할 수 있습니다:
+    
+    
+    yolo task=detect mode=export model=yolo26n.pt format=onnx opset=13
+
+이 명령은 YOLO26 모델(`yolo26n.pt`)을 DeepSparse 엔진에서 활용할 수 있는 형식(`yolo26n.onnx`)으로 내보냅니다. 모델 내보내기에 대한 자세한 정보는 모델 내보내기 섹션에서 확인할 수 있습니다.
+
+### Link to this sectionDeepSparse 엔진에서 YOLO26 성능을 벤치마킹하려면 어떻게 해야 합니까?#
+
+DeepSparse에서 YOLO26 성능을 벤치마킹하면 모델이 최적화되었는지 확인하기 위해 처리량과 지연 시간을 분석하는 데 도움이 됩니다. 다음 CLI 명령을 사용하여 벤치마크를 실행할 수 있습니다:
+    
+    
+    deepsparse.benchmark model_path="path/to/yolo26n.onnx" --scenario=sync --input_shapes="[1,3,640,640]"
+
+이 명령은 중요한 성능 지표를 제공합니다. 자세한 내용은 성능 벤치마킹 섹션을 참조하십시오.
+
+### Link to this section객체 탐지 작업에 YOLO26과 함께 Neural Magic의 DeepSparse를 사용해야 하는 이유는 무엇입니까?#
+
+YOLO26과 Neural Magic의 DeepSparse를 통합하면 다음과 같은 이점이 있습니다:
+
+  * **향상된 추론 속도** : 최대 525 FPS(YOLO11n 기준)를 달성하여 DeepSparse의 최적화 능력을 보여줍니다.
+  * **최적화된 모델 효율성** : 희소성, 가지치기, 양자화 기술을 사용하여 정확도를 유지하면서 모델 크기와 계산 요구량을 줄입니다.
+  * **표준 CPU에서의 고성능** : 비용 효율적인 CPU 하드웨어에서 GPU와 같은 성능을 제공합니다.
+  * **간소화된 통합** : 쉬운 배포 및 통합을 위한 사용자 친화적인 도구 제공.
+  * **유연성** : 표준 모델 및 희소성 최적화 YOLO26 모델을 모두 지원합니다.
+  * **비용 효율성** : 효율적인 자원 활용을 통해 운영 비용을 절감합니다.
+
+
+
+이러한 장점에 대한 심층적인 내용은 YOLO26과 Neural Magic의 DeepSparse 통합 이점 섹션을 방문하십시오.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/neural-magic.md)
+
+[GLglenn-jocher16](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[BUBurhan-Q1](https://github.com/Burhan-Q)[MAMatthewNoyce1](https://github.com/MatthewNoyce)[ABabirami-vina1](https://github.com/abirami-vina)
+
+생성됨 2023년 12월 30일업데이트됨 지난주
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

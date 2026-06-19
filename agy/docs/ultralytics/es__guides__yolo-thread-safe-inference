@@ -1,0 +1,218 @@
+---
+source_url: https://docs.ultralytics.com/es/guides/yolo-thread-safe-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+# Link to this sectionInferencia segura para subprocesos con modelos YOLO#
+
+Ejecutar modelos YOLO en un entorno con múltiples subprocesos requiere una consideración cuidadosa para garantizar la seguridad de los subprocesos. El módulo `threading` de Python te permite ejecutar varios subprocesos simultáneamente, pero cuando se trata de usar modelos YOLO en estos subprocesos, existen problemas de seguridad importantes que debes tener en cuenta. Esta página te guiará a través de la creación de una inferencia de modelos YOLO segura para subprocesos.
+
+  
+
+
+  
+**Watch:** How to Perform Thread Safe Inference with Ultralytics YOLO Models in Python | Multi-Threading 🚀 
+
+## Link to this sectionComprender el uso de subprocesos en Python#
+
+Los subprocesos en Python son una forma de paralelismo que permite que tu programa ejecute varias operaciones a la vez. Sin embargo, el Bloqueo Global del Intérprete (GIL, por sus siglas en inglés) de Python significa que solo un subproceso puede ejecutar código de bytes de Python a la vez.
+
+![Single-thread vs multi-thread inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/single-vs-multi-thread-examples.avif)
+
+Aunque esto parece una limitación, los subprocesos aún pueden proporcionar concurrencia, especialmente para operaciones vinculadas a E/S o cuando se utilizan operaciones que liberan el GIL, como las realizadas por las bibliotecas C subyacentes de YOLO.
+
+## Link to this sectionEl peligro de las instancias de modelos compartidas#
+
+Crear una instancia de un modelo YOLO fuera de tus subprocesos y compartir esta instancia entre múltiples subprocesos puede provocar condiciones de carrera, donde el estado interno del modelo se modifica de manera inconsistente debido a accesos concurrentes. Esto es particularmente problemático cuando el modelo o sus componentes mantienen un estado que no está diseñado para ser seguro para subprocesos.
+
+### Link to this sectionEjemplo no seguro para subprocesos: instancia de modelo único#
+
+Al usar subprocesos en Python, es importante reconocer los patrones que pueden generar problemas de concurrencia. Esto es lo que debes evitar: compartir una única instancia de modelo YOLO entre varios subprocesos.
+    
+    
+    # Unsafe: Sharing a single model instance across threads
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate the model outside the thread
+    shared_model = YOLO("yolo26n.pt")
+    
+    def predict(image_path):
+        """Predicts objects in an image using a preloaded YOLO model, take path string to image as argument."""
+        results = shared_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that share the same model instance
+    Thread(target=predict, args=("image1.jpg",)).start()
+    Thread(target=predict, args=("image2.jpg",)).start()
+
+En el ejemplo anterior, `shared_model` es utilizado por múltiples subprocesos, lo que puede llevar a resultados impredecibles porque `predict` podría ser ejecutado simultáneamente por múltiples subprocesos.
+
+### Link to this sectionEjemplo no seguro para subprocesos: múltiples instancias de modelo#
+
+Del mismo modo, aquí tienes un patrón inseguro con múltiples instancias de modelos YOLO:
+    
+    
+    # Unsafe: Sharing multiple model instances across threads can still lead to issues
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate multiple models outside the thread
+    shared_model_1 = YOLO("yolo26n_1.pt")
+    shared_model_2 = YOLO("yolo26n_2.pt")
+    
+    def predict(model, image_path):
+        """Runs prediction on an image using a specified YOLO model, returning the results."""
+        results = model.predict(image_path)
+        # Process results
+    
+    # Starting threads with individual model instances
+    Thread(target=predict, args=(shared_model_1, "image1.jpg")).start()
+    Thread(target=predict, args=(shared_model_2, "image2.jpg")).start()
+
+Aunque hay dos instancias de modelo separadas, sigue existiendo el riesgo de problemas de concurrencia. Si la implementación interna de `YOLO` no es segura para subprocesos, usar instancias separadas podría no evitar las condiciones de carrera, especialmente si estas instancias comparten algún recurso o estado subyacente que no sea local al subproceso.
+
+## Link to this sectionInferencia segura para subprocesos#
+
+Para realizar una inferencia segura para subprocesos, debes crear una instancia de un modelo YOLO independiente dentro de cada subproceso. Esto garantiza que cada subproceso tenga su propia instancia de modelo aislada, eliminando el riesgo de condiciones de carrera.
+
+### Link to this sectionEjemplo seguro para subprocesos#
+
+Aquí tienes cómo crear una instancia de un modelo YOLO dentro de cada subproceso para una inferencia paralela segura:
+    
+    
+    # Safe: Instantiating a single model inside each thread
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image using a new YOLO model instance in a thread-safe manner; takes image path as input."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that each have their own model instance
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+En este ejemplo, cada subproceso crea su propia instancia de `YOLO`. Esto evita que cualquier subproceso interfiera con el estado del modelo de otro, asegurando así que cada subproceso realice la inferencia de forma segura y sin interacciones inesperadas con los demás subprocesos.
+
+## Link to this sectionUso del decorador ThreadingLocked#
+
+Ultralytics proporciona un decorador `ThreadingLocked` que puede utilizarse para garantizar la ejecución segura para subprocesos de las funciones. Este decorador utiliza un bloqueo para asegurar que solo un subproceso a la vez pueda ejecutar la función decorada.
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.utils import ThreadingLocked
+    
+    # Create a model instance
+    model = YOLO("yolo26n.pt")
+    
+    # Decorate the predict method to make it thread-safe
+    @ThreadingLocked()
+    def thread_safe_predict(image_path):
+        """Thread-safe prediction using a shared model instance."""
+        results = model.predict(image_path)
+        return results
+    
+    # Now you can safely call this function from multiple threads
+
+El decorador `ThreadingLocked` es especialmente útil cuando necesitas compartir una instancia de modelo entre subprocesos pero quieres asegurar que solo un subproceso pueda acceder a ella a la vez. Este enfoque puede ahorrar memoria en comparación con la creación de una nueva instancia de modelo para cada subproceso, pero puede reducir la concurrencia ya que los subprocesos deberán esperar a que se libere el bloqueo.
+
+## Link to this sectionConclusión#
+
+Al usar modelos YOLO con `threading` de Python, crea siempre tus modelos dentro del subproceso que los usará para garantizar la seguridad de los subprocesos. Esta práctica evita condiciones de carrera y asegura que tus tareas de inferencia se ejecuten de manera fiable.
+
+Para escenarios más avanzados y para optimizar aún más el rendimiento de tu inferencia con múltiples subprocesos, considera usar paralelismo basado en procesos con [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) o aprovecha una cola de tareas con procesos de trabajo dedicados.
+
+## Link to this sectionFAQ#
+
+### Link to this section¿Cómo puedo evitar las condiciones de carrera al usar modelos YOLO en un entorno Python con múltiples subprocesos?#
+
+Para evitar condiciones de carrera al usar modelos YOLO de Ultralytics en un entorno Python con múltiples subprocesos, crea una instancia de un modelo YOLO independiente dentro de cada subproceso. Esto asegura que cada subproceso tenga su propia instancia de modelo aislada, evitando la modificación concurrente del estado del modelo.
+
+Ejemplo:
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image in a thread-safe manner."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Para obtener más información sobre cómo garantizar la seguridad de los subprocesos, visita la sección Inferencia segura para subprocesos con modelos YOLO.
+
+### Link to this section¿Cuáles son las mejores prácticas para ejecutar inferencias de modelos YOLO con múltiples subprocesos en Python?#
+
+Para ejecutar la inferencia de modelos YOLO con múltiples subprocesos de forma segura en Python, sigue estas mejores prácticas:
+
+  1. Crea instancias de los modelos YOLO dentro de cada subproceso en lugar de compartir una única instancia de modelo entre ellos.
+  2. Utiliza el módulo `multiprocessing` de Python para el procesamiento paralelo a fin de evitar problemas relacionados con el Bloqueo Global del Intérprete (GIL).
+  3. Libera el GIL utilizando operaciones realizadas por las bibliotecas C subyacentes de YOLO.
+  4. Considera usar el decorador `ThreadingLocked` para instancias de modelos compartidas cuando la memoria sea una preocupación.
+
+
+
+Ejemplo para la creación segura de instancias de modelo:
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Runs inference in a thread-safe manner with a new YOLO model instance."""
+        model = YOLO("yolo26n.pt")
+        results = model.predict(image_path)
+        # Process results
+    
+    # Initiate multiple threads
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Para obtener más contexto, consulta la sección sobre Inferencia segura para subprocesos.
+
+### Link to this section¿Por qué cada subproceso debería tener su propia instancia de modelo YOLO?#
+
+Cada subproceso debe tener su propia instancia de modelo YOLO para evitar condiciones de carrera. Cuando se comparte una única instancia de modelo entre varios subprocesos, los accesos concurrentes pueden provocar un comportamiento impredecible y modificaciones del estado interno del modelo. Al utilizar instancias separadas, garantizas el aislamiento de los subprocesos, haciendo que tus tareas con múltiples subprocesos sean fiables y seguras.
+
+Para obtener una guía detallada, consulta las secciones Ejemplo no seguro para subprocesos: instancia de modelo único y Ejemplo seguro para subprocesos.
+
+### Link to this section¿Cómo afecta el Bloqueo Global del Intérprete (GIL) de Python a la inferencia de modelos YOLO?#
+
+El Bloqueo Global del Intérprete (GIL) de Python permite que solo un subproceso ejecute código de bytes de Python a la vez, lo que puede limitar el rendimiento de las tareas con múltiples subprocesos limitadas por la CPU. Sin embargo, para operaciones vinculadas a E/S o procesos que utilizan bibliotecas que liberan el GIL, como las bibliotecas C subyacentes de YOLO, puedes lograr concurrencia. Para mejorar el rendimiento, considera usar paralelismo basado en procesos con el módulo `multiprocessing` de Python.
+
+Para obtener más información sobre el uso de subprocesos en Python, consulta la sección Comprender el uso de subprocesos en Python.
+
+### Link to this section¿Es más seguro usar paralelismo basado en procesos en lugar de subprocesos para la inferencia de modelos YOLO?#
+
+Sí, el uso del módulo `multiprocessing` de Python es más seguro y a menudo más eficiente para ejecutar inferencias de modelos YOLO en paralelo. El paralelismo basado en procesos crea espacios de memoria separados, evitando el Bloqueo Global del Intérprete (GIL) y reduciendo el riesgo de problemas de concurrencia. Cada proceso operará de forma independiente con su propia instancia de modelo YOLO.
+
+Para más detalles sobre el paralelismo basado en procesos con modelos YOLO, consulta la página sobre Inferencia segura para subprocesos.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+[GLglenn-jocher10](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+Creado 12 nov 2023Actualizado hace 2 semanas
+
+## Comentarios
+
+En esta página
+
+Explora con IA

@@ -1,0 +1,258 @@
+---
+source_url: https://docs.ultralytics.com/es/datasets/semantic
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/semantic/index.md)
+
+# Link to this sectionDescripción general de los datasets de segmentación semántica#
+
+La [segmentación semántica](https://www.ultralytics.com/glossary/semantic-segmentation) asigna una etiqueta de clase a cada píxel de una imagen. A diferencia de la [segmentación de instancias](/es/datasets/segment), la segmentación semántica no separa objetos individuales de la misma clase. El objetivo del entrenamiento es un mapa de clases denso donde cada píxel almacena un ID de clase.
+
+Esta guía explica el formato de dataset que utilizan los modelos de segmentación semántica YOLO de Ultralytics y enumera las configuraciones de dataset integradas disponibles para el entrenamiento y la validación.
+
+## Link to this sectionFormatos de conjuntos de datos compatibles#
+
+Se admiten dos formatos de etiqueta. El cargador de datasets elige la ruta según si el archivo YAML del dataset define una clave `masks_dir`.
+
+### Link to this sectionFormato de máscara PNG#
+
+Los datasets de segmentación semántica utilizan un archivo de imagen y un archivo de máscara por muestra. La máscara es una imagen de un solo canal, normalmente PNG, donde cada valor de píxel es el índice de clase correspondiente al píxel de la imagen.
+
+  * Los valores de píxel `0`, `1`, `2`, ... representan los IDs de clase del mapeo `names` del dataset.
+  * El valor de píxel `255` se trata como la etiqueta de ignorar y se excluye del cálculo de pérdida y métricas.
+  * Los archivos de máscara deben utilizar el mismo nombre base que su archivo de imagen correspondiente, por ejemplo `frankfurt_000000_000294.png`.
+  * Las máscaras se resuelven como `.png` de forma predeterminada; si faltan, también se aceptan otras extensiones de imagen compatibles. Utiliza formatos sin pérdida como `.png` o `.tiff`, ya que la compresión con pérdida (ej. `.jpg`) corrompe los valores de píxel del ID de clase.
+
+
+
+El diseño predeterminado mantiene las imágenes y las máscaras en carpetas paralelas. El valor `masks_dir` del archivo YAML del dataset reemplaza el componente de ruta `images` para encontrar las máscaras.
+    
+    
+    dataset/
+    ├── images/
+    │   ├── train/
+    │   └── val/
+    └── masks/
+        ├── train/
+        └── val/
+
+Por ejemplo, una imagen en `images/train/aachen_000000_000019.png` se empareja con una máscara en `masks/train/aachen_000000_000019.png` cuando `masks_dir: masks`.
+
+### Link to this sectionFormato de etiqueta de polígono YOLO#
+
+Si tu dataset ya cuenta con etiquetas de polígono YOLO de Ultralytics (un archivo `.txt` por imagen con filas `<class-index> <x1> <y1> <x2> <y2> ...`), puedes entrenar la segmentación semántica directamente a partir de ellos, sin necesidad de conversión a máscara PNG. Consulta el [formato de dataset de segmentación de instancias](/es/datasets/segment#ultralytics-yolo-format) para conocer el diseño a nivel de fila.
+
+Esta ruta se selecciona automáticamente cuando el archivo YAML del dataset **omite** `masks_dir`. Comportamiento:
+
+  * Los polígonos se convierten en una máscara semántica por imagen en el momento de la carga, ordenados por área para que los objetos más pequeños se superpongan a los más grandes en las regiones de solapamiento.
+  * **Multiclase** (`N > 1` en `names`): se añade una clase `background` extra después de tus clases declaradas para los píxeles que no cubre ningún polígono. El modelo se construye con `N + 1` canales de salida y el último canal es el fondo.
+  * **Clase única** (`N == 1` en `names`): se sigue entrenando como 1 clase. La máscara es binaria, con tu clase declarada mostrada como `1` y los píxeles no cubiertos por ningún polígono como `0`. No se añade ninguna clase de fondo extra a `names`.
+  * Los píxeles añadidos mediante relleno de aumentación (por ejemplo, recorte aleatorio) siguen usando `255` como etiqueta de ignorar.
+
+
+
+Utiliza esta ruta cuando tus datos ya estén etiquetados como polígonos de instancia y quieras obtener un modelo de segmentación semántica a partir de los mismos archivos.
+
+### Link to this sectionFormato YAML del dataset#
+
+Los datasets de segmentación semántica se configuran con archivos YAML. Los campos principales son:
+
+Clave| Descripción  
+---|---  
+`path`| Directorio raíz del dataset.  
+`train`| Ruta de la imagen de entrenamiento relativa a `path`, o una ruta absoluta.  
+`val`| Ruta de la imagen de validación relativa a `path`, o una ruta absoluta.  
+`test`| Ruta de la imagen de prueba opcional.  
+`masks_dir`| Nombre del directorio utilizado para las máscaras semánticas. Omite esta clave para cambiar al formato de etiqueta de polígono YOLO.  
+`names`| Mapeo de ID de clase a nombre de clase.  
+`label_mapping`| Mapeo opcional desde los IDs del dataset de origen a los IDs de entrenamiento o `ignore_label`.  
+  
+ultralytics/cfg/datasets/cityscapes8.yaml
+    
+    
+    # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+    
+    # Cityscapes semantic segmentation dataset (19 classes)
+    # Documentation: https://docs.ultralytics.com/datasets/semantic/cityscapes8
+    # Example usage: yolo semantic train data=cityscapes8.yaml model=yolo26n-sem.pt
+    # parent
+    # ├── ultralytics
+    # └── datasets
+    #     └── cityscapes8 ← downloads here (small subset)
+    #         └── images
+    #         └── masks
+    
+    # Dataset root directory
+    path: cityscapes8 # dataset root dir
+    train: images/train # train images (relative to 'path') 4 images
+    val: images/val # val images (relative to 'path') 4 images
+    
+    masks_dir: masks # semantic mask directory
+    
+    # Cityscapes 19-class labels
+    names:
+      0: road
+      1: sidewalk
+      2: building
+      3: wall
+      4: fence
+      5: pole
+      6: traffic light
+      7: traffic sign
+      8: vegetation
+      9: terrain
+      10: sky
+      11: person
+      12: rider
+      13: car
+      14: truck
+      15: bus
+      16: train
+      17: motorcycle
+      18: bicycle
+    
+    # Map source label IDs to train IDs; ignore_label is converted to 255.
+    label_mapping:
+      -1: ignore_label
+      0: ignore_label
+      1: ignore_label
+      2: ignore_label
+      3: ignore_label
+      4: ignore_label
+      5: ignore_label
+      6: ignore_label
+      7: 0
+      8: 1
+      9: ignore_label
+      10: ignore_label
+      11: 2
+      12: 3
+      13: 4
+      14: ignore_label
+      15: ignore_label
+      16: ignore_label
+      17: 5
+      18: ignore_label
+      19: 6
+      20: 7
+      21: 8
+      22: 9
+      23: 10
+      24: 11
+      25: 12
+      26: 13
+      27: 14
+      28: 15
+      29: ignore_label
+      30: ignore_label
+      31: 16
+      32: 17
+      33: 18
+    
+    # Download URL (optional)
+    download: https://github.com/ultralytics/assets/releases/download/v0.0.0/cityscapes8.zip
+
+Utiliza `label_mapping` cuando los IDs de la máscara de origen no coincidan ya con los IDs de clase de entrenamiento contiguos. Cityscapes y ADE20K incluyen mapeos que convierten los IDs de etiqueta originales en IDs de entrenamiento de segmentación semántica YOLO e ignoran las etiquetas no utilizadas.
+
+## Link to this sectionUso#
+
+Entrena un modelo de segmentación semántica YOLO26 con Python o CLI:
+
+Ejemplo
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained semantic segmentation model
+    model = YOLO("yolo26n-sem.pt")
+    
+    # Train on the Cityscapes8 semantic segmentation dataset
+    results = model.train(data="cityscapes8.yaml", epochs=100, imgsz=1024)
+
+## Link to this sectionConjuntos de datos compatibles#
+
+Ultralytics proporciona archivos YAML de datasets de segmentación semántica para estos datasets:
+
+  * [Cityscapes](/es/datasets/semantic/cityscapes): Dataset de segmentación semántica de escenas urbanas con 19 clases de entrenamiento.
+  * [Cityscapes8](/es/datasets/semantic/cityscapes8): Un subconjunto de Cityscapes de 8 imágenes para pruebas rápidas y comprobaciones de CI.
+  * [ADE20K](/es/datasets/semantic/ade20k): Dataset de análisis de escenas con 150 clases semánticas.
+
+
+
+## Link to this sectionAñadir tu propio dataset#
+
+### Link to this sectionOpción A: Máscaras PNG#
+
+  1. Guarda tus imágenes en carpetas divididas como `images/train` e `images/val`.
+  2. Guarda una máscara de un solo canal por imagen en las carpetas de máscara espejo, como `masks/train` y `masks/val`.
+  3. Asegúrate de que los valores de píxel de la máscara sean IDs de clase. Utiliza `255` para los píxeles que deban ignorarse.
+  4. Crea un YAML de dataset con `path`, `train`, `val`, `masks_dir` y `names`.
+  5. Añade `label_mapping` solo cuando tus IDs de máscara necesiten conversión a IDs de entrenamiento contiguos.
+
+
+    
+    
+    path: path/to/my-semantic-dataset
+    train: images/train
+    val: images/val
+    masks_dir: masks
+    
+    names:
+        0: background
+        1: road
+        2: building
+
+### Link to this sectionOpción B: Etiquetas de polígono#
+
+  1. Dispon las imágenes y los archivos de polígono `.txt` exactamente igual que para la [segmentación de instancias](/es/datasets/segment).
+  2. Crea un YAML de dataset con `path`, `train`, `val` y `names`: **omite** `masks_dir`.
+  3. No añadas una entrada de "background" a `names`. Para datasets multiclase, el cargador añade una automáticamente; para datasets de clase única, el entrenamiento se mantiene en 1 clase: tu clase declarada se convierte en `1` en la máscara y los píxeles no cubiertos se convierten en `0`.
+
+
+    
+    
+    path: path/to/my-polygon-dataset
+    train: images/train
+    val: images/val
+    
+    names:
+        0: person
+        1: car
+
+## Link to this sectionFAQ#
+
+### Link to this section¿Cuál es la diferencia entre las máscaras de segmentación semántica y las etiquetas de segmentación de instancias?#
+
+Las máscaras de segmentación semántica son mapas de píxeles densos. Cada píxel almacena un ID de clase y hay una imagen de máscara por imagen de entrenamiento. Las etiquetas de segmentación de instancias en Ultralytics YOLO utilizan archivos de texto con coordenadas de polígono, una fila por instancia de objeto.
+
+### Link to this section¿Qué valor de píxel se ignora durante el entrenamiento?#
+
+El valor de píxel `255` se utiliza como etiqueta de ignorar. Estos píxeles se omiten durante el cálculo de pérdida y métricas, lo cual es útil para regiones vacías, píxeles no etiquetados o clases fuera del conjunto de etiquetas de entrenamiento.
+
+### Link to this section¿Deben coincidir los nombres de archivo de las máscaras con los nombres de archivo de las imágenes?#
+
+Sí. Cada máscara semántica debe tener el mismo nombre base de archivo que la imagen correspondiente. El cargador de datasets sustituye el componente de directorio `images` por `masks_dir` y busca archivos de máscara coincidentes.
+
+### Link to this section¿Puedo utilizar directamente los IDs de etiqueta del dataset original?#
+
+Sí, si ya coinciden con tus IDs de clase en `names`. Si el dataset de origen utiliza IDs no contiguos o incluye etiquetas que deben ignorarse, añade una sección `label_mapping` para convertir los valores de píxel de origen en IDs de entrenamiento.
+
+### Link to this section¿Puedo utilizar mi dataset de segmentación de instancias para entrenar la segmentación semántica?#
+
+Sí. Los datasets de segmentación de instancias utilizan etiquetas de polígono YOLO de Ultralytics (un archivo `.txt` por imagen con filas `<class-index> <x1> <y1> <x2> <y2> ...`), y se pueden reutilizar los mismos archivos para la segmentación semántica: simplemente **omite** `masks_dir` del YAML del dataset. El cargador convierte los polígonos en máscaras por imagen sobre la marcha. Para datasets multiclase (`N > 1`) se añade una clase `background` extra y el modelo se construye con `N + 1` canales de salida. Para datasets de clase única (`N == 1`) el entrenamiento se mantiene en 1 clase: la máscara muestra tu clase declarada como `1` y los píxeles no cubiertos como `0`.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/semantic/index.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)
+
+Creado hace 4 semanasActualizado hace 2 semanas
+
+## Comentarios
+
+En esta página
+
+Explora con IA

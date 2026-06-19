@@ -1,0 +1,311 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/coco-to-yolo
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-to-yolo.md)
+
+# Link to this sectionCOCO Ek Açıklamaları YOLO Formatına Nasıl Dönüştürülür#
+
+[Ultralytics YOLO](https://www.ultralytics.com/) modellerini eğitmek, YOLO formatında ek açıklamalar (annotations) gerektirir, ancak birçok popüler [ek açıklama](https://www.ultralytics.com/glossary/data-labeling) aracı bunun yerine [COCO JSON](https://cocodataset.org/#format-data) formatında çıktı verir. Bu kılavuz, COCO ek açıklamalarını YOLO formatına nasıl dönüştüreceğini ve [nesne algılama](https://www.ultralytics.com/glossary/object-detection), [örnek segmentasyonu](https://www.ultralytics.com/glossary/instance-segmentation) ve [poz tahmini](https://www.ultralytics.com/glossary/pose-estimation) modellerini eğitmeni gösterir.
+
+## Link to this sectionNeden COCO'dan YOLO'ya Dönüşüm Yapmalı?#
+
+COCO JSON formatı tüm ek açıklamaları tek bir dosyada saklarken, [YOLO](https://docs.ultralytics.com/datasets/detect#ultralytics-yolo-format) normalize edilmiş koordinatlara sahip görüntü başına bir metin dosyası kullanır. Dönüşüm gereklidir çünkü:
+
+  * **YOLO modelleri,`.txt` etiket dosyaları gerektirir**; her görüntü için bir dosya, normalize edilmiş koordinatlarda `class x_center y_center width height` bilgilerini içerir.
+  * **COCO JSON, piksel koordinatlarını kullanır** ; `[x_min, y_min, width, height]` formatında ve tüm görüntüler için tek bir JSON dosyası mevcuttur.
+  * **Sınıf Kimlikleri (Class IDs) farklıdır** — COCO rastgele `category_id` değerleri kullanırken, YOLO sıfır tabanlı sınıf kimlikleri gerektirir.
+
+
+
+Özellik| COCO JSON| YOLO TXT  
+---|---|---  
+**Yapı**|  Tüm görüntüler için tek JSON dosyası| Görüntü başına bir `.txt` dosyası  
+**Bbox formatı**|  Piksel cinsinden `[x_min, y_min, width, height]`| Normalize edilmiş (0-1) `class x_center y_center width height`  
+**Sınıf Kimlikleri**| `category_id` (herhangi bir sayıdan başlayabilir)| Sıfır tabanlı (0'dan başlar)  
+**Segmentasyon**| `segmentation` alanındaki çokgen dizileri| Sınıf kimliğinden sonra çokgen koordinatları  
+**Anahtar Noktalar (Keypoints)**|  Piksel cinsinden `[x, y, visibility, ...]`| Normalize edilmiş `[x, y, visibility, ...]`  
+  
+## Link to this sectionHızlı Başlangıç#
+
+COCO ek açıklamalarını dönüştürmenin ve eğitime başlamanın en hızlı yolu:
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        labels_dir="path/to/annotations/",  # directory containing your JSON files
+        save_dir="path/to/output/",  # where to save converted labels
+        cls91to80=False,  # IMPORTANT: set False for custom datasets
+    )
+
+Dönüşümden sonra dizin yapını düzenle, bir dataset.yaml oluştur ve eğitime başla. Aşağıdaki tam adım adım kılavuza göz at.
+
+Özel veri kümeleri: her zaman `cls91to80=False` kullan
+
+`cls91to80=True` varsayılan ayarı, 80 nesne sınıfına sahip standart [COCO veri kümesi](/tr/datasets/detect/coco) için tasarlanmıştır ve 91 bitişik olmayan kategori kimliğini 80 bitişik sınıf kimliğine eşler. Herhangi bir özel veri kümesi için `cls91to80=False` ayarını **mutlaka** yapmalısın; aksi takdirde sınıf kimliklerin sessizce yanlış eşlenir ve modelin yanlış sınıfları öğrenir.
+
+## Link to this sectionAdım Adım Dönüşüm Kılavuzu#
+
+### Link to this section1\. COCO Veri Kümeni Hazırla#
+
+Ek açıklama araçlarından dışa aktarılan tipik bir COCO formatındaki veri kümesi şu yapıya sahiptir:
+    
+    
+    my_dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── img_001.jpg
+    │   │   ├── img_002.jpg
+    │   │   └── ...
+    │   └── val/
+    │       ├── img_100.jpg
+    │       └── ...
+    └── annotations/
+        ├── instances_train.json
+        └── instances_val.json
+
+Her JSON dosyası, üç gerekli alana sahip [COCO veri formatı](https://cocodataset.org/#format-data) şartnamesini izler — `images`, `annotations` ve `categories`:
+    
+    
+    {
+        "images": [{ "id": 1, "file_name": "img_001.jpg", "width": 640, "height": 480 }],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [100, 50, 200, 150],
+                "area": 30000,
+                "iscrowd": 0
+            }
+        ],
+        "categories": [
+            { "id": 1, "name": "helmet" },
+            { "id": 2, "name": "vest" }
+        ]
+    }
+
+### Link to this section2\. Ek Açıklamaları Dönüştür#
+
+Use the [`convert_coco()`](/reference/data/converter#ultralytics.data.converter.convert_coco) function to convert your COCO JSON annotations to YOLO `.txt` format:
+
+COCO'yu YOLO formatına dönüştür
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        labels_dir="my_dataset/annotations/",
+        save_dir="my_dataset/converted/",
+        cls91to80=False,
+    )
+
+### Link to this section3\. Dizin Yapısını Düzenle#
+
+After conversion, label files need to be placed alongside your images. YOLO expects a `labels/` directory that mirrors the `images/` directory:
+    
+    
+    import shutil
+    from pathlib import Path
+    
+    # Paths
+    converted_dir = Path("my_dataset/converted/labels")
+    dataset_dir = Path("my_dataset")
+    
+    # Move labels next to images for each split
+    for split in ["train", "val"]:
+        src = converted_dir / split  # convert_coco strips "instances_" prefix from JSON filename
+        dst = dataset_dir / "labels" / split
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in src.glob("*.txt"):
+            shutil.move(str(f), str(dst / f.name))
+
+Nihai [veri kümesi yapın](/tr/datasets/detect#ultralytics-yolo-format) şu şekilde görünmelidir:
+    
+    
+    my_dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── img_001.jpg
+    │   │   └── ...
+    │   └── val/
+    │       └── ...
+    ├── labels/
+    │   ├── train/
+    │   │   ├── img_001.txt
+    │   │   └── ...
+    │   └── val/
+    │       └── ...
+    └── dataset.yaml
+
+### Link to this section4\. dataset.yaml Oluştur#
+
+COCO kategorilerini YOLO sınıf adlarıyla eşleyen bir `dataset.yaml` yapılandırma dosyası oluştur. Bu dosya, YOLO'ya verilerinin nerede olduğunu ve hangi sınıfları algılaması gerektiğini söyler:
+    
+    
+    import json
+    from pathlib import Path
+    
+    import yaml
+    
+    # Read categories from your COCO JSON
+    with open("my_dataset/annotations/instances_train.json") as f:
+        coco = json.load(f)
+    
+    # Build class names matching convert_coco output (category_id - 1)
+    categories = sorted(coco["categories"], key=lambda x: x["id"])
+    names = {cat["id"] - 1: cat["name"] for cat in categories}
+    # NOTE: convert_coco maps class IDs as category_id - 1, so category_id must
+    # start from 1. If your categories start from 0, add 1 to each ID first.
+    
+    # Create dataset.yaml
+    dataset = {
+        "path": str(Path("my_dataset").resolve()),
+        "train": "images/train",
+        "val": "images/val",
+        "names": names,
+    }
+    
+    with open("my_dataset/dataset.yaml", "w") as f:
+        yaml.dump(dataset, f, default_flow_style=False)
+
+Sonuçta ortaya çıkan YAML dosyası:
+    
+    
+    path: /absolute/path/to/my_dataset
+    train: images/train
+    val: images/val
+    names:
+        0: helmet
+        1: vest
+
+Veri kümesi YAML formatı hakkında daha fazla ayrıntı için [veri kümesi yapılandırma kılavuzuna](/tr/datasets/detect) bak.
+
+### Link to this section5\. YOLO Modelini Eğit#
+
+Dönüştürülmüş veri kümen hazır olduğunda, bir YOLO modelini eğit:
+
+Dönüştürülmüş COCO verileri üzerinde eğit
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load a pretrained model
+    results = model.train(data="my_dataset/dataset.yaml", epochs=100, imgsz=640)
+
+Eğitim ipuçları ve en iyi uygulamalar için [model eğitim kılavuzuna](/tr/guides/model-training-tips) bak.
+
+### Link to this section6\. Dönüşümünü Doğrula#
+
+Eğitimden önce, sınıf kimliklerinin ve koordinatların doğru olduğunu doğrulamak için birkaç etiket dosyasını kontrol et:
+    
+    
+    from pathlib import Path
+    
+    label_file = Path("my_dataset/labels/train/img_001.txt")
+    for line in label_file.read_text().strip().splitlines():
+        parts = line.split()
+        cls_id = int(parts[0])
+        coords = [float(v) for v in parts[1:5]]
+        assert cls_id >= 0, f"Negative class ID {cls_id} — category_id in your JSON may start from 0"
+        assert all(0 <= v <= 1 for v in coords), f"Coordinates out of [0, 1] range: {coords}"
+
+İpucu
+
+If you see negative class IDs, your COCO JSON likely uses `category_id` starting from 0. Add 1 to all `category_id` values in your JSON before running `convert_coco()`, since it maps class IDs as `category_id - 1`.
+
+## Link to this sectionYaygın Sorunları Giderme#
+
+### Link to this sectionDönüşümden Sonra Yanlış Sınıf Kimlikleri#
+
+Modelin eğitiliyor ancak yanlış nesne sınıflarını algılıyorsa, muhtemelen özel bir veri kümesi üzerinde (varsayılan) `cls91to80=True` kullanıyorsundur. Bu, `category_id` değerlerini, yalnızca standart [COCO veri kümesi](/tr/datasets/detect/coco) için doğru olan COCO 91'den 80'e arama tablosu üzerinden eşler.
+
+**Çözüm** : Özel veri kümeleri için her zaman `cls91to80=False` kullan.
+
+### Link to this sectionEğitim Sırasında Etiket Bulunamadı#
+
+If training shows `WARNING: No labels found` or `0 images, N backgrounds`, your label files are not in the expected directory. `convert_coco()` saves labels to a separate output directory (e.g., `save_dir/labels/train/`), but YOLO expects `labels/` parallel to `images/` inside your dataset directory.
+
+**Çözüm** : Etiket dosyalarını beklenen dizin yapısıyla eşleşecek şekilde taşı. `labels/train/` dizininin `images/train/` ile kardeş dizin olduğundan emin ol.
+
+### Link to this sectionDönüşüm Sırasında KeyError#
+
+If you get `KeyError: 'bbox'` or similar errors when running `convert_coco()`, your `labels_dir` likely contains non-instance JSON files (e.g., `captions_train2017.json`) that have a different annotation structure.
+
+**Solution** : Only place instance annotation JSON files (e.g., `instances_train2017.json`) in the `labels_dir`.
+
+### Link to this sectionDönüşümden Sonra Boş Etiket Dosyaları#
+
+Dönüşüm tamamlanır ancak `.txt` dosyaları boşsa veya eksikse, tüm ek açıklamalar `iscrowd: 1` değerine sahip olabilir ([SAM](/tr/models/sam) tarafından oluşturulan maskelerde yaygındır) veya [sınırlayıcı kutuların](https://www.ultralytics.com/glossary/bounding-box) genişliği veya yüksekliği sıfırdır.
+
+**Çözüm** : JSON ek açıklamalarını `iscrowd` değerleri için incele. SAM maskeleri kullanıyorsan, `iscrowd: 0` olarak ayarlamak için JSON dosyasını ön işlemeden geçir.
+
+### Link to this sectionDönüştürülmüş Etiketlerde Sınıf Kimliği Boşlukları#
+
+Etiket dosyalarındaki sınıf kimlikleri bitişik değilse (örneğin 0, 1, 2 yerine 0, 4, 9), ek açıklama aracın bitişik olmayan `category_id` değerleri kullanıyordur.
+
+**Solution** : Verify the class IDs in your `.txt` files match the `names` dictionary in `dataset.yaml`. Remap IDs to contiguous values if needed.
+
+Tam API ayrıntıları ve parametre açıklamaları için [`convert_coco` API referansına](/reference/data/converter#ultralytics.data.converter.convert_coco) bak.
+
+## Link to this sectionSSS#
+
+### Link to this sectionCOCO JSON ek açıklamalarını YOLO formatına nasıl dönüştürürüm?#
+
+Use the `convert_coco()` function from Ultralytics to convert COCO JSON annotations to YOLO `.txt` format. Set `cls91to80=False` for custom datasets:
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="path/to/annotations/", save_dir="output/", cls91to80=False)
+
+Dönüşümden sonra, etiket dosyalarını `labels/` dizini `images/` dizinini yansıtacak şekilde yeniden düzenle, ardından bir `dataset.yaml` dosyası oluştur. Tam iş akışı için adım adım kılavuza bak.
+
+### Link to this sectionYOLO eğitimi COCO dönüşümünden sonra neden "No labels found" hatası veriyor?#
+
+This happens because `convert_coco()` saves labels to a subdirectory inside `save_dir/labels/` (e.g., `save_dir/labels/train/`) rather than directly into your dataset's `labels/train/` alongside `images/train/`. YOLO expects labels to sit parallel to images — for example, `images/train/img.jpg` needs `labels/train/img.txt`. Move your converted labels to match this structure. See fixing the directory structure.
+
+### Link to this sectionWhat does `cls91to80` do in `convert_coco()`?#
+
+`cls91to80` parametresi, COCO `category_id` değerlerinin YOLO sınıf kimliklerine nasıl eşleneceğini kontrol eder. `True` (varsayılan) olduğunda, bitişik olmayan kimliklere (1-90) sahip 80 sınıf içeren standart [COCO veri kümesi](/tr/datasets/detect/coco) için tasarlanmış bir arama tablosu kullanır. **Özel veri kümeleri** için her zaman `cls91to80=False` olarak ayarla; bu, sıfır tabanlı sınıf kimlikleri oluşturmak için her `category_id` değerinden sadece 1 çıkarır.
+
+### Link to this sectionYOLO'yu dönüştürmeden doğrudan COCO JSON üzerinde eğitebilir miyim?#
+
+Mevcut YOLO eğitim hattıyla hayır; ek açıklamalar, görüntü başına bir dosya olacak şekilde YOLO `.txt` formatında olmalıdır. Önce COCO JSON dosyanı dönüştürmek için `convert_coco()` kullan, ardından düzenlemek ve eğitmek için bu kılavuzu izle. Desteklenen formatlar hakkında daha fazla bilgi için [veri kümesi formatlarına](/tr/datasets/detect) bak.
+
+### Link to this sectionCOCO segmentasyon ek açıklamalarını YOLO formatına dönüştürebilir miyim?#
+
+Yes, use `use_segments=True` when calling `convert_coco()` to include polygon segmentation masks in the converted YOLO labels. This produces label files compatible with [YOLO segmentation models](/tr/tasks/segment):
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="annotations/", save_dir="output/", use_segments=True, cls91to80=False)
+
+### Link to this sectionCOCO anahtar nokta ek açıklamalarını YOLO formatına nasıl dönüştürürüm?#
+
+Use `use_keypoints=True` to convert COCO keypoint annotations for [pose estimation](/tr/tasks/pose) training:
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="annotations/", save_dir="output/", use_keypoints=True, cls91to80=False)
+
+Hem `use_segments` hem de `use_keypoints` `True` olarak ayarlanırsa, etiket dosyalarına yalnızca anahtar noktaların yazılacağını unutma; segmentler sessizce göz ardı edilir.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-to-yolo.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[RAraimbekovm1](https://github.com/raimbekovm)
+
+Oluşturulma 2 ay önceGüncellenme geçen ay
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

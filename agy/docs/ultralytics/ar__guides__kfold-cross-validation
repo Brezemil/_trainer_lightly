@@ -1,0 +1,332 @@
+---
+source_url: https://docs.ultralytics.com/ar/guides/kfold-cross-validation
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+# Link to this sectionالتحقق المتقاطع K-Fold مع Ultralytics#
+
+## Link to this sectionمقدمة#
+
+يوضح هذا الدليل الشامل تنفيذ التحقق المتقاطع K-Fold لمجموعات بيانات [اكتشاف الأشياء](https://www.ultralytics.com/glossary/object-detection) داخل نظام Ultralytics البيئي. سنستفيد من تنسيق اكتشاف YOLO ومكتبات Python الأساسية مثل sklearn وpandas وPyYAML لإرشادك خلال الإعداد اللازم، وعملية إنشاء متجهات الميزات، وتنفيذ تقسيم مجموعة البيانات باستخدام K-Fold.
+
+![K-fold cross validation data splitting](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/k-fold-cross-validation-overview.avif)
+
+سواء كان مشروعك يتضمن مجموعة بيانات Fruit Detection أو مصدر بيانات مخصصاً، يهدف هذا البرنامج التعليمي إلى مساعدتك في فهم وتطبيق التحقق المتقاطع K-Fold لتعزيز موثوقية وقوة نماذج [التعلم الآلي](https://www.ultralytics.com/glossary/machine-learning-ml) الخاصة بك. بينما نطبق `k=5` طيات في هذا البرنامج التعليمي، ضع في اعتبارك أن العدد الأمثل للطيّات قد يختلف بناءً على مجموعة بياناتك وخصائص مشروعك.
+
+لنبدأ العمل.
+
+## Link to this sectionالإعداد#
+
+  * يجب أن تكون التعليقات التوضيحية الخاصة بك بتنسيق [YOLO detection format](/ar/datasets/detect).
+
+  * يفترض هذا الدليل أن ملفات التعليقات التوضيحية متاحة محلياً.
+
+  * في عرضنا التوضيحي، نستخدم مجموعة بيانات [Fruit Detection](https://www.kaggle.com/datasets/lakshaytyagi01/fruit-detection/code).
+
+    * تحتوي مجموعة البيانات هذه على إجمالي 8479 صورة.
+    * تتضمن 6 تصنيفات (ملصقات)، مع إدراج إجمالي عدد الأمثلة لكل منها أدناه.
+
+
+
+تصنيف الملصق| عدد الأمثلة  
+---|---  
+تفاح| 7049  
+عنب| 7202  
+أناناس| 1613  
+برتقال| 15549  
+موز| 3536  
+بطيخ| 1976  
+  
+  * حزم Python الضرورية تشمل:
+
+    * `ultralytics`
+    * `sklearn`
+    * `pandas`
+    * `pyyaml`
+  * يعمل هذا البرنامج التعليمي باستخدام `k=5` طيات. ومع ذلك، يجب عليك تحديد العدد الأمثل للطيّات لمجموعة بياناتك المحددة.
+
+
+
+  1. ابدأ بيئة افتراضية جديدة لـ Python (`venv`) لمشروعك وقم بتنشيطها. استخدم `pip` (أو مدير الحزم المفضل لديك) للتثبيت:
+
+     * مكتبة Ultralytics: `pip install -U ultralytics`. بدلاً من ذلك، يمكنك استنساخ [المستودع](https://github.com/ultralytics/ultralytics) الرسمي.
+     * Scikit-learn وpandas وPyYAML: `pip install -U scikit-learn pandas pyyaml`.
+  2. تحقق من أن تعليقاتك التوضيحية بتنسيق [YOLO detection format](/ar/datasets/detect).
+
+     * في هذا البرنامج التعليمي، توجد جميع ملفات التعليقات التوضيحية في الدليل `Fruit-Detection/labels`.
+
+
+
+## Link to this sectionإنشاء متجهات الميزات لمجموعة بيانات اكتشاف الأشياء#
+
+  1. ابدأ بإنشاء ملف Python جديد باسم `example.py` للخطوات التالية.
+
+  2. تابع لاسترداد جميع ملفات الملصقات الخاصة بمجموعة بياناتك.
+         
+         from pathlib import Path
+         
+         dataset_path = Path("./Fruit-detection")  # replace with 'path/to/dataset' for your custom data
+         labels = sorted(dataset_path.rglob("*labels/*.txt"))  # all data in 'labels'
+
+  3. الآن، اقرأ محتويات ملف YAML الخاص بمجموعة البيانات واستخرج فهارس تصنيفات الملصقات.
+         
+         import yaml
+         
+         yaml_file = "path/to/data.yaml"  # your data YAML with data directories and names dictionary
+         with open(yaml_file, encoding="utf8") as y:
+             classes = yaml.safe_load(y)["names"]
+         cls_idx = sorted(classes.keys())
+
+  4. قم بتهيئة إطار بيانات `pandas` فارغ.
+         
+         import pandas as pd
+         
+         index = [label.stem for label in labels]  # uses base filename as ID (no extension)
+         labels_df = pd.DataFrame([], columns=cls_idx, index=index)
+
+  5. احسب أمثلة كل تصنيف ملصق موجود في ملفات التعليقات التوضيحية.
+         
+         from collections import Counter
+         
+         for label in labels:
+             lbl_counter = Counter()
+         
+             with open(label) as lf:
+                 lines = lf.readlines()
+         
+             for line in lines:
+                 # classes for YOLO label uses integer at first position of each line
+                 lbl_counter[int(line.split(" ", 1)[0])] += 1
+         
+             labels_df.loc[label.stem] = lbl_counter
+         
+         labels_df = labels_df.fillna(0.0)  # replace `nan` values with `0.0`
+
+  6. فيما يلي عرض تجريبي لإطار البيانات المملوء:
+         
+         0    1    2    3    4    5
+         '0000a16e4b057580_jpg.rf.00ab48988370f64f5ca8ea4...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.7e6dce029fb67f01eb19aa7...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.bc4d31cdcbe229dd022957a...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '00020ebf74c4881c_jpg.rf.508192a0a97aa6c4a3b6882...'  0.0  0.0  0.0  1.0  0.0  0.0
+         '00020ebf74c4881c_jpg.rf.5af192a2254c8ecc4188a25...'  0.0  0.0  0.0  1.0  0.0  0.0
+          ...                                                  ...  ...  ...  ...  ...  ...
+         'ff4cd45896de38be_jpg.rf.c4b5e967ca10c7ced3b9e97...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff4cd45896de38be_jpg.rf.ea4c1d37d2884b3e3cbce08...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff5fd9c3c624b7dc_jpg.rf.bb519feaa36fc4bf630a033...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'ff5fd9c3c624b7dc_jpg.rf.f0751c9c3aa4519ea3c9d6a...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'fffe28b31f2a70d4_jpg.rf.7ea16bd637ba0711c53b540...'  0.0  6.0  0.0  0.0  0.0  0.0
+
+
+
+
+تقوم الصفوف بفهرسة ملفات الملصقات، حيث يقابل كل منها صورة في مجموعة بياناتك، وتتوافق الأعمدة مع فهارس تصنيفات الملصقات الخاصة بك. يمثل كل صف متجه ميزات زائفاً، مع عدد كل تصنيف ملصق موجود في مجموعة بياناتك. يتيح هيكل البيانات هذا تطبيق [التحقق المتقاطع K-Fold](https://www.ultralytics.com/glossary/cross-validation) على مجموعة بيانات اكتشاف الأشياء.
+
+## Link to this sectionتقسيم مجموعة بيانات K-Fold#
+
+  1. الآن سنستخدم فئة `KFold` من `sklearn.model_selection` لإنشاء `k` من تقسيمات مجموعة البيانات.
+
+     * هام: 
+       * ضبط `shuffle=True` يضمن توزيعاً عشوائياً للفئات في تقسيماتك.
+       * عن طريق ضبط `random_state=M` حيث `M` هو عدد صحيح مختار، يمكنك الحصول على نتائج قابلة للتكرار.
+    
+    import random
+    
+    from sklearn.model_selection import KFold
+    
+    random.seed(0)  # for reproducibility
+    ksplit = 5
+    kf = KFold(n_splits=ksplit, shuffle=True, random_state=20)  # setting random_state for repeatable results
+    
+    kfolds = list(kf.split(labels_df))
+
+  2. تم الآن تقسيم مجموعة البيانات إلى `k` من الطيّات، حيث تحتوي كل طية على قائمة بفهارس `train` و `val`. سنقوم بإنشاء إطار بيانات لعرض هذه النتائج بشكل أكثر وضوحاً.
+         
+         folds = [f"split_{n}" for n in range(1, ksplit + 1)]
+         folds_df = pd.DataFrame(index=index, columns=folds)
+         
+         for i, (train, val) in enumerate(kfolds, start=1):
+             folds_df[f"split_{i}"].loc[labels_df.iloc[train].index] = "train"
+             folds_df[f"split_{i}"].loc[labels_df.iloc[val].index] = "val"
+
+  3. الآن سنحسب توزيع تصنيفات الملصقات لكل طية كنسبة للفئات الموجودة في `val` إلى تلك الموجودة في `train`.
+         
+         fold_lbl_distrb = pd.DataFrame(index=folds, columns=cls_idx)
+         
+         for n, (train_indices, val_indices) in enumerate(kfolds, start=1):
+             train_totals = labels_df.iloc[train_indices].sum()
+             val_totals = labels_df.iloc[val_indices].sum()
+         
+             # To avoid division by zero, we add a small value (1E-7) to the denominator
+             ratio = val_totals / (train_totals + 1e-7)
+             fold_lbl_distrb.loc[f"split_{n}"] = ratio
+
+السيناريو المثالي هو أن تكون جميع نسب الفئات متشابهة بشكل معقول لكل تقسيم وعبر الفئات. ومع ذلك، سيخضع هذا لخصوصيات مجموعة بياناتك.
+
+  4. بعد ذلك، نقوم بإنشاء الأدلة وملفات YAML لمجموعة البيانات لكل تقسيم.
+         
+         import datetime
+         
+         supported_extensions = [".jpg", ".jpeg", ".png"]
+         
+         # Initialize an empty list to store image file paths
+         images = []
+         
+         # Loop through supported extensions and gather image files
+         for ext in supported_extensions:
+             images.extend(sorted((dataset_path / "images").rglob(f"*{ext}")))
+         
+         # Create the necessary directories and dataset YAML files
+         save_path = Path(dataset_path / f"{datetime.date.today().isoformat()}_{ksplit}-Fold_Cross-val")
+         save_path.mkdir(parents=True, exist_ok=True)
+         ds_yamls = []
+         
+         for split in folds_df.columns:
+             # Create directories
+             split_dir = save_path / split
+             split_dir.mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "labels").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "labels").mkdir(parents=True, exist_ok=True)
+         
+             # Create dataset YAML files
+             dataset_yaml = split_dir / f"{split}_dataset.yaml"
+             ds_yamls.append(dataset_yaml)
+         
+             with open(dataset_yaml, "w") as ds_y:
+                 yaml.safe_dump(
+                     {
+                         "path": split_dir.as_posix(),
+                         "train": "train",
+                         "val": "val",
+                         "names": classes,
+                     },
+                     ds_y,
+                 )
+
+  5. أخيراً، انسخ الصور والملصقات إلى الدليل المناسب ('train' أو 'val') لكل تقسيم.
+
+     * **ملاحظة:** سيعتمد الوقت المطلوب لهذا الجزء من الكود على حجم مجموعة بياناتك وأجهزة نظامك.
+    
+    import shutil
+    
+    from tqdm import tqdm
+    
+    for image, label in tqdm(zip(images, labels), total=len(images), desc="Copying files"):
+        for split, k_split in folds_df.loc[image.stem].items():
+            # Destination directory
+            img_to_path = save_path / split / k_split / "images"
+            lbl_to_path = save_path / split / k_split / "labels"
+    
+            # Copy image and label files to new directory (SamefileError if file already exists)
+            shutil.copy(image, img_to_path / image.name)
+            shutil.copy(label, lbl_to_path / label.name)
+
+
+
+
+## Link to this sectionحفظ السجلات (اختياري)#
+
+اختيارياً، يمكنك حفظ سجلات تقسيم K-Fold وإطارات بيانات توزيع الملصقات كملفات CSV للرجوع إليها في المستقبل.
+    
+    
+    folds_df.to_csv(save_path / "kfold_datasplit.csv")
+    fold_lbl_distrb.to_csv(save_path / "kfold_label_distribution.csv")
+
+## Link to this sectionتدريب YOLO باستخدام تقسيمات بيانات K-Fold#
+
+  1. أولاً، قم بتحميل نموذج YOLO.
+         
+         from ultralytics import YOLO
+         
+         weights_path = "path/to/weights.pt"  # use yolo26n.pt for a small model
+         model = YOLO(weights_path, task="detect")
+
+  2. بعد ذلك، قم بالتكرار عبر ملفات YAML لمجموعة البيانات لتشغيل التدريب. سيتم حفظ النتائج في دليل يحدده وسيطا `project` و `name`. افتراضياً، يكون هذا الدليل 'runs/detect/train#' حيث # هو فهرس رقمي.
+         
+         results = {}
+         
+         # Define your additional arguments here
+         batch = 16
+         project = "kfold_demo"
+         epochs = 100
+         
+         for k, dataset_yaml in enumerate(ds_yamls):
+             model = YOLO(weights_path, task="detect")
+             results[k] = model.train(
+                 data=dataset_yaml, epochs=epochs, batch=batch, project=project, name=f"fold_{k + 1}"
+             )  # include any additional train arguments
+
+  3. يمكنك أيضاً استخدام وظيفة [Ultralytics data.split.autosplit](https://docs.ultralytics.com/reference/data/split) للتقسيم التلقائي لمجموعة البيانات:
+         
+         from ultralytics.data.split import autosplit
+         
+         # Automatically split dataset into train/val/test
+         autosplit(path="path/to/images", weights=(0.8, 0.2, 0.0), annotated_only=True)
+
+
+
+
+## Link to this sectionالخلاصة#
+
+في هذا الدليل، استكشفنا عملية استخدام التحقق المتقاطع K-Fold لتدريب نموذج اكتشاف الأشياء YOLO. تعلمنا كيفية تقسيم مجموعة بياناتنا إلى K من الأجزاء، مما يضمن توزيعاً متوازناً للفئات عبر الطيّات المختلفة.
+
+استكشفنا أيضاً إجراء إنشاء إطارات بيانات التقارير لتصور تقسيمات البيانات وتوزيعات الملصقات عبر هذه التقسيمات، مما يوفر لنا رؤية واضحة لهيكل مجموعات التدريب والتحقق الخاصة بنا.
+
+اختيارياً، حفظنا سجلاتنا للرجوع إليها مستقبلاً، وهو ما قد يكون مفيداً بشكل خاص في المشاريع واسعة النطاق أو عند استكشاف أخطاء أداء النموذج وإصلاحها.
+
+أخيراً، نفذنا التدريب الفعلي للنموذج باستخدام كل تقسيم في حلقة تكرارية، مع حفظ نتائج التدريب للمزيد من التحليل والمقارنة.
+
+تعد تقنية التحقق المتقاطع K-Fold طريقة قوية لتحقيق أقصى استفادة من بياناتك المتاحة، وهي تساعد في ضمان أن أداء نموذجك موثوق ومتسق عبر مجموعات البيانات الفرعية المختلفة. يؤدي هذا إلى نموذج أكثر قدرة على التعميم والموثوقية، وأقل عرضة لـ [الإفراط في التخصيص](https://www.ultralytics.com/glossary/overfitting) لأنماط بيانات معينة.
+
+تذكر أنه على الرغم من استخدامنا لـ YOLO في هذا الدليل، فإن هذه الخطوات قابلة للنقل إلى حد كبير إلى نماذج تعلم آلي أخرى. يسمح لك فهم هذه الخطوات بتطبيق التحقق المتقاطع بفعالية في مشاريع التعلم الآلي الخاصة بك.
+
+## Link to this sectionالأسئلة الشائعة#
+
+### Link to this sectionما هو التحقق المتقاطع K-Fold ولماذا هو مفيد في اكتشاف الأشياء؟#
+
+التحقق المتقاطع K-Fold هو تقنية يتم فيها تقسيم مجموعة البيانات إلى 'k' من المجموعات الفرعية (طيّات) لتقييم أداء النموذج بشكل أكثر موثوقية. تعمل كل طية كبيانات تدريب و[بيانات تحقق](https://www.ultralytics.com/glossary/validation-data). في سياق اكتشاف الأشياء، يساعد استخدام التحقق المتقاطع K-Fold في ضمان أن أداء نموذج Ultralytics YOLO الخاص بك قوي وقابل للتعميم عبر تقسيمات البيانات المختلفة، مما يعزز من موثوقيته. للحصول على تعليمات مفصلة حول إعداد التحقق المتقاطع K-Fold مع Ultralytics YOLO، راجع التحقق المتقاطع K-Fold مع Ultralytics.
+
+### Link to this sectionكيف أقوم بتنفيذ التحقق المتقاطع K-Fold باستخدام Ultralytics YOLO؟#
+
+لتنفيذ التحقق المتقاطع K-Fold مع Ultralytics YOLO، تحتاج إلى اتباع الخطوات التالية:
+
+  1. تحقق من أن التعليقات التوضيحية بتنسيق [YOLO detection format](/ar/datasets/detect).
+  2. استخدم مكتبات Python مثل `sklearn` و `pandas` و `pyyaml`.
+  3. أنشئ متجهات ميزات من مجموعة بياناتك.
+  4. قم بتقسيم مجموعة بياناتك باستخدام `KFold` من `sklearn.model_selection`.
+  5. قم بتدريب نموذج YOLO على كل تقسيم.
+
+
+
+للحصول على دليل شامل، راجع قسم تقسيم مجموعة بيانات K-Fold في وثائقنا.
+
+### Link to this sectionلماذا يجب أن أستخدم Ultralytics YOLO لاكتشاف الأشياء؟#
+
+يوفر Ultralytics YOLO إمكانية اكتشاف الأشياء في الوقت الفعلي بأحدث التقنيات مع [دقة](https://www.ultralytics.com/glossary/accuracy) وكفاءة عاليتين. إنه متعدد الاستخدامات، حيث يدعم مهام [رؤية حاسوبية](https://www.ultralytics.com/glossary/computer-vision-cv) متعددة مثل [الاكتشاف](/ar/tasks/detect)، و[تجزئة المثيلات](/ar/tasks/segment)، و[التجزئة الدلالية](/ar/tasks/semantic)، و[التصنيف](/ar/tasks/classify). بالإضافة إلى ذلك، فإنه يتكامل بسلاسة مع أدوات مثل [منصة Ultralytics](https://docs.ultralytics.com/platform) لتدريب النماذج ونشرها بدون كتابة كود. لمزيد من التفاصيل، استكشف الفوائد والميزات في [صفحة Ultralytics YOLO](https://www.ultralytics.com/yolo) الخاصة بنا.
+
+### Link to this sectionكيف يمكنني التأكد من أن تعليقاتي التوضيحية بالتنسيق الصحيح لـ Ultralytics YOLO؟#
+
+يجب أن تتبع تعليقاتك التوضيحية تنسيق اكتشاف YOLO. يجب أن يسرد كل ملف تعليق توضيحي فئة الكائن، إلى جانب إحداثيات [مربع الإحاطة](https://www.ultralytics.com/glossary/bounding-box) الخاص به في الصورة. يضمن تنسيق YOLO معالجة مبسطة وموحدة للبيانات لتدريب نماذج اكتشاف الأشياء. لمزيد من المعلومات حول تنسيق التعليقات التوضيحية الصحيح، قم بزيارة [دليل تنسيق اكتشاف YOLO](/ar/datasets/detect).
+
+### Link to this sectionهل يمكنني استخدام التحقق المتقاطع K-Fold مع مجموعات بيانات مخصصة بخلاف Fruit Detection؟#
+
+نعم، يمكنك استخدام التحقق المتقاطع K-Fold مع أي مجموعة بيانات مخصصة طالما أن التعليقات التوضيحية بتنسيق اكتشاف YOLO. استبدل مسارات مجموعة البيانات وتصنيفات الفئات بتلك الخاصة بمجموعة بياناتك المخصصة. تضمن هذه المرونة إمكانية استفادة أي مشروع لاكتشاف الأشياء من تقييم النموذج القوي باستخدام التحقق المتقاطع K-Fold. للحصول على مثال عملي، راجع قسم إنشاء متجهات الميزات لدينا.
+
+المساهمون
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+[GLglenn-jocher21](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[AMambitious-octopus1](https://github.com/ambitious-octopus)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[BUBurhan-Q1](https://github.com/Burhan-Q)[M-M-Amrollahi1](https://github.com/M-Amrollahi)[IVIvorZhu3311](https://github.com/IvorZhu331)
+
+تم الإنشاء 12 نوفمبر 2023تم التحديث قبل أسبوعين
+
+## التعليقات
+
+في هذه الصفحة
+
+استكشف باستخدام الذكاء الاصطناعي

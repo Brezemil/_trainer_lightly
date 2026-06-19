@@ -1,0 +1,194 @@
+---
+source_url: https://docs.ultralytics.com/es/guides/finetuning-guide
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+# Link to this sectionCómo ajustar YOLO en un conjunto de datos personalizado#
+
+El [ajuste fino](https://www.ultralytics.com/glossary/fine-tuning) adapta un modelo preentrenado para reconocer nuevas clases partiendo de pesos aprendidos en lugar de una inicialización aleatoria. En lugar de entrenar desde cero durante cientos de épocas, el ajuste fino aprovecha las características preentrenadas de [COCO](/es/datasets/detect/coco) y converge en datos personalizados en una fracción del tiempo.
+
+Esta guía cubre el ajuste fino de [YOLO26](/es/models/yolo26) en conjuntos de datos personalizados, desde el uso básico hasta técnicas avanzadas como el congelado de capas y el entrenamiento en dos etapas.
+
+## Link to this sectionAjuste fino frente a entrenamiento desde cero#
+
+Un modelo preentrenado ya ha aprendido características visuales generales (detección de bordes, reconocimiento de texturas, comprensión de formas) a partir de millones de imágenes. El [aprendizaje por transferencia](https://www.ultralytics.com/glossary/transfer-learning) mediante el ajuste fino reutiliza ese conocimiento y solo enseña al modelo cómo son las nuevas clases, razón por la cual converge más rápido y requiere menos datos. Entrenar desde cero descarta todo eso y obliga al modelo a aprender todo desde los patrones de nivel de píxel, lo que exige muchos más recursos.
+
+| Ajuste fino| Entrenamiento desde cero  
+---|---|---  
+**Pesos iniciales**|  Preentrenado en COCO (80 clases)| Inicialización aleatoria  
+**Comando**| `YOLO("yolo26n.pt")`| `YOLO("yolo26n.yaml")`  
+**Convergencia**|  Más rápida: el backbone ya está entrenado| Más lenta: todas las capas aprenden desde cero  
+**Requisitos de datos**|  Menores: las características preentrenadas compensan la falta de datos| Mayores: el modelo debe aprender todas las características solo del conjunto de datos  
+**Cuándo usar**|  Clases personalizadas con imágenes naturales| Dominios fundamentalmente diferentes de COCO (médico, satelital, radar)  
+  
+El ajuste fino no requiere código adicional
+
+Cuando se carga un archivo `.pt` con `YOLO("yolo26n.pt")`, los pesos preentrenados se almacenan en el modelo. Llamar a `.train(data="custom.yaml")` después de eso transfiere automáticamente todos los pesos compatibles a la nueva arquitectura del modelo, reinicializa cualquier capa que no coincida (como la cabeza de detección cuando el número de clases difiere) y comienza el entrenamiento. No se requiere carga manual de pesos, manipulación de capas ni código de aprendizaje por transferencia personalizado.
+
+### Link to this sectionCómo funciona la transferencia de pesos preentrenados#
+
+Cuando un modelo preentrenado se ajusta en un conjunto de datos con un número diferente de clases (por ejemplo, las 80 clases de COCO a 5 clases personalizadas), Ultralytics realiza una transferencia de pesos consciente de la forma:
+
+  1. **Transferencia completa del backbone y el neck** : estas capas extraen características visuales generales y sus formas son independientes del número de clases.
+  2. **La cabeza de detección se reinicializa parcialmente** : las capas de salida de clasificación (`cv3`, `one2one_cv3`) tienen formas vinculadas al recuento de clases (80 frente a 5), por lo que no pueden transferirse y se inicializan de forma aleatoria. Las capas de regresión de caja (`cv2`, `one2one_cv2`) en la cabeza tienen formas fijas independientemente del recuento de clases, por lo que se transfieren normalmente.
+  3. **La gran mayoría de los pesos se transfieren** al cambiar el recuento de clases. Solo se reinicializan las capas específicas de clasificación en la cabeza de detección; las ramas del backbone, neck y regresión de caja permanecen intactas.
+
+
+
+Para conjuntos de datos con el mismo número de clases que el modelo preentrenado (por ejemplo, al ajustar pesos preentrenados en COCO en otro conjunto de datos de 80 clases), el 100% de los pesos se transfieren, incluida la cabeza de detección.
+
+## Link to this sectionEjemplo básico de ajuste fino#
+
+Ejemplo
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load pretrained model
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+
+### Link to this sectionElegir el tamaño del modelo#
+
+Los modelos más grandes tienen más capacidad, pero también más parámetros para actualizar, lo que puede aumentar el riesgo de sobreajuste cuando los datos de entrenamiento son limitados. Comenzar con un modelo más pequeño (YOLO26n o YOLO26s) y escalar solo si las métricas de validación se estancan es un enfoque práctico. El tamaño óptimo del modelo depende de la complejidad de la tarea, el número de clases, la diversidad del conjunto de datos y el hardware disponible para la implementación. Consulta la [página del modelo YOLO26](/es/models/yolo26) completa para ver los tamaños disponibles y los puntos de referencia de rendimiento.
+
+## Link to this sectionSelección del optimizador y la tasa de aprendizaje#
+
+La configuración predeterminada `optimizer=auto` selecciona el optimizador y la tasa de aprendizaje en función del número total de iteraciones de entrenamiento:
+
+  * **< 10,000 iteraciones** (conjuntos de datos pequeños o pocas épocas): AdamW con una tasa de aprendizaje baja calculada automáticamente
+  * **> 10,000 iteraciones** (conjuntos de datos grandes): [MuSGD](/reference/optim/muon) (un optimizador híbrido Muon+SGD) con lr=0.01
+
+
+
+Para la mayoría de las tareas de ajuste fino, la configuración predeterminada funciona bien sin ningún ajuste manual. Considera establecer el optimizador explícitamente cuando:
+
+  * **El entrenamiento es inestable** (la pérdida aumenta bruscamente o diverge): prueba con `optimizer=AdamW, lr0=0.001` para una convergencia más estable
+  * **Ajustas un modelo grande en un conjunto de datos pequeño** : una tasa de aprendizaje más baja como `lr0=0.001` ayuda a preservar las características preentrenadas
+
+
+
+El optimizador automático anula la lr0 manual
+
+Cuando `optimizer=auto`, los valores de `lr0` y `momentum` se ignoran. Para controlar la tasa de aprendizaje manualmente, establece el optimizador explícitamente: `optimizer=SGD, lr0=0.005`.
+
+## Link to this sectionCongelar capas#
+
+Congelar evita que capas específicas se actualicen durante el entrenamiento. Esto acelera el entrenamiento y reduce el [sobreajuste](https://www.ultralytics.com/glossary/overfitting) cuando el conjunto de datos es pequeño en relación con la capacidad del modelo.
+
+El parámetro `freeze` acepta un entero o una lista. Un entero `freeze=10` congela las primeras 10 capas (de la 0 a la 9, lo que corresponde al backbone en YOLO26). Una lista puede contener índices de capas como `freeze=[0, 3, 5]` para el congelado parcial del backbone, o nombres de módulos como cadenas como `freeze=["23.cv2"]` para un control detallado sobre ramas específicas dentro de una capa.
+
+Ejemplo
+    
+    
+    model.train(data="custom.yaml", epochs=50, freeze=10)
+
+La profundidad de congelado adecuada depende de cuán similar sea el dominio objetivo a los datos preentrenados y de cuántos datos de entrenamiento haya disponibles:
+
+Escenario| Recomendación| Justificación  
+---|---|---  
+Conjunto de datos grande, dominio similar| `freeze=None` (predeterminado)| Suficientes datos para adaptar todas las capas sin sobreajuste  
+Conjunto de datos pequeño, dominio similar| `freeze=10`| Preserva las características del backbone, reduce los parámetros entrenables  
+Conjunto de datos muy pequeño| `freeze=23`| Solo se entrena la cabeza de detección, minimizando el riesgo de sobreajuste  
+Dominio alejado de COCO| `freeze=None`| Las características del backbone pueden no transferirse bien y necesitan reentrenamiento  
+  
+La profundidad de congelado también puede tratarse como un hiperparámetro: probar algunos valores (0, 5, 10) y comparar el mAP de validación es una forma práctica de encontrar la mejor configuración para un conjunto de datos específico.
+
+## Link to this sectionHiperparámetros clave para el ajuste fino#
+
+El ajuste fino generalmente requiere menos ajustes de hiperparámetros que el entrenamiento desde cero. Los parámetros que más importan son:
+
+  * **`epochs`** : El ajuste fino converge más rápido que el entrenamiento desde cero. Comienza con un valor moderado y utiliza `patience` para detenerte antes de tiempo cuando las métricas de validación se estanquen.
+  * **`patience`** : El valor predeterminado de 100 está diseñado para ejecuciones de entrenamiento largas. Reducirlo a 10-20 evita perder tiempo en ejecuciones que ya han convergido.
+  * **`warmup_epochs`** : El calentamiento predeterminado (3 épocas) aumenta gradualmente la tasa de aprendizaje desde cero, lo que evita que las grandes actualizaciones de gradiente dañen las características preentrenadas en las iteraciones iniciales. Se recomienda mantener el valor predeterminado incluso para el ajuste fino.
+
+
+
+Para obtener la lista completa de parámetros de entrenamiento, consulta la [referencia de configuración de entrenamiento](/es/usage/cfg).
+
+## Link to this sectionAjuste fino en dos etapas#
+
+El ajuste fino en dos etapas divide el entrenamiento en dos fases. La primera etapa congela el backbone y entrena solo el neck y la cabeza, lo que permite que las capas de detección se adapten a las nuevas clases sin interrumpir las características preentrenadas. La segunda etapa descongela todas las capas y entrena el modelo completo con una tasa de aprendizaje más baja para refinar el backbone para el dominio objetivo.
+
+Este enfoque es particularmente útil cuando el dominio objetivo difiere significativamente de COCO (imágenes médicas, imágenes aéreas, microscopía), donde el backbone puede necesitar adaptación, pero entrenar todo a la vez causa inestabilidad. Para un descongelado automático con un enfoque basado en callback, consulta [Congelar y descongelar el backbone](/es/guides/custom-trainer#freezing-and-unfreezing-the-backbone).
+
+Ajuste fino en dos etapas
+    
+    
+    from ultralytics import YOLO
+    
+    # Stage 1: freeze backbone, train head and neck
+    model = YOLO("yolo26n.pt")
+    model.train(data="custom.yaml", epochs=20, freeze=10, name="stage1", exist_ok=True)
+    
+    # Stage 2: unfreeze all, fine-tune with lower lr
+    model = YOLO("runs/detect/stage1/weights/best.pt")
+    model.train(data="custom.yaml", epochs=30, lr0=0.001, name="stage2", exist_ok=True)
+
+## Link to this sectionErrores comunes#
+
+### Link to this sectionEl modelo no produce predicciones#
+
+  * **Datos de entrenamiento insuficientes** : entrenar con muy pocas muestras es la causa más común; el modelo no puede aprender ni generalizar con muy pocos datos. Asegúrate de tener suficientes ejemplos diversos por clase antes de investigar otras causas.
+  * **Verifica las rutas del conjunto de datos** : las rutas incorrectas en `data.yaml` producen cero etiquetas silenciosamente. Ejecuta `yolo detect val model=yolo26n.pt data=your_data.yaml` antes de entrenar para confirmar que las etiquetas se cargan correctamente.
+  * **Umbral de confianza más bajo** : si existen predicciones pero se filtran, intenta con `conf=0.1` durante la inferencia.
+  * **Verifica el recuento de clases** : asegúrate de que `nc` en `data.yaml` coincida con el número real de clases en los archivos de etiquetas.
+
+
+
+### Link to this sectionEl mAP de validación se estanca temprano#
+
+  * **Agrega más datos** : el ajuste fino se beneficia significativamente de datos de entrenamiento adicionales, especialmente ejemplos diversos con ángulos, iluminación y fondos variados.
+  * **Verifica el equilibrio de clases** : las clases subrepresentadas tendrán un AP bajo. Usa `cls_pw` para aplicar ponderación de clases por frecuencia inversa (comienza con `cls_pw=0.25` para un desequilibrio moderado, aumenta a `1.0` para un desequilibrio severo).
+  * **Reduce la aumentación** : para conjuntos de datos muy pequeños, una aumentación fuerte puede dañar más de lo que ayuda. Prueba `mosaic=0.5` o `mosaic=0.0`.
+  * **Aumenta la resolución** : para conjuntos de datos con objetos pequeños, intenta `imgsz=1280` para preservar el detalle.
+
+
+
+### Link to this sectionEl rendimiento se degrada en las clases originales después del ajuste fino#
+
+Esto se conoce como olvido catastrófico: el modelo pierde el conocimiento aprendido previamente cuando se ajusta exclusivamente en nuevos datos. El olvido es prácticamente inevitable si no se incluyen imágenes del conjunto de datos original junto con los nuevos datos. Para mitigar esto:
+
+  * **Fusiona conjuntos de datos** : incluye ejemplos de las clases originales junto con las nuevas clases durante el ajuste fino. Esta es la única forma confiable de evitar el olvido.
+  * **Congela el backbone y el neck** : congelar tanto el backbone como el neck para que solo se entrene la cabeza de detección ayuda en ejecuciones cortas de ajuste fino con una tasa de aprendizaje muy baja.
+  * **Entrena durante menos épocas** : cuanto más tiempo entrene el modelo exclusivamente en nuevos datos, más aumentará el olvido.
+
+
+
+## Link to this sectionPreguntas frecuentes#
+
+### Link to this section¿Cuántas imágenes necesito para ajustar YOLO?#
+
+No existe un mínimo fijo; los resultados dependen de la complejidad de la tarea, el número de clases y cuán similar sea el dominio a COCO. Las imágenes más diversas (iluminación, ángulos y fondos variados) importan más que la cantidad bruta. Comienza con lo que tengas y escala si las métricas de validación son insuficientes.
+
+### Link to this section¿Cómo ajusto YOLO26 en un conjunto de datos personalizado?#
+
+Carga un archivo `.pt` preentrenado y llama a `.train()` con la ruta a un `data.yaml` personalizado. Ultralytics maneja automáticamente la [transferencia de pesos](https://www.ultralytics.com/glossary/transfer-learning), la reinicialización de la cabeza de detección y la selección del optimizador. Consulta la sección Ejemplo básico de ajuste fino para ver el ejemplo de código completo.
+
+### Link to this section¿Por qué mi modelo YOLO ajustado no detecta nada?#
+
+Las causas más comunes son rutas incorrectas en `data.yaml` (que produce cero etiquetas silenciosamente), una discrepancia entre `nc` en el YAML y los archivos de etiquetas reales, o un umbral de confianza que es demasiado alto. Consulta Errores comunes para obtener una lista de verificación de solución de problemas completa.
+
+### Link to this section¿Qué capas de YOLO debería congelar para el ajuste fino?#
+
+Depende del tamaño del conjunto de datos y de la similitud del dominio. Para conjuntos de datos pequeños con un dominio similar al de COCO, congelar el backbone (`freeze=10`) evita el sobreajuste. Para dominios muy diferentes a COCO, dejar todas las capas sin congelar (`freeze=None`) permite que el backbone se adapte. Consulta Congelar capas para recomendaciones detalladas.
+
+### Link to this section¿Cómo evito el olvido catastrófico al ajustar YOLO en nuevas clases?#
+
+Incluye ejemplos de las clases originales en los datos de entrenamiento junto con las nuevas clases. Si eso no es posible, congelar más capas (`freeze=10` o superior) y usar una tasa de aprendizaje más baja ayuda a preservar el conocimiento preentrenado. Consulta El rendimiento se degrada en las clases originales para obtener más detalles.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+[RAraimbekovm1](https://github.com/raimbekovm)
+
+Creado el mes pasadoActualizado el mes pasado
+
+## Comentarios
+
+En esta página
+
+Explora con IA

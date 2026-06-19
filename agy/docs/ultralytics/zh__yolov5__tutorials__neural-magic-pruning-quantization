@@ -1,0 +1,259 @@
+---
+source_url: https://docs.ultralytics.com/zh/yolov5/tutorials/neural-magic-pruning-quantization
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/neural-magic-pruning-quantization.md)
+
+# Link to this section使用 Neural Magic 的 DeepSparse 部署 YOLOv5#
+
+欢迎来到软件交付的 AI 时代。
+
+本指南将向你介绍如何使用 Neural Magic 的 DeepSparse 部署 YOLOv5。
+
+DeepSparse 是一款在 CPU 上具有出色性能的推理运行时。例如，与 ONNX Runtime 基准相比，DeepSparse 在同一台机器上运行 YOLOv5s 的速度提升了 5.8 倍！
+
+![YOLOv5 DeepSparse vs ONNX Runtime speed comparison chart](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-speed-improvement.avif)
+
+你的 [深度学习](https://www.ultralytics.com/glossary/deep-learning-dl) 工作负载首次能够在无需硬件加速器带来的复杂性和成本的情况下，满足生产环境的性能需求。简而言之，DeepSparse 为你提供了 GPU 级的性能和软件的简洁性：
+
+  * **灵活部署** ：在云端、数据中心和边缘环境中使用从 Intel、AMD 到 ARM 的任何硬件提供商，实现一致的运行效果。
+  * **无限扩展** ：垂直扩展至数百个核心，通过标准 Kubernetes 进行水平扩展，或使用 Serverless 实现完全抽象化。
+  * **轻松集成** ：提供清晰的 API，用于将你的模型集成到应用程序中并在生产环境中进行监控。
+
+
+
+## Link to this sectionDeepSparse 是如何实现 GPU 级性能的？#
+
+DeepSparse 利用模型稀疏性来获得性能提升。
+
+通过剪枝和量化实现的稀疏化是一项研究广泛的技术，它可以在保持高 [精度](https://www.ultralytics.com/glossary/accuracy) 的同时，大幅减少执行网络所需的模型大小和计算量。DeepSparse 具备稀疏感知能力，这意味着它会跳过零参数，从而减少前向传递中的计算量。由于稀疏计算现在受限于内存，DeepSparse 会在缓存中深度执行网络，将问题分解为 Tensor Columns，即适合缓存的垂直计算条。
+
+![DeepSparse tensor columns for sparse neural network inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/tensor-columns.avif)
+
+具有压缩计算且在缓存中深度执行的稀疏网络，使得 DeepSparse 能够在 CPU 上提供 GPU 级的性能！
+
+## Link to this section如何创建在我数据上训练的 YOLOv5 稀疏版本？#
+
+Neural Magic 的开源模型库 [SparseZoo](https://github.com/neuralmagic/sparsezoo/blob/main/README.md) 包含每个 YOLOv5 模型的预稀疏化检查点。使用已与 Ultralytics 集成的 [SparseML](https://github.com/neuralmagic/sparseml)，你可以通过单个 CLI 命令将稀疏检查点微调到你的数据上。
+
+[查看 Neural Magic 的 YOLOv5 文档以了解更多详情](https://www.redhat.com/en/about/press-releases/red-hat-completes-acquisition-neural-magic-fuel-optimized-generative-ai-innovation-across-hybrid-cloud)。
+
+## Link to this sectionDeepSparse 使用方法#
+
+我们将通过一个示例来演示如何使用 DeepSparse 对 YOLOv5s 的稀疏版本进行基准测试和部署。
+
+### Link to this section安装 DeepSparse#
+
+运行以下命令来安装 DeepSparse。我们建议你使用带有 Python 的虚拟环境。
+    
+    
+    pip install "deepsparse[server,yolo,onnxruntime]"
+
+### Link to this section收集 ONNX 文件#
+
+DeepSparse 接受 ONNX 格式的模型，可以通过以下方式传入：
+
+  * 一个在 SparseZoo 中标识 ONNX 文件的 SparseZoo stub
+  * 文件系统中 ONNX 模型的本地路径
+
+
+
+下方的示例使用了标准的稠密和剪枝量化 YOLOv5s 检查点，由以下 SparseZoo stubs 标识：
+    
+    
+    zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none
+    zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none
+
+### Link to this section部署模型#
+
+DeepSparse 提供了方便的 API，用于将你的模型集成到应用程序中。
+
+要尝试下方的部署示例，请下载示例图像并将其保存为 `basilica.jpg`，命令如下：
+    
+    
+    wget -O basilica.jpg https://raw.githubusercontent.com/neuralmagic/deepsparse/main/src/deepsparse/yolo/sample_images/basilica.jpg
+
+#### Link to this sectionPython API#
+
+`Pipelines` 将运行时周围的预处理和输出后处理封装起来，为将 DeepSparse 添加到应用程序提供了清晰的接口。DeepSparse-Ultralytics 集成包括一个开箱即用的 `Pipeline`，它可以接受原始图像并输出边界框。
+
+创建一个 `Pipeline` 并运行推理：
+    
+    
+    from deepsparse import Pipeline
+    
+    # list of images in local filesystem
+    images = ["basilica.jpg"]
+    
+    # create Pipeline
+    model_stub = "zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none"
+    yolo_pipeline = Pipeline.create(
+        task="yolo",
+        model_path=model_stub,
+    )
+    
+    # run inference on images, receive bounding boxes + classes
+    pipeline_outputs = yolo_pipeline(images=images, iou_thres=0.6, conf_thres=0.001)
+    print(pipeline_outputs)
+
+如果你在云端运行，可能会遇到 OpenCV 找不到 `libGL.so.1` 的错误。你可以安装缺少的库：
+    
+    
+    apt-get install libgl1
+
+或者使用完全避免 GUI 依赖的无头 Ultralytics 包：
+    
+    
+    pip install ultralytics-opencv-headless
+
+#### Link to this sectionHTTP 服务器#
+
+DeepSparse Server 运行在流行的 [FastAPI](https://fastapi.tiangolo.com/) Web 框架和 [Uvicorn](https://uvicorn.dev/) Web 服务器之上。只需一个 CLI 命令，你就可以轻松地使用 DeepSparse 设置模型服务端点。该服务器支持来自 DeepSparse 的任何 Pipeline，包括使用 YOLOv5 的 [目标检测](https://www.ultralytics.com/glossary/object-detection)，使你能够向端点发送原始图像并接收边界框。
+
+使用剪枝量化 YOLOv5s 启动服务器：
+    
+    
+    deepsparse.server \
+      --task yolo \
+      --model_path zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none
+
+一个使用 Python `requests` 包的请求示例：
+    
+    
+    import json
+    
+    import requests
+    
+    # list of images for inference (local files on client side)
+    path = ["basilica.jpg"]
+    files = [("request", open(img, "rb")) for img in path]
+    
+    # send request over HTTP to /predict/from_files endpoint
+    url = "http://0.0.0.0:5543/predict/from_files"
+    resp = requests.post(url=url, files=files)
+    
+    # response is returned in JSON
+    annotations = json.loads(resp.text)  # dictionary of annotation results
+    bounding_boxes = annotations["boxes"]
+    labels = annotations["labels"]
+
+#### Link to this section标注 CLI#
+
+你还可以使用 annotate 命令让引擎将标注后的照片保存到磁盘上。尝试使用 `--source 0` 来标注你的实时网络摄像头输入！
+    
+    
+    deepsparse.object_detection.annotate --model_filepath zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none --source basilica.jpg
+
+运行上述命令将创建一个 `annotation-results` 文件夹并将标注后的图像保存在其中。
+
+![YOLOv5 detection results with bounding boxes](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/basilica-annotated.avif)
+
+## Link to this section基准测试性能#
+
+我们将使用 DeepSparse 的基准测试脚本，比较 DeepSparse 与 ONNX Runtime 在 YOLOv5s 上的吞吐量。
+
+基准测试是在 AWS `c6i.8xlarge` 实例（16 核）上运行的。
+
+### Link to this sectionBatch 32 性能比较#
+
+#### Link to this sectionONNX Runtime 基准#
+
+在 Batch 32 时，ONNX Runtime 使用标准稠密 YOLOv5s 可达到 42 幅图/秒：
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none -s sync -b 32 -nstreams 1 -e onnxruntime
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none
+    # Batch Size: 32
+    # Scenario: sync
+    # Throughput (items/sec): 41.9025
+
+#### Link to this sectionDeepSparse 稠密性能#
+
+虽然 DeepSparse 在优化后的稀疏模型上表现最佳，但它在标准稠密 YOLOv5s 上也表现良好。
+
+在 Batch 32 时，DeepSparse 使用标准稠密 YOLOv5s 可达到 70 幅图/秒，比 ORT 性能提升了 **1.7 倍** ！
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none -s sync -b 32 -nstreams 1
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none
+    # Batch Size: 32
+    # Scenario: sync
+    # Throughput (items/sec): 69.5546
+
+#### Link to this sectionDeepSparse 稀疏性能#
+
+当模型应用稀疏性时，DeepSparse 相较于 ONNX Runtime 的性能优势会更加强劲。
+
+在 Batch 32 时，DeepSparse 使用剪枝量化 YOLOv5s 可达到 241 幅图/秒，比 ORT 性能提升了 **5.8 倍** ！
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none -s sync -b 32 -nstreams 1
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none
+    # Batch Size: 32
+    # Scenario: sync
+    # Throughput (items/sec): 241.2452
+
+### Link to this sectionBatch 1 性能比较#
+
+DeepSparse 在延迟敏感的 Batch 1 场景中，也能获得优于 ONNX Runtime 的加速效果。
+
+#### Link to this sectionONNX Runtime 基准#
+
+在 Batch 1 时，ONNX Runtime 使用标准稠密 YOLOv5s 可达到 48 幅图/秒。
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none -s sync -b 1 -nstreams 1 -e onnxruntime
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none
+    # Batch Size: 1
+    # Scenario: sync
+    # Throughput (items/sec): 48.0921
+
+#### Link to this sectionDeepSparse 稀疏性能#
+
+在 Batch 1 时，DeepSparse 使用剪枝量化 YOLOv5s 可达到 135 项/秒，比 ONNX Runtime 性能提升 **2.8 倍！**
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none -s sync -b 1 -nstreams 1
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none
+    # Batch Size: 1
+    # Scenario: sync
+    # Throughput (items/sec): 134.9468
+
+由于 `c6i.8xlarge` 实例具有 VNNI 指令，如果权重按 4 个一组进行剪枝，DeepSparse 的吞吐量可以进一步提高。
+
+在 Batch 1 时，DeepSparse 使用 4 块剪枝量化 YOLOv5s 可达到 180 项/秒，比 ONNX Runtime 性能提升 **3.7 倍！**
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned35_quant-none-vnni -s sync -b 1 -nstreams 1
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned35_quant-none-vnni
+    # Batch Size: 1
+    # Scenario: sync
+    # Throughput (items/sec): 179.7375
+
+## Link to this section开始使用 DeepSparse#
+
+**研究或测试？** DeepSparse Community 可免费用于研究和测试。请从他们的 [文档](https://www.redhat.com/en/about/press-releases/red-hat-completes-acquisition-neural-magic-fuel-optimized-generative-ai-innovation-across-hybrid-cloud) 开始。
+
+有关使用 DeepSparse 部署 YOLOv5 的更多信息，请查看 [Neural Magic 的 DeepSparse 文档](https://www.redhat.com/en/about/press-releases/red-hat-completes-acquisition-neural-magic-fuel-optimized-generative-ai-innovation-across-hybrid-cloud) 以及 [关于 DeepSparse 集成的 Ultralytics 博客文章](https://www.ultralytics.com/blog/deploy-yolov5-with-neural-magics-deepsparse-for-gpu-class-performance-on-cpus)。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/neural-magic-pruning-quantization.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+已创建 3天前已更新 3天前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

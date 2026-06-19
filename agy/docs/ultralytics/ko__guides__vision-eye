@@ -1,0 +1,165 @@
+---
+source_url: https://docs.ultralytics.com/ko/guides/vision-eye
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/vision-eye.md)
+
+# Link to this sectionUltralytics YOLO26를 활용한 VisionEye 뷰 객체 매핑 🚀#
+
+## Link to this sectionVisionEye 객체 매핑이란 무엇입니까?#
+
+[Ultralytics YOLO26](https://github.com/ultralytics/ultralytics/) VisionEye는 컴퓨터가 인간의 눈과 같은 [precision](https://www.ultralytics.com/glossary/precision)으로 객체를 식별하고 정확히 찾아낼 수 있는 기능을 제공합니다. 이 기능은 인간의 눈이 특정 관점에서 세부 사항을 관찰하는 방식과 유사하게, 컴퓨터가 특정 객체를 식별하고 집중할 수 있도록 합니다.
+
+![VisionEye object mapping with YOLO tracking](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/visioneye-object-mapping-with-tracking.avif)
+
+Ultralytics YOLO를 사용한 VisionEye 매핑
+    
+    
+    # Monitor objects position with visioneye
+    yolo solutions visioneye show=True
+    
+    # Pass a source video
+    yolo solutions visioneye source="path/to/video.mp4"
+    
+    # Monitor the specific classes
+    yolo solutions visioneye classes="[0, 5]"
+
+### Link to this section`VisionEye` 인수#
+
+다음은 `VisionEye` 인수를 나타내는 표입니다:
+
+인수| 유형| 기본값| 설명  
+---|---|---|---  
+`model`| `str`| `None`| Ultralytics YOLO 모델 파일 경로입니다.  
+`vision_point`| `tuple[int, int]`| `(20, 20)`| VisionEye 솔루션을 사용하여 시야가 객체를 추적하고 경로를 그릴 기준점입니다.  
+  
+You can also utilize various `track` arguments within the `VisionEye` solution:
+
+인수| 유형| 기본값| 설명  
+---|---|---|---  
+`tracker`| `str`| `'botsort.yaml'`| 사용할 추적 알고리즘을 지정합니다. 기본 옵션은 다음과 같습니다: `botsort.yaml`, `bytetrack.yaml`, `ocsort.yaml`, `deepocsort.yaml`, `fasttrack.yaml`, `tracktrack.yaml`.  
+`conf`| `float`| `0.1`| 탐지에 대한 신뢰도 임계값을 설정합니다. 값이 낮을수록 더 많은 객체가 추적되지만 잘못된 긍정 탐지(false positives)가 포함될 수 있습니다.  
+`iou`| `float`| `0.7`| 겹치는 탐지를 필터링하기 위한 [Intersection over Union](https://www.ultralytics.com/glossary/intersection-over-union-iou) (IoU) 임계값을 설정합니다.  
+`classes`| `list`| `None`| 클래스 인덱스로 결과를 필터링합니다. 예를 들어, `classes=[0, 2, 3]`은 지정된 클래스만 추적합니다.  
+`verbose`| `bool`| `True`| 추적 결과 표시를 제어하여 추적된 객체의 시각적 출력을 제공합니다.  
+`device`| `str`| `None`| 추론을 위한 장치(예: `cpu`, `cuda:0` 또는 `0`)를 지정합니다. 사용자가 모델 실행을 위해 CPU, 특정 GPU 또는 기타 컴퓨팅 장치를 선택할 수 있도록 합니다.  
+  
+또한 아래와 같이 시각화 관련 인수도 지원됩니다:
+
+인수| 유형| 기본값| 설명  
+---|---|---|---  
+`show`| `bool`| `False`| `True`일 경우, 주석이 달린 이미지나 비디오를 창에 표시합니다. 개발 또는 테스트 중 즉각적인 시각적 피드백을 확인하는 데 유용합니다.  
+`line_width`| `int or None`| `None`| 바운딩 박스의 선 굵기를 지정합니다. `None`일 경우, 선 굵기가 이미지 크기에 따라 자동으로 조정됩니다. 명확성을 위해 시각적 커스터마이징을 제공합니다.  
+`show_conf`| `bool`| `True`| 각 탐지에 대한 신뢰도 점수를 레이블과 함께 표시합니다. 각 탐지에 대한 모델의 확신도를 파악할 수 있습니다.  
+`show_labels`| `bool`| `True`| 시각적 출력에서 각 탐지에 대한 레이블을 표시합니다. 탐지된 객체를 즉시 이해할 수 있도록 합니다.  
+  
+## Link to this sectionVisionEye 작동 원리#
+
+VisionEye는 프레임 내에 고정된 시점(vision point)을 설정하고 이 지점에서 감지된 객체까지 선을 그려 작동합니다. 이는 인간의 시각이 단일 관점에서 여러 객체에 집중하는 방식을 시뮬레이션합니다. 이 솔루션은 [object tracking](https://docs.ultralytics.com/modes/track)을 사용하여 프레임 전반에 걸쳐 객체를 일관되게 식별하고, 관찰자(vision point)와 장면 내 객체 간의 공간적 관계를 시각적으로 나타냅니다.
+
+VisionEye 클래스의 `process` 메서드는 다음과 같은 핵심 작업을 수행합니다:
+
+  1. 입력 이미지에서 트랙(바운딩 박스, 클래스, 마스크)을 추출합니다
+  2. 바운딩 박스와 라벨을 그리기 위한 주석 도구(annotator)를 생성합니다
+  3. 감지된 각 객체에 대해 박스 라벨을 그리고 vision point에서 시작하는 시선(vision line)을 생성합니다
+  4. 추적 통계가 포함된 주석 처리된 이미지를 반환합니다
+
+
+
+이 접근 방식은 감시 시스템, 자율 주행, 인터랙티브 설치 등 공간 인식과 객체 관계 시각화가 필요한 애플리케이션에 특히 유용합니다.
+
+## Link to this sectionVisionEye의 애플리케이션#
+
+VisionEye 객체 매핑은 다양한 산업 전반에서 여러 실용적인 용도로 활용됩니다:
+
+  * **보안 및 감시** : 고정된 카메라 위치에서 관심 있는 여러 객체를 모니터링합니다
+  * **소매 분석** : 매장 진열대와 관련하여 고객 이동 패턴을 추적합니다
+  * **스포츠 분석** : 코치의 관점에서 선수들의 위치와 움직임을 분석합니다
+  * **자율 주행** : 차량이 환경 내의 객체를 어떻게 "보고" 우선순위를 지정하는지 시각화합니다
+  * **인간-컴퓨터 상호작용** : 공간 관계에 반응하는 보다 직관적인 인터페이스를 생성합니다
+
+
+
+VisionEye를 [distance calculation](https://docs.ultralytics.com/guides/distance-calculation) 또는 [speed estimation](https://docs.ultralytics.com/guides/speed-estimation)과 같은 다른 Ultralytics 솔루션과 결합하면, 객체를 추적할 뿐만 아니라 객체의 공간적 관계와 행동까지 이해하는 종합적인 시스템을 구축할 수 있습니다.
+
+## Link to this section참고#
+
+문의 사항이 있으시면 [Ultralytics 이슈 섹션](https://github.com/ultralytics/ultralytics/issues/new/choose)이나 아래 언급된 토론 섹션에 질문을 남겨 주시기 바랍니다.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionUltralytics YOLO26을 사용하여 VisionEye 객체 매핑을 시작하려면 어떻게 해야 합니까?#
+
+Ultralytics YOLO26으로 VisionEye 객체 매핑을 시작하려면 먼저 pip를 통해 Ultralytics YOLO 패키지를 설치해야 합니다. 그런 다음, 문서에 제공된 샘플 코드를 사용하여 VisionEye로 [object detection](https://www.ultralytics.com/glossary/object-detection)을 설정할 수 있습니다. 시작을 위한 간단한 예제는 다음과 같습니다:
+    
+    
+    import cv2
+    
+    from ultralytics import solutions
+    
+    cap = cv2.VideoCapture("path/to/video.mp4")
+    assert cap.isOpened(), "Error reading video file"
+    
+    # Video writer
+    w, h, fps = (int(cap.get(x)) for x in (cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS))
+    video_writer = cv2.VideoWriter("vision-eye-mapping.avi", cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    
+    # Init vision eye object
+    visioneye = solutions.VisionEye(
+        show=True,  # display the output
+        model="yolo26n.pt",  # use any model that Ultralytics supports, e.g., YOLOv10
+        classes=[0, 2],  # generate visioneye view for specific classes
+    )
+    
+    # Process video
+    while cap.isOpened():
+        success, im0 = cap.read()
+    
+        if not success:
+            print("Video frame is empty or video processing has been successfully completed.")
+            break
+    
+        results = visioneye(im0)
+    
+        print(results)  # access the output
+    
+        video_writer.write(results.plot_im)  # write the video file
+    
+    cap.release()
+    video_writer.release()
+    cv2.destroyAllWindows()  # destroy all opened windows
+
+### Link to this section왜 객체 매핑 및 추적에 Ultralytics YOLO26을 사용해야 합니까?#
+
+Ultralytics YOLO26은 속도, [accuracy](https://www.ultralytics.com/glossary/accuracy) 및 통합의 용이성으로 유명하여 객체 매핑 및 추적을 위한 최고의 선택입니다. 주요 장점은 다음과 같습니다:
+
+  1. **최첨단 성능** : 실시간 객체 탐지에서 높은 정확도를 제공합니다.
+  2. **유연성** : 탐지, 추적, 거리 계산 등 다양한 작업을 지원합니다.
+  3. **커뮤니티 및 지원** : 문제 해결 및 개선을 위한 방대한 문서와 활발한 GitHub 커뮤니티가 있습니다.
+  4. **사용 편의성** : 직관적인 API가 복잡한 작업을 단순화하여 신속한 배포 및 반복 작업을 가능하게 합니다.
+
+
+
+애플리케이션 및 이점에 대한 자세한 내용은 [Ultralytics YOLO26 문서](https://docs.ultralytics.com/models/yolo26)를 확인하십시오.
+
+### Link to this sectionVisionEye를 Comet이나 ClearML과 같은 다른 [machine learning](https://www.ultralytics.com/glossary/machine-learning-ml) 도구와 어떻게 통합할 수 있습니까?#
+
+Ultralytics YOLO26은 Comet 및 ClearML과 같은 다양한 머신 러닝 도구와 원활하게 통합되어 실험 추적, 협업 및 재현성을 향상시킬 수 있습니다. 시작하려면 [how to use YOLOv5 with Comet](https://www.ultralytics.com/blog/how-to-use-yolov5-with-comet) 및 [integrate YOLO26 with ClearML](https://docs.ultralytics.com/integrations/clearml)에 대한 자세한 가이드를 따르십시오.
+
+추가 탐색 및 통합 예제는 [Ultralytics 통합 가이드](https://docs.ultralytics.com/integrations)를 확인하십시오.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/vision-eye.md)
+
+[GLglenn-jocher21](https://github.com/glenn-jocher)[RIRizwanMunawar5](https://github.com/RizwanMunawar)[RAraimbekovm1](https://github.com/raimbekovm)[MAMatthewNoyce1](https://github.com/MatthewNoyce)[IVIvorZhu3311](https://github.com/IvorZhu331)
+
+생성됨 2023년 12월 18일업데이트됨 지난달
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

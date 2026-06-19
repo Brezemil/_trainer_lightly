@@ -1,0 +1,356 @@
+---
+source_url: https://docs.ultralytics.com/zh/integrations/ray-tune
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/ray-tune.md)
+
+# Link to this section使用 Ray Tune 和 YOLO26 进行高效超参数调优#
+
+超参数调优对于实现最佳模型性能至关重要，它能帮助你找到最优的超参数组合。这涉及运行具有不同超参数的试验并评估每个试验的性能。
+
+## Link to this section使用 Ultralytics YOLO26 和 Ray Tune 加速调优#
+
+[Ultralytics YOLO26](https://www.ultralytics.com/) 集成了用于超参数调优的 Ray Tune，从而简化了 YOLO26 模型超参数的优化工作。借助 Ray Tune，你可以利用先进的搜索策略、并行计算和早停机制来加快调优过程。
+
+### Link to this sectionRay Tune#
+
+![Ray Tune hyperparameter optimization workflow](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/ray-tune-overview.avif)
+
+[Ray Tune](https://docs.ray.io/en/latest/tune/index.html) 是一个专为高效和灵活而设计的超参数调优库。它支持多种搜索策略、并行计算和早停策略，并能与包括 Ultralytics YOLO26 在内的流行 [机器学习](https://www.ultralytics.com/glossary/machine-learning-ml) 框架无缝集成。
+
+### Link to this section与 Weights & Biases 集成#
+
+YOLO26 还支持与 [Weights & Biases](https://wandb.ai/site) 进行可选集成，以便监控调优过程。
+
+## Link to this section安装#
+
+要安装所需的软件包，请运行：
+
+安装
+    
+    
+    # Install and update Ultralytics and Ray Tune packages
+    pip install -U ultralytics "ray[tune]"
+    
+    # Optionally install W&B for logging
+    pip install wandb
+
+## Link to this section用法#
+
+用法
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26n model
+    model = YOLO("yolo26n.pt")
+    
+    # Start tuning hyperparameters for YOLO26n training on the COCO8 dataset
+    result_grid = model.tune(data="coco8.yaml", use_ray=True)
+
+## Link to this section`tune()` 方法参数#
+
+YOLO26 中的 `tune()` 方法为使用 Ray Tune 进行超参数调优提供了一个易于使用的接口。它接受多个允许你自定义调优过程的参数。以下是每个参数的详细说明：
+
+参数| 类型| 描述| 默认值  
+---|---|---|---  
+`data`| `str`| 用于运行调优器的数据集配置文件（YAML 格式）。该文件应指定训练和 [验证数据](https://www.ultralytics.com/glossary/validation-data) 的路径，以及其他特定于数据集的设置。|   
+`space`| `dict, optional`| 一个定义 Ray Tune 超参数搜索空间的字典。每个键对应一个超参数名称，其值指定了在调优期间要探索的值的范围。如果未提供，YOLO26 将使用包含各种超参数的默认搜索空间。|   
+`grace_period`| `int, optional`| The grace period in [epochs](https://www.ultralytics.com/glossary/epoch) for the [ASHA scheduler](https://docs.ray.io/en/latest/tune/api/schedulers.html) in Ray Tune. The scheduler will not terminate any trial before this number of epochs, allowing the model to have some minimum training before making a decision on early stopping.| 10  
+`gpu_per_trial`| `int, optional`| 调优期间每个试验分配的 GPU 数量。这有助于管理 GPU 使用率，特别是在多 GPU 环境中。如果未提供，调优器将使用所有可用的 GPU。| `None`  
+`iterations`| `int, optional`| 调优期间要运行的最大试验次数。此参数有助于控制测试的超参数组合总数，确保调优过程不会无限期运行。| 10  
+`search_alg`| `str or Searcher, optional`| 要使用的 Ray Tune 搜索策略。你可以直接传入 Ray 搜索器对象，或使用支持的字符串，如 `optuna`、`hyperopt`、`bayesopt`、`bohb`、`hebo`、`nevergrad`、`zoopt`、`ax` 或 `random`。基于字符串的搜索器会自动使用默认的任务指标和 `mode="max"`。如果未提供，Ray Tune 将回退到其默认的随机搜索策略 `BasicVariantGenerator`。| `None`  
+`**train_args`| `dict, optional`| 在调优期间传递给 `train()` 方法的其他参数。这些参数可以包括训练 epoch 数、[批处理大小](https://www.ultralytics.com/glossary/batch-size) 以及其他训练特定的配置。| {}  
+  
+通过自定义这些参数，你可以根据你的特定需求和可用的计算资源微调超参数优化过程。
+
+## Link to this section默认搜索空间说明#
+
+下表列出了 YOLO26 中使用 Ray Tune 进行超参数调优的默认搜索空间参数。每个参数都有一个由 `tune.uniform()` 定义的特定值范围。
+
+参数| 范围| 描述  
+---|---|---  
+`lr0`| `tune.uniform(1e-5, 1e-2)`| 在优化过程中控制步长的初始学习率。较高的值会加快训练速度，但可能导致不稳定。  
+`lrf`| `tune.uniform(0.01, 1.0)`| 决定训练结束时学习率降低程度的最终学习率因子。  
+`momentum`| `tune.uniform(0.7, 0.98)`| 优化器的动量因子，有助于加速训练并克服局部极小值。  
+`weight_decay`| `tune.uniform(0.0, 0.001)`| 通过惩罚大的权重值来防止过拟合的正则化参数。  
+`warmup_epochs`| `tune.uniform(0.0, 5.0)`| 学习率逐渐增加以稳定早期训练的 epoch 数。  
+`warmup_momentum`| `tune.uniform(0.0, 0.95)`| 在预热期间逐渐增加的初始动量值。  
+`box`| `tune.uniform(1.0, 20.0)`| 边界框损失组件的权重，用于平衡模型中的定位精度。  
+`cls`| `tune.uniform(0.1, 4.0)`| 分类损失组件的权重，用于平衡模型中的类别预测精度。  
+`dfl`| `tune.uniform(0.4, 12.0)`| 分布焦点损失（Distribution Focal Loss）组件的权重，强调精确的边界框定位。  
+`hsv_h`| `tune.uniform(0.0, 0.1)`| 色调增强范围，引入颜色变化以帮助模型泛化。  
+`hsv_s`| `tune.uniform(0.0, 0.9)`| 饱和度增强范围，通过改变颜色强度来提高鲁棒性。  
+`hsv_v`| `tune.uniform(0.0, 0.9)`| 明度增强范围，帮助模型在各种光照条件下表现良好。  
+`degrees`| `tune.uniform(0.0, 45.0)`| 以度为单位的旋转增强范围，提高对旋转物体的识别能力。  
+`translate`| `tune.uniform(0.0, 0.9)`| 平移增强范围，用于在水平和垂直方向上移动图像。  
+`scale`| `tune.uniform(0.0, 0.95)`| 缩放增强范围，用于模拟不同距离处的物体。  
+`shear`| `tune.uniform(0.0, 10.0)`| 以度为单位的剪切增强范围，用于模拟透视位移。  
+`perspective`| `tune.uniform(0.0, 0.001)`| 透视增强范围，用于模拟 3D 视点变化。  
+`flipud`| `tune.uniform(0.0, 1.0)`| 垂直翻转增强概率，增加数据集多样性。  
+`fliplr`| `tune.uniform(0.0, 1.0)`| 水平翻转增强概率，对对称物体很有用。  
+`bgr`| `tune.uniform(0.0, 1.0)`| BGR 通道交换增强概率，有助于颜色不变性。  
+`mosaic`| `tune.uniform(0.0, 1.0)`| 马赛克（Mosaic）增强概率，将四张图像组合成一个训练样本。  
+`mixup`| `tune.uniform(0.0, 1.0)`| 混合（Mixup）增强概率，将两张图像及其标签融合在一起。  
+`cutmix`| `tune.uniform(0.0, 1.0)`| 剪切混合（Cutmix）增强概率，在保持局部特征的同时组合图像区域。  
+`copy_paste`| `tune.uniform(0.0, 1.0)`| 复制粘贴（Copy-paste）增强概率，在图像间传输物体以增加实例多样性。  
+`close_mosaic`| `tune.randint(0, 11)`| 在最后 N 个 epoch 中禁用马赛克增强，以便在完成前稳定训练。  
+  
+## Link to this section自定义搜索空间示例#
+
+在此示例中，我们演示了如何为 Ray Tune 和 YOLO26 的超参数调优使用自定义搜索空间。通过提供自定义搜索空间，你可以将调优过程集中在你感兴趣的特定超参数上。
+
+用法
+    
+    
+    from ray import tune
+    
+    from ultralytics import YOLO
+    
+    # Define a YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Run Ray Tune on the model
+    result_grid = model.tune(
+        data="coco8.yaml",
+        space={"lr0": tune.uniform(1e-5, 1e-2)},
+        epochs=50,
+        use_ray=True,
+    )
+
+在上面的代码片段中，我们创建了一个使用 "yolo26n.pt" 预训练权重的 YOLO 模型。然后，我们调用 `tune()` 方法，指定数据集配置为 "coco8.yaml"。我们为初始学习率 `lr0` 提供了一个自定义搜索空间，即使用一个键为 "lr0"、值为 `tune.uniform(1e-5, 1e-2)` 的字典。最后，我们将额外的训练参数（如 `epochs=50`）直接传递给调优方法。
+
+## Link to this section搜索算法示例#
+
+你可以按名称选择 Ray Tune 搜索策略。对于基于字符串的搜索算法，Ultralytics 将自动使用当前任务的默认优化指标和 `mode="max"`。如果未提供 `search_alg`，Ray Tune 将使用其默认的随机搜索策略 `BasicVariantGenerator`。
+
+在 `model.tune()` 中使用字符串 `search_alg`
+    
+    
+    from ultralytics import YOLO
+    
+    # Define a YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    result_grid = model.tune(
+        data="coco8.yaml",
+        epochs=50,
+        search_alg="optuna",
+        use_ray=True,
+    )
+
+如果你需要自定义搜索器的采样器或覆盖其指标和优化模式，请传递一个已实例化的 Ray Tune 搜索器对象，而不是字符串。
+
+在 `model.tune()` 中使用 `OptunaSearch` 对象
+    
+    
+    from ray.tune.search.optuna import OptunaSearch
+    
+    from ultralytics import YOLO
+    
+    # Define a YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Define a searcher
+    searcher = OptunaSearch(
+        metric="metrics/mAP50-95(B)",
+        mode="max",
+    )
+    
+    result_grid = model.tune(
+        data="coco8.yaml",
+        epochs=50,
+        search_alg=searcher,
+        use_ray=True,
+    )
+
+## Link to this section恢复中断的 Ray Tune 超参数调优会话#
+
+You can resume an interrupted Ray Tune session by passing `resume=True`. You can optionally pass the directory `name` used by Ray Tune under `runs/{task}` to resume. Otherwise, it would resume the last interrupted session. You don't need to provide the `iterations` and `space` again, but you need to provide the rest of the training arguments again including `data` and `epochs`.
+
+在 `model.tune()` 中使用 `resume=True`
+    
+    
+    from ultralytics import YOLO
+    
+    # Define a YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Resume previous run
+    results = model.tune(use_ray=True, data="coco8.yaml", epochs=50, resume=True)
+    
+    # Resume Ray Tune run with name 'tune_exp_2'
+    results = model.tune(use_ray=True, data="coco8.yaml", epochs=50, name="tune_exp_2", resume=True)
+
+## Link to this section处理 Ray Tune 结果#
+
+在使用 Ray Tune 运行超参数调优实验后，你可能希望对获得的结果执行各种分析。本指南将带你了解处理和分析这些结果的常见工作流程。
+
+### Link to this section从目录加载调优实验结果#
+
+使用 `tuner.fit()` 运行调优实验后，你可以从目录加载结果。这非常有用，尤其是当你需要在初始训练脚本退出后进行分析时。
+    
+    
+    experiment_path = f"{storage_path}/{exp_name}"
+    print(f"Loading results from {experiment_path}...")
+    
+    restored_tuner = tune.Tuner.restore(experiment_path, trainable=train_mnist)
+    result_grid = restored_tuner.get_results()
+
+### Link to this section基础实验级分析#
+
+获取试验表现的概览。你可以快速检查试验过程中是否有任何错误。
+    
+    
+    if result_grid.errors:
+        print("One or more trials failed!")
+    else:
+        print("No errors!")
+
+### Link to this section基础试验级分析#
+
+访问单个试验的超参数配置和最后报告的指标。
+    
+    
+    for i, result in enumerate(result_grid):
+        print(f"Trial #{i}: Configuration: {result.config}, Last Reported Metrics: {result.metrics}")
+
+### Link to this section绘制试验报告指标的完整历史记录#
+
+你可以绘制每个试验的报告指标历史记录，以观察指标随时间的变化。
+    
+    
+    import matplotlib.pyplot as plt
+    
+    for i, result in enumerate(result_grid):
+        plt.plot(
+            result.metrics_dataframe["training_iteration"],
+            result.metrics_dataframe["mean_accuracy"],
+            label=f"Trial {i}",
+        )
+    
+    plt.xlabel("Training Iterations")
+    plt.ylabel("Mean Accuracy")
+    plt.legend()
+    plt.show()
+
+## Link to this section总结#
+
+在本指南中，我们介绍了使用 Ultralytics 和 Ray Tune 分析实验结果的常见工作流程。关键步骤包括从目录加载实验结果、执行基础的实验级和试验级分析，以及绘制指标。
+
+通过查看 Ray Tune 的 [Analyze Results](https://docs.ray.io/en/latest/tune/examples/tune_analyze_results.html) 文档页面进行深入探索，以充分利用你的超参数调优实验。
+
+## Link to this section常见问题解答#
+
+### Link to this section如何使用 Ray Tune 调整我的 YOLO26 模型超参数？#
+
+要使用 Ray Tune 调整 Ultralytics YOLO26 模型的超参数，请按照以下步骤操作：
+
+  1. **安装所需的包：**
+         
+         pip install -U ultralytics "ray[tune]"
+         pip install wandb # optional for logging
+
+  2. **加载你的 YOLO26 模型并开始调优：**
+         
+         from ultralytics import YOLO
+         
+         # Load a YOLO26 model
+         model = YOLO("yolo26n.pt")
+         
+         # Start tuning with the COCO8 dataset
+         result_grid = model.tune(data="coco8.yaml", use_ray=True)
+
+
+
+
+这利用了 Ray Tune 的高级搜索策略和并行性来高效优化模型的超参数。有关更多信息，请查看 [Ray Tune 文档](https://docs.ray.io/en/latest/tune/index.html)。
+
+### Link to this section使用 Ray Tune 进行 YOLO26 调优的默认超参数是什么？#
+
+Ultralytics YOLO26 在使用 Ray Tune 进行调优时，使用以下默认超参数：
+
+参数| 数值范围| 描述  
+---|---|---  
+`lr0`| `tune.uniform(1e-5, 1e-2)`| 初始学习率  
+`lrf`| `tune.uniform(0.01, 1.0)`| 最终学习率因子  
+`momentum`| `tune.uniform(0.7, 0.98)`| 动量  
+`weight_decay`| `tune.uniform(0.0, 0.001)`| 权重衰减  
+`warmup_epochs`| `tune.uniform(0.0, 5.0)`| 预热轮数  
+`box`| `tune.uniform(1.0, 20.0)`| 边界框损失权重  
+`cls`| `tune.uniform(0.1, 4.0)`| 类别损失权重  
+`dfl`| `tune.uniform(0.4, 12.0)`| DFL 损失权重  
+`hsv_h`| `tune.uniform(0.0, 0.1)`| 色调增强范围  
+`translate`| `tune.uniform(0.0, 0.9)`| 平移增强范围  
+  
+这些超参数可以根据你的具体需求进行定制。如需完整列表和更多详细信息，请参阅 [Hyperparameter Tuning](/zh/guides/hyperparameter-tuning) 指南。
+
+### Link to this section如何将 Weights & Biases 集成到我的 YOLO26 模型调优中？#
+
+要将 Weights & Biases (W&B) 集成到你的 Ultralytics YOLO26 调优过程中：
+
+  1. **安装 W &B：**
+         
+         pip install wandb
+
+  2. **修改你的调优脚本：**
+         
+         import wandb
+         
+         from ultralytics import YOLO
+         
+         wandb.init(project="YOLO-Tuning", entity="your-entity")
+         
+         # Load YOLO model
+         model = YOLO("yolo26n.pt")
+         
+         # Tune hyperparameters
+         result_grid = model.tune(data="coco8.yaml", use_ray=True)
+
+
+
+
+此设置将允许你监控调优过程、跟踪超参数配置并在 W&B 中可视化结果。
+
+### Link to this section为什么我应该使用 Ray Tune 进行 YOLO26 的超参数优化？#
+
+Ray Tune 为超参数优化提供了诸多优势：
+
+  * **高级搜索策略：** 利用 [Bayesian Optimization](https://www.ultralytics.com/glossary/bayesian-network) 和 HyperOpt 等算法进行高效的参数搜索。
+  * **并行性：** 支持多个试验的并行执行，显著加快调优过程。
+  * **提前停止：** 采用 ASHA 等策略提前终止表现不佳的试验，从而节省计算资源。
+
+
+
+Ray Tune 与 Ultralytics YOLO26 无缝集成，为有效调整超参数提供了易于使用的界面。要开始使用，请查看 [Hyperparameter Tuning](/zh/guides/hyperparameter-tuning) 指南。
+
+### Link to this section如何为 YOLO26 超参数调优定义自定义搜索空间？#
+
+要为使用 Ray Tune 的 YOLO26 超参数调优定义自定义搜索空间：
+    
+    
+    from ray import tune
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    search_space = {"lr0": tune.uniform(1e-5, 1e-2), "momentum": tune.uniform(0.7, 0.98)}
+    result_grid = model.tune(data="coco8.yaml", space=search_space, use_ray=True)
+
+这将自定义在调优过程中探索的超参数范围，例如初始学习率和动量。如需高级配置，请参考 Custom Search Space Example 部分。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/ray-tune.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[Y-Y-T-G2](https://github.com/Y-T-G)[LMlmycross1](https://github.com/lmycross)[RAraimbekovm1](https://github.com/raimbekovm)[ARartzuros1](https://github.com/artzuros)[MAMatthewNoyce1](https://github.com/MatthewNoyce)[RIRizwanMunawar1](https://github.com/RizwanMunawar)[MFmfloto1](https://github.com/mfloto)
+
+已创建 2023年11月12日已更新 上周
+
+## 评论
+
+本页内容
+
+使用 AI 探索

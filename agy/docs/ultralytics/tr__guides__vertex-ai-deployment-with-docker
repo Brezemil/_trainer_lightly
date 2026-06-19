@@ -1,0 +1,598 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/vertex-ai-deployment-with-docker
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/vertex-ai-deployment-with-docker.md)
+
+# Link to this sectionÇıkarım için Vertex AI üzerinde Ultralytics ile eğitilmiş bir YOLO modelini dağıtın#
+
+Bu kılavuz, eğitilmiş bir YOLO26 modelini Ultralytics ile nasıl kapsayıcıya alacağınızı, bunun için bir FastAPI çıkarım sunucusu oluşturacağınızı ve modeli bu çıkarım sunucusuyla Google Cloud Vertex AI üzerinde nasıl dağıtacağınızı gösterecektir. Örnek uygulama, YOLO26 için nesne algılama kullanım örneğini kapsayacaktır, ancak aynı ilkeler [diğer YOLO modlarını](/tr/modes) kullanmak için de geçerli olacaktır.
+
+Başlamadan önce bir Google Cloud Platform (GCP) projesi oluşturmanız gerekecek. Yeni bir kullanıcı olarak ücretsiz kullanabileceğiniz 300 dolarlık GCP kredisi alırsınız ve bu miktar, daha sonra eğitim veya toplu ve akışlı çıkarım dahil olmak üzere diğer tüm YOLO26 kullanım durumları için genişletebileceğiniz çalışan bir kurulumu test etmek için yeterlidir.
+
+## Link to this sectionNeler öğreneceksin#
+
+  1. FastAPI kullanarak Ultralytics YOLO26 modeli için bir çıkarım arka ucu oluştur.
+  2. Docker imajını saklamak için bir GCP Artifact Registry deposu oluştur.
+  3. Modeli içeren Docker imajını derle ve Artifact Registry'ye gönder.
+  4. Modelini Vertex AI içine aktar.
+  5. Bir Vertex AI uç noktası oluştur ve modeli dağıt.
+
+
+
+Neden kapsayıcıya alınmış bir model dağıtmalısın?
+
+  * **Ultralytics ile tam model kontrolü** : Ön işleme, son işleme ve yanıt biçimlendirme üzerinde tam kontrol sağlayarak özel çıkarım mantığını kullanabilirsin.
+  * **Geri kalanını Vertex AI halleder** : Otomatik ölçekleme yapar, ancak bilgi işlem kaynaklarını, belleği ve GPU yapılandırmalarını yapılandırmada esneklik sağlar.
+  * **Yerel GCP entegrasyonları ve güvenlik** : Cloud Storage, BigQuery, Cloud Functions, VPC kontrolleri, IAM politikaları ve denetim günlükleri ile sorunsuz kurulum.
+
+
+
+## Link to this sectionÖn koşullar#
+
+  1. Makinenize [Docker](https://docs.docker.com/engine/install/) yükleyin.
+  2. [Google Cloud SDK](https://docs.cloud.google.com/sdk/docs/install-sdk) yükleyin ve [gcloud CLI kullanımı için kimlik doğrulaması yapın](https://docs.cloud.google.com/sdk/docs/authenticate).
+  3. Bu kılavuzu takip ederken resmi Ultralytics Docker imajlarından birini genişletmeniz gerekeceğinden, [Ultralytics için Docker Hızlı Başlangıç Kılavuzunu](https://docs.ultralytics.com/guides/docker-quickstart) incelemeniz şiddetle tavsiye edilir.
+
+
+
+## Link to this sectionFastAPI ile bir çıkarım arka ucu oluştur#
+
+Öncelikle, YOLO26 modeli çıkarım isteklerine hizmet verecek bir FastAPI uygulaması oluşturman gerekiyor. Bu uygulama, model yükleme, görüntü ön işleme ve çıkarım (tahmin) mantığını yönetecektir.
+
+### Link to this sectionVertex AI Uyumluluk Temelleri#
+
+Vertex AI, kapsayıcınızın iki özel uç noktayı uygulamasını bekler:
+
+  1. **Health** uç noktası (`/health`): Hizmet hazır olduğunda `200 OK` HTTP durumunu döndürmelidir.
+
+  2. **Tahmin** uç noktası (`/predict`): **base64 kodlanmış** görüntüler ve isteğe bağlı parametreler içeren yapılandırılmış tahmin isteklerini kabul eder. Uç nokta türüne bağlı olarak [Yük boyutu sınırları](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/predictions/choose-endpoint-type) geçerlidir.
+
+`/predict` uç noktasına yönelik istek yükleri şu JSON yapısını izlemelidir:
+         
+         {
+             "instances": [{ "image": "base64_encoded_image" }],
+             "parameters": { "confidence": 0.5 }
+         }
+
+
+
+
+### Link to this sectionProje klasör yapısı#
+
+Derlememizin büyük kısmı Docker kapsayıcısı içinde gerçekleşecek ve Ultralytics de eğitilmiş bir YOLO26 modelini yükleyeceğinden, yerel klasör yapısını basit tutabilirsin:
+    
+    
+    YOUR_PROJECT/
+    ├── src/
+    │   ├── __init__.py
+    │   ├── app.py              # Core YOLO26 inference logic
+    │   └── main.py             # FastAPI inference server
+    ├── tests/
+    ├── .env                    # Environment variables for local development
+    ├── Dockerfile              # Container configuration
+    ├── LICENSE                 # AGPL-3.0 License
+    └── pyproject.toml          # Python dependencies and project config
+
+Önemli lisans notu
+
+Ultralytics YOLO26 modelleri ve çerçevesi, önemli uyumluluk gereksinimleri olan AGPL-3.0 kapsamında lisanslanmıştır. [Lisans şartlarına nasıl uyulacağı](/tr/help/contributing#how-to-comply-with-agpl-30) konusundaki Ultralytics belgelerini mutlaka okumalısın.
+
+### Link to this sectionBağımlılıklarla birlikte pyproject.toml oluştur#
+
+Projenizi rahatça yönetmek için aşağıdaki bağımlılıkları içeren bir `pyproject.toml` dosyası oluşturun:
+    
+    
+    [project]
+    name = "YOUR_PROJECT_NAME"
+    version = "0.0.1"
+    description = "YOUR_PROJECT_DESCRIPTION"
+    requires-python = ">=3.10,<3.13"
+    dependencies = [
+       "ultralytics>=8.3.0",
+       "fastapi[all]>=0.89.1",
+       "uvicorn[standard]>=0.20.0",
+       "pillow>=9.0.0",
+    ]
+    
+    [build-system]
+    requires = ["setuptools>=61.0"]
+    build-backend = "setuptools.build_meta"
+
+  * `uvicorn`, FastAPI sunucusunu çalıştırmak için kullanılacaktır.
+  * `pillow`, görüntü işleme için kullanılacaktır, ancak sadece PIL görüntüleriyle sınırlı değilsin; Ultralytics [birçok başka formatı](/tr/modes/predict#inference-sources) da destekler.
+
+
+
+### Link to this sectionUltralytics YOLO26 ile çıkarım mantığı oluştur#
+
+Artık proje yapınız ve bağımlılıklarınız ayarlandığına göre, temel YOLO26 çıkarım mantığını uygulayabilirsiniz. Ultralytics Python API kullanarak model yükleme, görüntü işleme ve tahmini yönetecek bir `src/app.py` dosyası oluşturun.
+    
+    
+    # src/app.py
+    
+    from ultralytics import YOLO
+    
+    # Model initialization and readiness state
+    model_yolo = None
+    _model_ready = False
+    
+    def _initialize_model():
+        """Initialize the YOLO model."""
+        global model_yolo, _model_ready
+    
+        try:
+            # Use pretrained YOLO26n model from Ultralytics base image
+            model_yolo = YOLO("yolo26n.pt")
+            _model_ready = True
+    
+        except Exception as e:
+            print(f"Error initializing YOLO model: {e}")
+            _model_ready = False
+            model_yolo = None
+    
+    # Initialize model on module import
+    _initialize_model()
+    
+    def is_model_ready() -> bool:
+        """Check if the model is ready for inference."""
+        return _model_ready and model_yolo is not None
+
+Bu, model kapsayıcı başladığında bir kez yüklenecek ve model tüm istekler arasında paylaşılacaktır. Modeliniz ağır çıkarım yükünü kaldıracaksa, daha sonraki bir adımda Vertex AI'da model içe aktarırken daha fazla belleğe sahip bir makine türü seçmeniz önerilir.
+
+Ardından, `pillow` ile giriş ve çıkış görüntü işleme için iki yardımcı işlev oluşturun. YOLO26, PIL görüntülerini yerel olarak destekler.
+    
+    
+    def get_image_from_bytes(binary_image: bytes) -> Image.Image:
+        """Convert image from bytes to PIL RGB format."""
+        input_image = Image.open(io.BytesIO(binary_image)).convert("RGB")
+        return input_image
+    
+    
+    def get_bytes_from_image(image: Image.Image) -> bytes:
+        """Convert PIL image to bytes."""
+        return_image = io.BytesIO()
+        image.save(return_image, format="JPEG", quality=85)
+        return_image.seek(0)
+        return return_image.getvalue()
+
+Son olarak, nesne algılamayı yönetecek `run_inference` işlevini uygulayın. Bu örnekte, model tahminlerinden sınırlayıcı kutuları (bounding boxes), sınıf adlarını ve güven puanlarını çıkaracağız. İşlev, daha fazla işleme veya ek açıklama için algılamaları ve ham sonuçları içeren bir sözlük döndürecektir.
+    
+    
+    def run_inference(input_image: Image.Image, confidence_threshold: float = 0.5) -> Dict[str, Any]:
+        """Run inference on an image using YOLO26n model."""
+        global model_yolo
+    
+        # Check if model is ready
+        if not is_model_ready():
+            print("Model not ready for inference")
+            return {"detections": [], "results": None}
+    
+        try:
+            # Make predictions and get raw results
+            results = model_yolo.predict(
+                imgsz=640, source=input_image, conf=confidence_threshold, save=False, augment=False, verbose=False
+            )
+    
+            # Extract detections (bounding boxes, class names, and confidences)
+            detections = []
+            if results and len(results) > 0:
+                result = results[0]
+                if result.boxes is not None and len(result.boxes.xyxy) > 0:
+                    boxes = result.boxes
+    
+                    # Convert tensors to numpy for processing
+                    xyxy = boxes.xyxy.cpu().numpy()
+                    conf = boxes.conf.cpu().numpy()
+                    cls = boxes.cls.cpu().numpy().astype(int)
+    
+                    # Create detection dictionaries
+                    for i in range(len(xyxy)):
+                        detection = {
+                            "xmin": float(xyxy[i][0]),
+                            "ymin": float(xyxy[i][1]),
+                            "xmax": float(xyxy[i][2]),
+                            "ymax": float(xyxy[i][3]),
+                            "confidence": float(conf[i]),
+                            "class": int(cls[i]),
+                            "name": model_yolo.names.get(int(cls[i]), f"class_{int(cls[i])}"),
+                        }
+                        detections.append(detection)
+    
+            return {
+                "detections": detections,
+                "results": results,  # Keep raw results for annotation
+            }
+        except Exception as e:
+            # If there's an error, return empty structure
+            print(f"Error in YOLO detection: {e}")
+            return {"detections": [], "results": None}
+
+İsteğe bağlı olarak, Ultralytics yerleşik çizim yöntemini kullanarak görüntüyü sınırlayıcı kutular ve etiketlerle işaretlemek için bir işlev ekleyebilirsiniz. Bu, tahmin yanıtında işaretli görüntüleri döndürmek isterseniz yararlı olacaktır.
+    
+    
+    def get_annotated_image(results: list) -> Image.Image:
+        """Get annotated image using Ultralytics built-in plot method."""
+        if not results or len(results) == 0:
+            raise ValueError("No results provided for annotation")
+    
+        result = results[0]
+        # Use Ultralytics built-in plot method with PIL output
+        return result.plot(pil=True)
+
+### Link to this sectionFastAPI ile HTTP çıkarım sunucusu oluştur#
+
+Artık temel YOLO26 çıkarım mantığına sahip olduğunuza göre, buna hizmet edecek bir FastAPI uygulaması oluşturabilirsiniz. Bu, Vertex AI tarafından gerekli olan sağlık kontrolü ve tahmin uç noktalarını içerecektir.
+
+Öncelikle içe aktarmaları ekleyin ve Vertex AI için günlüğe kaydetmeyi yapılandırın. Vertex AI, stderr'i hata çıktısı olarak kabul ettiğinden, günlükleri stdout'a yönlendirmek mantıklıdır.
+    
+    
+    import sys
+    
+    from loguru import logger
+    
+    # Configure logger
+    logger.remove()
+    logger.add(
+        sys.stdout,
+        colorize=True,
+        format="<green>{time:HH:mm:ss}</green> | <level>{message}</level>",
+        level=10,
+    )
+    logger.add("log.log", rotation="1 MB", level="DEBUG", compression="zip")
+
+Tam bir Vertex AI uyumluluğu için gerekli uç noktaları ortam değişkenlerinde tanımla ve istekler için boyut sınırını ayarla. Üretim dağıtımları için [özel Vertex AI uç noktalarını](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/predictions/choose-endpoint-type) kullanman önerilir. Bu sayede, daha güçlü güvenlik ve erişim kontrolünün yanı sıra daha yüksek bir istek yükü sınırına (genel uç noktalar için 1,5 MB yerine 10 MB) sahip olursun.
+    
+    
+    # Vertex AI environment variables
+    AIP_HTTP_PORT = int(os.getenv("AIP_HTTP_PORT", "8080"))
+    AIP_HEALTH_ROUTE = os.getenv("AIP_HEALTH_ROUTE", "/health")
+    AIP_PREDICT_ROUTE = os.getenv("AIP_PREDICT_ROUTE", "/predict")
+    
+    # Request size limit (10 MB for private endpoints, 1.5 MB for public)
+    MAX_REQUEST_SIZE = 10 * 1024 * 1024  # 10 MB in bytes
+
+İsteklerinizi ve yanıtlarınızı doğrulamak için iki Pydantic modeli ekleyin:
+    
+    
+    # Pydantic models for request/response
+    class PredictionRequest(BaseModel):
+        instances: list
+        parameters: Optional[Dict[str, Any]] = None
+    
+    class PredictionResponse(BaseModel):
+        predictions: list
+
+Modelinizin hazır olduğunu doğrulamak için sağlık kontrolü uç noktasını ekleyin. **Bu, Vertex AI için önemlidir** , çünkü özel bir sağlık kontrolü olmazsa orkestratörü rastgele soketlere ping atacak ve modelin çıkarım için hazır olup olmadığını belirleyemeyecektir. Kontrolünüz başarı için `200 OK` ve başarısızlık için `503 Service Unavailable` döndürmelidir:
+    
+    
+    # Health check endpoint
+    @app.get(AIP_HEALTH_ROUTE, status_code=status.HTTP_200_OK)
+    def health_check():
+        """Health check endpoint for Vertex AI."""
+        if not is_model_ready():
+            raise HTTPException(status_code=503, detail="Model not ready")
+        return {"status": "healthy"}
+
+Artık çıkarım isteklerini yönetecek tahmin uç noktasını uygulamak için her şeye sahipsiniz. Bir görüntü dosyası kabul edecek, çıkarımı çalıştıracak ve sonuçları döndürecektir. Görüntünün base64 kodlu olması gerektiğini unutmayın, bu da yükün boyutunu %33'e kadar artırır.
+    
+    
+    @app.post(AIP_PREDICT_ROUTE, response_model=PredictionResponse)
+    async def predict(request: PredictionRequest):
+        """Prediction endpoint for Vertex AI."""
+        try:
+            predictions = []
+    
+            for instance in request.instances:
+                if isinstance(instance, dict):
+                    if "image" in instance:
+                        image_data = base64.b64decode(instance["image"])
+                        input_image = get_image_from_bytes(image_data)
+                    else:
+                        raise HTTPException(status_code=400, detail="Instance must contain 'image' field")
+                else:
+                    raise HTTPException(status_code=400, detail="Invalid instance format")
+    
+                # Extract YOLO26 parameters if provided
+                parameters = request.parameters or {}
+                confidence_threshold = parameters.get("confidence", 0.5)
+                return_annotated_image = parameters.get("return_annotated_image", False)
+    
+                # Run inference with YOLO26n model
+                result = run_inference(input_image, confidence_threshold=confidence_threshold)
+                detections_list = result["detections"]
+    
+                # Format predictions for Vertex AI
+                detections = []
+                for detection in detections_list:
+                    formatted_detection = {
+                        "class": detection["name"],
+                        "confidence": detection["confidence"],
+                        "bbox": {
+                            "xmin": detection["xmin"],
+                            "ymin": detection["ymin"],
+                            "xmax": detection["xmax"],
+                            "ymax": detection["ymax"],
+                        },
+                    }
+                    detections.append(formatted_detection)
+    
+                # Build prediction response
+                prediction = {"detections": detections, "detection_count": len(detections)}
+    
+                # Add annotated image if requested and detections exist
+                if (
+                    return_annotated_image
+                    and result["results"]
+                    and result["results"][0].boxes is not None
+                    and len(result["results"][0].boxes) > 0
+                ):
+                    import base64
+    
+                    annotated_image = get_annotated_image(result["results"])
+                    img_bytes = get_bytes_from_image(annotated_image)
+                    prediction["annotated_image"] = base64.b64encode(img_bytes).decode("utf-8")
+    
+                predictions.append(prediction)
+    
+            logger.info(
+                f"Processed {len(request.instances)} instances, found {sum(len(p['detections']) for p in predictions)} total detections"
+            )
+    
+            return PredictionResponse(predictions=predictions)
+    
+        except HTTPException:
+            # Re-raise HTTPException as-is (don't catch and convert to 500)
+            raise
+        except Exception as e:
+            logger.error(f"Prediction error: {e}")
+            raise HTTPException(status_code=500, detail=f"Prediction failed: {e}")
+
+Son olarak, FastAPI sunucusunu çalıştırmak için uygulama giriş noktasını ekleyin.
+    
+    
+    if __name__ == "__main__":
+        import uvicorn
+    
+        logger.info(f"Starting server on port {AIP_HTTP_PORT}")
+        logger.info(f"Health check route: {AIP_HEALTH_ROUTE}")
+        logger.info(f"Predict route: {AIP_PREDICT_ROUTE}")
+        uvicorn.run(app, host="0.0.0.0", port=AIP_HTTP_PORT)
+
+Artık YOLO26 çıkarım isteklerine hizmet edebilen eksiksiz bir FastAPI uygulamanız var. Bağımlılıkları yükleyip sunucuyu, örneğin uv ile çalıştırarak yerel olarak test edebilirsiniz.
+    
+    
+    # Install dependencies
+    uv pip install -e .
+    
+    # Run the FastAPI server directly
+    uv run src/main.py
+
+Sunucuyu test etmek için cURL kullanarak hem `/health` hem de `/predict` uç noktalarını sorgulayabilirsiniz. `tests` klasörüne bir test görüntüsü koyun. Ardından Terminalinizde şu komutları çalıştırın:
+    
+    
+    # Test health endpoint
+    curl http://localhost:8080/health
+    
+    # Test predict endpoint with base64 encoded image
+    curl -X POST -H "Content-Type: application/json" -d "{\"instances\": [{\"image\": \"$(base64 -i tests/test_image.jpg)\"}]}" http://localhost:8080/predict
+
+Algılanan nesneleri içeren bir JSON yanıtı almalısınız. İlk isteğinizde, Ultralytics'in YOLO26 modelini çekmesi ve yüklemesi gerektiğinden kısa bir gecikme bekleyin.
+
+## Link to this sectionUltralytics Docker imajını uygulamanızla genişletin#
+
+Ultralytics, uygulama imajınız için temel olarak kullanabileceğiniz çeşitli Docker imajları sağlar. Docker, Ultralytics'i ve gerekli GPU sürücülerini yükleyecektir.
+
+Ultralytics YOLO modellerinin tüm yeteneklerini kullanmak için GPU çıkarımı için CUDA ile optimize edilmiş imajı seçmelisiniz. Ancak, göreviniz için CPU çıkarımı yeterliyse, sadece CPU imajını seçerek de bilgi işlem kaynaklarından tasarruf edebilirsiniz:
+
+  * [Dockerfile](https://github.com/ultralytics/ultralytics/blob/main/docker/Dockerfile): YOLO26 tek/çoklu GPU eğitimi ve çıkarımı için CUDA ile optimize edilmiş imaj.
+  * [Dockerfile-cpu](https://github.com/ultralytics/ultralytics/blob/main/docker/Dockerfile-cpu): YOLO26 çıkarımı için sadece CPU imajı.
+
+
+
+### Link to this sectionUygulamanız için bir Docker imajı oluşturun#
+
+Projenizin kök dizininde aşağıdaki içeriğe sahip bir `Dockerfile` oluşturun:
+    
+    
+    # Extends official Ultralytics Docker image for YOLO26
+    FROM ultralytics/ultralytics:latest
+    
+    ENV PYTHONUNBUFFERED=1 \
+        PYTHONDONTWRITEBYTECODE=1
+    
+    # Install FastAPI and dependencies
+    RUN uv pip install fastapi[all] uvicorn[standard] loguru
+    
+    WORKDIR /app
+    COPY src/ ./src/
+    COPY pyproject.toml ./
+    
+    # Install the application package
+    RUN uv pip install -e .
+    
+    RUN mkdir -p /app/logs
+    ENV PYTHONPATH=/app/src
+    
+    # Port for Vertex AI
+    EXPOSE 8080
+    
+    # Start the inference server
+    ENTRYPOINT ["python", "src/main.py"]
+
+Örnekte, temel olarak resmi Ultralytics Docker imajı `ultralytics:latest` kullanılmıştır. Bu imaj zaten YOLO26 modelini ve gerekli tüm bağımlılıkları içerir. Sunucunun giriş noktası, FastAPI uygulamasını yerel olarak test etmek için kullandığımızla aynıdır.
+
+### Link to this sectionDocker imajını derleyin ve test edin#
+
+Artık Docker imajını aşağıdaki komutla derleyebilirsiniz:
+    
+    
+    docker build --platform linux/amd64 -t IMAGE_NAME:IMAGE_VERSION .
+
+`IMAGE_NAME` ve `IMAGE_VERSION` değerlerini, örneğin `yolo26-fastapi:0.1` gibi istediğiniz değerlerle değiştirin. Vertex AI üzerinde dağıtım yapıyorsanız imajı `linux/amd64` mimarisi için derlemeniz gerektiğini unutmayın. Apple Silicon Mac veya x86 olmayan başka bir mimaride derleme yapıyorsanız `--platform` parametresinin açıkça ayarlanması gerekir.
+
+İmaj derleme işlemi tamamlandığında, Docker imajını yerel olarak test edebilirsiniz:
+    
+    
+    docker run --platform linux/amd64 -p 8080:8080 IMAGE_NAME:IMAGE_VERSION
+
+Docker kapsayıcınız artık `8080` numaralı bağlantı noktasında bir FastAPI sunucusu çalıştırıyor ve çıkarım isteklerini kabul etmeye hazır. Hem `/health` hem de `/predict` uç noktasını daha önceki cURL komutlarıyla test edebilirsiniz:
+    
+    
+    # Test health endpoint
+    curl http://localhost:8080/health
+    
+    # Test predict endpoint with base64 encoded image
+    curl -X POST -H "Content-Type: application/json" -d "{\"instances\": [{\"image\": \"$(base64 -i tests/test_image.jpg)\"}]}" http://localhost:8080/predict
+
+## Link to this sectionDocker imajını GCP Artifact Registry'ye yükleyin#
+
+Kapsayıcıya aldığınız modeli Vertex AI'da içe aktarmak için Docker imajını Google Cloud Artifact Registry'ye yüklemeniz gerekir. Henüz bir Artifact Registry deponuz yoksa, önce bir tane oluşturmanız gerekecektir.
+
+### Link to this sectionGoogle Cloud Artifact Registry'de bir depo oluşturun#
+
+Google Cloud Console'da [Artifact Registry sayfasını](https://console.cloud.google.com/artifacts) açın. Artifact Registry'yi ilk kez kullanıyorsanız, önce Artifact Registry API'sini etkinleştirmeniz istenebilir.
+
+![Google Cloud Artifact Registry repository creation](https://github.com/lussebullar/temp-image-storage/releases/download/docs/create-artifact-registry-repo.png)
+
+  1. Depo Oluştur (Create Repository) seçeneğini seçin.
+  2. Deponuzun adını girin. İstediğiniz bölgeyi seçin ve özel olarak değiştirmeniz gerekmiyorsa diğer seçenekler için varsayılan ayarları kullanın.
+
+
+
+Not
+
+Bölge seçimi, makinelerin kullanılabilirliğini ve Kurumsal olmayan kullanıcılar için belirli bilgi işlem sınırlamalarını etkileyebilir. Daha fazla bilgiyi resmi Vertex AI belgelerinde bulabilirsin: [Vertex AI kotaları ve sınırları](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/quotas)
+
+  1. Depo oluşturulduktan sonra PROJECT_ID, Konum (Bölge) ve Depo Adı bilgilerinizi gizli anahtar kasanıza veya `.env` dosyanıza kaydedin. Daha sonra Docker imajınızı etiketlemek ve Artifact Registry'ye göndermek için bunlara ihtiyacınız olacak.
+
+
+
+### Link to this sectionDocker'ın Artifact Registry kimlik doğrulamasını yapın#
+
+Docker istemcinizin, az önce oluşturduğunuz Artifact Registry deposu için kimlik doğrulamasını yapın. Terminalinizde aşağıdaki komutu çalıştırın:
+    
+    
+    gcloud auth configure-docker YOUR_REGION-docker.pkg.dev
+
+### Link to this sectionİmajınızı etiketleyin ve Artifact Registry'ye gönderin#
+
+Docker imajını etiketleyin ve Google Artifact Registry'ye gönderin.
+
+İmajlarınız için benzersiz etiketler kullanın
+
+İmajınızı her güncellediğinizde benzersiz etiketler kullanmanız önerilir. Vertex AI dahil olmak üzere çoğu GCP hizmeti, otomatik sürüm oluşturma ve ölçekleme için imaj etiketlerine güvenir, bu nedenle anlamsal sürüm oluşturma veya tarih tabanlı etiketler kullanmak iyi bir uygulamadır.
+
+İmajınızı Artifact Registry depo URL'si ile etiketleyin. Yer tutucuları daha önce kaydettiğiniz değerlerle değiştirin.
+    
+    
+    docker tag IMAGE_NAME:IMAGE_VERSION YOUR_REGION-docker.pkg.dev/YOUR_PROJECT_ID/YOUR_REPOSITORY_NAME/IMAGE_NAME:IMAGE_VERSION
+
+Etiketli imajı Artifact Registry deposuna gönderin.
+    
+    
+    docker push YOUR_REGION-docker.pkg.dev/YOUR_PROJECT_ID/YOUR_REPOSITORY_NAME/IMAGE_NAME:IMAGE_VERSION
+
+İşlemin tamamlanmasını bekleyin. Artık imajı Artifact Registry deponuzda görmelisiniz.
+
+Artifact Registry'deki imajlarla nasıl çalışılacağına dair daha ayrıntılı talimatlar için Artifact Registry belgelerine bakın: [İmajları gönder ve çek](https://docs.cloud.google.com/artifact-registry/docs/docker/pushing-and-pulling).
+
+## Link to this sectionModelini Vertex AI içine aktar#
+
+Az önce gönderdiğiniz Docker imajını kullanarak, artık modeli Vertex AI'ya aktarabilirsiniz.
+
+  1. Google Cloud gezinme menüsünde Vertex AI > Model Registry bölümüne gidin. Alternatif olarak, Google Cloud Console'un üst kısmındaki arama çubuğunda "Vertex AI" araması yapın.
+
+
+
+![Vertex AI Model Registry import interface](https://github.com/lussebullar/temp-image-storage/releases/download/docs/vertex-ai-import.png)
+
+1\. Click Import. 1\. Select Import as a new model. 1\. Select the region. You can choose the same region as your Artifact Registry repository, but your selection should be dictated by the availability of machine types and quotas in your region. 1\. Select Import an existing model container. 
+
+![Vertex AI import model dialog](https://github.com/lussebullar/temp-image-storage/releases/download/docs/import-model.png)
+
+1\. In the Container image field, browse the Artifact Registry repository you created earlier and select the image you just pushed. 1\. Scroll down to the Environment variables section and enter the predict and health endpoints, and the port that you defined in your FastAPI application. 
+
+![Vertex AI environment variables configuration](https://github.com/lussebullar/temp-image-storage/releases/download/docs/predict-health-port.png)
+
+1\. Click Import. Vertex AI will take several minutes to register the model and prepare it for deployment. You will receive an email notification once the import is complete. 
+
+## Link to this sectionBir Vertex AI Uç Noktası oluştur ve modelini dağıt#
+
+Vertex AI'da Uç Noktalar ve Modeller
+
+Vertex AI terminolojisinde **uç noktalar** , çıkarım isteklerini gönderdiğiniz HTTP uç noktalarını temsil ettikleri için **dağıtılan** modelleri ifade ederken, **modeller** Model Registry'de depolanan eğitilmiş ML yapılarıdır.
+
+Bir modeli dağıtmak için Vertex AI'da bir Uç Nokta oluşturmanız gerekir.
+
+  1. Vertex AI gezinme menünüzde Uç Noktalar (Endpoints) bölümüne gidin. Modelinizi içe aktarırken kullandığınız bölgeyi seçin. Oluştur (Create) seçeneğine tıklayın.
+
+
+
+![Vertex AI create endpoint interface](https://github.com/lussebullar/temp-image-storage/releases/download/docs/endpoint-name.png)
+
+1\. Enter the Endpoint name. 1\. For Access, Vertex AI recommends using private Vertex AI endpoints. Apart from security benefits, you get a higher payload limit if you select a private endpoint, however you will need to configure your VPC network and firewall rules to allow access to the endpoint. Refer to the Vertex AI documentation for more instructions on [private endpoints](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/predictions/choose-endpoint-type). 1\. Click Continue. 1\. On the Model settings dialog, select the model you imported earlier. Now you can configure the machine type, memory, and GPU settings for your model. Allow for ample memory if you are expecting high inference loads to ensure there are no I/O bottlenecks for the proper YOLO26 performance. 1\. In Accelerator type, select the GPU type you want to use for inference. If you are not sure which GPU to select, you can start with NVIDIA T4, which is CUDA-supported.
+
+Bölge ve makine türü kotaları
+
+Bazı bölgelerin çok sınırlı bilgi işlem kotalarına sahip olduğunu unutma, bu nedenle bölgende belirli makine türlerini veya GPU'ları seçemeyebilirsin. Eğer bu kritikse, dağıtımının bölgesini daha büyük kotası olan bir bölgeyle değiştir. Daha fazla bilgiyi resmi Vertex AI belgelerinde bulabilirsin: [Vertex AI kotaları ve sınırları](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/quotas).
+
+  1. Makine türü seçildikten sonra Devam'a tıklayabilirsiniz. Bu aşamada, Vertex AI'da model izlemeyi etkinleştirmeyi seçebilirsiniz; bu, modelinizin performansını takip edecek ve davranışına ilişkin bilgiler sağlayacak ekstra bir hizmettir. Bu isteğe bağlıdır ve ek maliyet gerektirir, bu yüzden ihtiyaçlarınıza göre seçin. Oluştur'a tıklayın.
+
+
+
+Vertex AI'ın modeli dağıtması birkaç dakika (bazı bölgelerde 30 dakikaya kadar) sürecektir. Dağıtım tamamlandığında bir e-posta bildirimi alacaksınız.
+
+## Link to this sectionDağıtılan modelini test et#
+
+Dağıtım tamamlandıktan sonra Vertex AI, modelinizi test etmeniz için size örnek bir API arayüzü sağlayacaktır.
+
+Uzaktan çıkarımı test etmek için sağlanan cURL komutunu kullanabilir veya dağıtılan modele istek gönderecek başka bir Python istemci kitaplığı oluşturabilirsiniz. Görüntünüzü `/predict` uç noktasına göndermeden önce base64'e kodlamanız gerektiğini unutmayın.
+
+![Vertex AI endpoint testing with cURL](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/vertex-ai-endpoint-test-curl-yolo11.avif)
+
+İlk istekte kısa bir gecikme bekleyin
+
+Yerel testte olduğu gibi, Ultralytics'in çalışan kapsayıcıda YOLO26 modelini çekmesi ve yüklemesi gerekeceğinden ilk istekte kısa bir gecikme bekleyin.
+
+Google Cloud Vertex AI üzerinde Ultralytics ile eğitilmiş bir YOLO26 modelini başarıyla dağıttın.
+
+## Link to this sectionSSS#
+
+### Link to this sectionUltralytics YOLO modellerini Vertex AI üzerinde Docker olmadan kullanabilir miyim?#
+
+Evet; ancak, önce modeli TensorFlow, Scikit-learn veya XGBoost gibi Vertex AI ile uyumlu bir formata aktarmanız gerekir. Google Cloud, `.pt` modellerini Vertex üzerinde çalıştırma konusunda dönüşüm sürecine dair genel bir bakış sunan bir kılavuz sağlar: [PyTorch modellerini Vertex AI üzerinde çalıştırın](https://cloud.google.com/blog/topics/developers-practitioners/pytorch-google-cloud-how-deploy-pytorch-models-vertex-ai).
+
+Lütfen ortaya çıkan kurulumun yalnızca Vertex AI standart sunum katmanına dayanacağını ve gelişmiş Ultralytics çerçeve özelliklerini desteklemeyeceğini unutmayın. Vertex AI, kapsayıcıya alınmış modelleri tam olarak desteklediğinden ve bunları dağıtım yapılandırmanıza göre otomatik olarak ölçekleyebildiğinden, Ultralytics YOLO modellerinin tüm yeteneklerinden, onları farklı bir formata dönüştürmeye gerek kalmadan yararlanmanızı sağlar.
+
+### Link to this sectionFastAPI, YOLO26 çıkarımı sunmak için neden iyi bir seçimdir?#
+
+FastAPI, çıkarım iş yükleri için yüksek verimlilik sağlar. Asenkron destek, bilgisayarlı görü modelleri sunarken önemli olan ana iş parçacığını engellemeden birden fazla eşzamanlı isteği işlemene olanak tanır.
+
+FastAPI ile otomatik istek/yanıt doğrulaması, üretim çıkarım hizmetlerindeki çalışma zamanı hatalarını azaltır. Bu, özellikle giriş formatı tutarlılığının kritik olduğu nesne algılama API'leri için değerlidir.
+
+FastAPI, çıkarım hattına minimum hesaplama yükü ekleyerek model yürütme ve görüntü işleme görevleri için daha fazla kaynağın kullanılabilir kalmasını sağlar.
+
+FastAPI ayrıca, akışlı çıkarım senaryoları için yararlı olan SSE (Server-Sent Events) özelliğini de destekler.
+
+### Link to this sectionNeden bir bölgeyi bu kadar çok kez seçmem gerekiyor?#
+
+Bu aslında Google Cloud Platform'un, kullandığın her hizmet için bir bölge seçmeni gerektiren bir esneklik özelliğidir. Vertex AI üzerinde konteynerleştirilmiş bir model dağıtma görevi için en önemli bölge seçimin, Model Registry için olandır. Bu, model dağıtımın için makine türlerinin ve kotalarının kullanılabilirliğini belirleyecektir.
+
+Ek olarak, kurulumu genişleteceksen ve tahmin verilerini veya sonuçlarını Cloud Storage veya BigQuery'de depolayacaksan, gecikmeyi en aza indirmek ve veri erişimi için yüksek verimlilik sağlamak adına Model Registry ile aynı bölgeyi kullanman gerekecektir.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/vertex-ai-deployment-with-docker.md)
+
+[GLglenn-jocher10](https://github.com/glenn-jocher)[PDpderrenger1](https://github.com/pderrenger)VIvitali lobanov1
+
+Oluşturulma 29 Tem 2025Güncellenme 6 gün önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

@@ -1,0 +1,233 @@
+---
+source_url: https://docs.ultralytics.com/ru/guides/end2end-detection
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/end2end-detection.md)
+
+# Link to this sectionПонимание сквозного (End-to-End) детектирования в Ultralytics YOLO26#
+
+## Link to this sectionВведение#
+
+Если ты переходишь на [YOLO26](/ru/models/yolo26) с более ранней модели, например [YOLOv8](/ru/models/yolov8) или [YOLO11](/ru/models/yolo11), одно из самых больших изменений, которое ты заметишь, — это удаление [Non-Maximum Suppression](https://www.ultralytics.com/glossary/non-maximum-suppression-nms) (NMS). Традиционные модели YOLO выдают тысячи перекрывающихся предсказаний, для фильтрации которых до финальных результатов требуется отдельный шаг постобработки NMS. Это увеличивает задержку, усложняет графы экспорта и может приводить к нестабильной работе на различных аппаратных платформах.
+
+В YOLO26 используется другой подход. Модель выдает финальные результаты детектирования напрямую — внешняя фильтрация не требуется. Это называется **сквозным (end-to-end)[object detection](https://www.ultralytics.com/glossary/object-detection)**, и эта функция включена по умолчанию во всех моделях YOLO26. В результате ты получаешь более простой конвейер развертывания, меньшую задержку и до **43% более быстрый инференс на CPU**.
+
+В этом руководстве ты узнаешь, что изменилось, нужно ли тебе обновлять свой код, какие форматы экспорта поддерживают сквозной инференс и как плавно перейти со старых моделей YOLO.
+
+Чтобы подробнее ознакомиться с мотивацией этого архитектурного сдвига, читай [блоге Ultralytics о том, почему YOLO26 удаляет NMS](https://www.ultralytics.com/blog/why-ultralytics-yolo26-removes-nms-and-how-that-changes-deployment).
+
+Краткая сводка
+
+  * **Используешь Ultralytics API или CLI?** Изменения не требуются — просто поменяй имя модели на `yolo26n.pt`.
+  * **Используешь собственный код инференса (ONNX Runtime, TensorRT и т. д.)?** Обнови свою постобработку — вывод результатов детектирования теперь имеет вид `(N, 300, 6)` в формате `xyxy`, NMS не требуется. Другие задачи добавляют дополнительные данные (коэффициенты масок, ключевые точки или угол).
+  * **Экспортируешь?** Большинство форматов поддерживают сквозной вывод «из коробки». Однако некоторые форматы (NCNN, RKNN, PaddlePaddle, ExecuTorch, IMX, Edge TPU и QNN) автоматически возвращаются к традиционному выводу из-за ограничений неподдерживаемых операторов (например, `torch.topk`). Рабочие процессы Hailo HEF компилируются из ONNX с помощью скриптов, специфичных для Hailo, поэтому проверь настройки детектора и NMS для своей модели.
+
+
+
+## Link to this sectionКак работает сквозное детектирование#
+
+YOLO26 использует **двухголовую архитектуру** во время [training](/ru/modes/train). Обе «головы» используют общий бэкбон и нек, но выдают результаты разными способами:
+
+Голова| Цель| Результат детектирования| Постобработка  
+---|---|---|---  
+**One-to-One** (по умолчанию)| Сквозной инференс| `(N, 300, 6)`| Только порог уверенности  
+**One-to-Many**|  Традиционный вывод YOLO| `(N, nc + 4, 8400)`| Требует NMS  
+  
+Указанные выше формы предназначены для [detection](/ru/tasks/detect). Другие задачи расширяют вывод one-to-one дополнительными данными для каждого обнаруженного объекта:
+
+Задача| Сквозной вывод| Дополнительные данные  
+---|---|---  
+[Детекция](/ru/tasks/detect)| `(N, 300, 6)`| —  
+[Instance Segmentation](/ru/tasks/segment)| `(N, 300, 6 + nm)` \+ proto `(N, nm, H, W)`| `nm` коэффициенты маски (по умолчанию 32)  
+[Pose](/ru/tasks/pose)| `(N, 300, 57)`| 17 ключевых точек × 3 (x, y, видимость)  
+[OBB](/ru/tasks/obb)| `(N, 300, 7)`| Угол поворота  
+  
+Во время обучения обе головы работают одновременно — голова one-to-many предоставляет более богатый обучающий сигнал, в то время как голова one-to-one учится выдавать чистые, неперекрывающиеся предсказания. Во время [inference](/ru/modes/predict) и [export](/ru/modes/export) по умолчанию активна только **голова one-to-one** , выдающая до 300 обнаружений на изображение в формате `[x1, y1, x2, y2, confidence, class_id]`.
+
+Когда ты вызываешь `model.fuse()`, это сворачивает слои Conv + BatchNorm для более быстрого инференса, а в сквозных моделях также удаляет голову one-to-many, уменьшая размер модели и количество FLOPs. Дополнительные подробности о двухголовой архитектуре смотри на [странице модели YOLO26](/ru/models/yolo26).
+
+## Link to this sectionНужно ли мне менять свой код?#
+
+### Link to this sectionИспользование Ultralytics Python API или CLI#
+
+**Изменения не требуются.** Если ты используешь стандартный [Ultralytics Python API](/ru/usage/python) или [CLI](/ru/usage/cli), всё работает автоматически — [prediction](/ru/modes/predict), [validation](/ru/modes/val) и [export](/ru/modes/export) поддерживают сквозные модели «из коробки».
+
+При использовании Ultralytics API изменения кода не требуются
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Predict — no NMS step, no code changes
+    results = model.predict("image.jpg")
+
+### Link to this sectionИспользование пользовательского кода инференса#
+
+**Да, формат вывода отличается.** Если ты написал собственную логику постобработки для [YOLOv8](/ru/models/yolov8) или [YOLO11](/ru/models/yolo11) (например, при запуске инференса с [ONNX Runtime](/ru/integrations/onnx) или [TensorRT](/ru/integrations/tensorrt)), тебе нужно обновить ее, чтобы она обрабатывала новую форму вывода:
+
+| YOLOv8 / YOLO11| YOLO26 (сквозной)  
+---|---|---  
+**Результат детектирования**| `(N, nc + 4, 8400)`| `(N, 300, 6)`  
+**Формат бокса**| `xywh` (центр x, центр y, ширина, высота)| `xyxy` (верхний левый x, верхний левый y, нижний правый x, нижний правый y)  
+**Раскладка**|  Координаты бокса + баллы классов для каждого анкора| `[x1, y1, x2, y2, conf, class_id]`  
+**Требуется NMS**|  Да| Нет  
+**Постобработка**|  NMS + фильтр уверенности| Только фильтр уверенности  
+  
+Для задач [segmentation](/ru/tasks/segment), [pose](/ru/tasks/pose) и [OBB](/ru/tasks/obb) YOLO26 добавляет специфичные для задачи данные к каждому обнаружению — смотри таблицу выходных форм выше.
+
+Где `N` — [batch size](https://www.ultralytics.com/glossary/batch-size), а `nc` — количество классов (например, 80 для [COCO](/ru/datasets/detect/coco)).
+
+Со сквозными моделями постобработка становится намного проще — например, при использовании [ONNX Runtime](/ru/integrations/onnx):
+    
+    
+    import onnxruntime as ort
+    
+    # Load and run the exported end-to-end model
+    session = ort.InferenceSession("yolo26n.onnx")
+    output = session.run(None, {session.get_inputs()[0].name: input_tensor})
+    
+    # End-to-end output: (batch, 300, 6) → [x1, y1, x2, y2, confidence, class_id]
+    detections = output[0][0]  # first image in batch
+    detections = detections[detections[:, 4] > conf_threshold]  # confidence filter — that's it!
+
+### Link to this sectionПереключение на голову One-to-Many#
+
+Если тебе нужен традиционный формат вывода YOLO (например, для повторного использования существующего кода постобработки на основе NMS), ты можешь переключиться на голову one-to-many в любое время, установив `end2end=False`:
+
+Использование головы one-to-many для традиционного вывода на основе NMS
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Prediction with NMS (traditional behavior)
+    results = model.predict("image.jpg", end2end=False)
+    
+    # Validation with NMS
+    metrics = model.val(data="coco.yaml", end2end=False)
+    
+    # Export without end-to-end
+    model.export(format="onnx", end2end=False)
+
+## Link to this sectionСовместимость форматов экспорта#
+
+Большинство [export formats](/ru/modes/export#export-formats) поддерживают сквозной инференс «из коробки», включая [ONNX](/ru/integrations/onnx), [TensorRT](/ru/integrations/tensorrt), [CoreML](/ru/integrations/coreml), [OpenVINO](/ru/integrations/openvino), [TFLite](/ru/integrations/tflite), [TF.js](/ru/integrations/tfjs) и [MNN](/ru/integrations/mnn).
+
+Следующие форматы **не** поддерживают сквозной режим и автоматически возвращаются к голове one-to-many: [NCNN](/ru/integrations/ncnn), [RKNN](/ru/integrations/rockchip-rknn), [PaddlePaddle](/ru/integrations/paddlepaddle), [ExecuTorch](/ru/integrations/executorch), [IMX](/ru/integrations/sony-imx500), [Edge TPU](/ru/integrations/edge-tpu) и [Qualcomm QNN](/ru/integrations/qnn).
+
+Что происходит, когда сквозной режим не поддерживается
+
+При экспорте в один из этих форматов Ultralytics автоматически переключается на голову one-to-many и записывает предупреждение — ручное вмешательство не требуется. Это означает, что **тебе потребуется NMS в твоем конвейере инференса** для этих форматов, точно так же, как с [YOLOv8](/ru/models/yolov8) или [YOLO11](/ru/models/yolo11).
+
+Для [Hailo HEF](/ru/integrations/hailo) шаг компиляции происходит вне `model.export(format=...)` после экспорта в ONNX. Используй логи Hailo DFC, скрипт модели `.alls` и JSON NMS, которые точно соответствуют твоей модели детектирования; если граф сквозного YOLO26 не поддерживается твоим инструментарием Hailo, экспортируй модель ONNX с `end2end=False` и скомпилируй традиционную голову детектирования.
+
+TensorRT + INT8
+
+[TensorRT](/ru/integrations/tensorrt) поддерживает сквозной режим, но он **автоматически отключается** при экспорте с параметром `int8=True` на TensorRT 10.3.0 в JetPack 6.
+
+## Link to this sectionКомпромиссы между точностью и скоростью#
+
+Сквозное детектирование обеспечивает значительные преимущества при развертывании с минимальным влиянием на [accuracy](https://www.ultralytics.com/glossary/accuracy):
+
+Метрика| Сквозной (по умолчанию)| One-to-Many + NMS (`end2end=False`)  
+---|---|---  
+**Скорость инференса на CPU**|  До **43% быстрее**|  Базовая линия  
+**Влияние на mAP**|  ~0.5 mAP ниже| Соответствует или превышает YOLO11  
+**Постобработка**|  Только фильтр уверенности| Полный конвейер NMS  
+**Сложность развертывания**|  Минимальная| Требует реализации NMS  
+  
+Для большинства реальных приложений разница в ~0.5 [mAP](https://www.ultralytics.com/glossary/mean-average-precision-map) незначительна, особенно если учитывать прирост скорости и простоту. Если максимальная точность является твоим главным приоритетом, ты всегда можешь вернуться к голове one-to-many, используя `end2end=False`.
+
+Смотри [метрики производительности YOLO26](/ru/models/yolo26#performance-metrics) для подробных бенчмарков по всем размерам моделей (n, s, m, l, x).
+
+## Link to this sectionМиграция с YOLOv8 или YOLO11#
+
+Если ты обновляешь существующий проект до YOLO26, вот краткий контрольный список для обеспечения плавного перехода:
+
+  * **Пользователи Ultralytics API / CLI:** Изменения не требуются — просто обнови имя модели на `yolo26n.pt` (или `yolo26n-seg.pt`, `yolo26n-pose.pt`, `yolo26n-obb.pt`)
+  * **Пользовательский код постобработки:** Обнови его для обработки новых форм вывода — `(N, 300, 6)` для детектирования, плюс специфичные для задачи данные для [segmentation](/ru/tasks/segment), [pose](/ru/tasks/pose) и [OBB](/ru/tasks/obb). Также обрати внимание на изменение формата бокса с `xywh` на `xyxy`
+  * **Конвейеры экспорта:** Проверь раздел совместимости форматов выше для своего целевого формата
+  * **TensorRT + INT8:** На JetPack 6 TensorRT 10.3.0 автоматически отключает сквозной режим при `int8=True` — используй другую версию TensorRT для сохранения сквозного режима
+  * **Экспорт в FP16:** Если тебе нужны все выходные данные в FP16, экспортируй с `end2end=False` — смотри [почему output0 остается FP32](/ru/modes/export#why-is-output0-fp32-when-exporting-with-halftrue-and-end2endtrue)
+  * **iOS / CoreML:** Сквозной режим полностью поддерживается. Если тебе нужна поддержка Xcode Preview, используй `end2end=False` с `nms=True`
+  * **Edge-устройства (NCNN, RKNN):** Эти форматы автоматически возвращаются к one-to-many, поэтому включи NMS в свой конвейер на устройстве
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionМожно ли использовать end2end=True и nms=True вместе?#
+
+Нет. Эти опции взаимоисключающие. Если ты установишь `nms=True` для сквозной модели во время [export](/ru/modes/export), она будет автоматически принудительно переведена в `nms=False` с выдачей предупреждения. Сквозная голова уже выполняет фильтрацию дубликатов внутренне, поэтому внешняя NMS не нужна.
+
+Однако `end2end=False` в сочетании с `nms=True` является допустимой конфигурацией — она встраивает традиционную NMS в граф экспорта. Это может быть полезно для экспорта в [CoreML](/ru/integrations/coreml), поскольку позволяет напрямую использовать функцию Preview в Xcode с моделью детектирования.
+
+### Link to this sectionЗа что отвечает параметр max_det в end-to-end моделях?#
+
+Параметр `max_det` (по умолчанию: 300) задает максимальное количество обнаружений, которое «голова» one-to-one может выдать на изображение. Ты можешь настроить его во время инференса или экспорта:
+    
+    
+    model.predict("image.jpg", max_det=100)  # fewer detections, slightly faster
+    model.export(format="onnx", max_det=500)  # more detections for dense scenes
+
+Обрати внимание, что стандартные чекпоинты YOLO26 обучались с `max_det=300`. Хотя ты можешь увеличить это значение, «голова» one-to-one была оптимизирована в процессе обучения для получения до 300 качественных детекций, поэтому обнаружения сверх этого лимита могут быть более низкого качества. Если тебе нужно более 300 детекций на изображение, рассмотри вариант переобучения с более высоким значением `max_det`.
+
+### Link to this sectionМоя экспортированная модель ONNX выдает (1, 300, 6) — это правильно?#
+
+Да, это ожидаемый формат end-to-end вывода для детекции: [batch size](https://www.ultralytics.com/glossary/batch-size) равный 1, до 300 обнаружений, каждое из которых содержит 6 значений `[x1, y1, x2, y2, confidence, class_id]`. Просто отфильтруй по порогу уверенности, и готово — NMS не требуется.
+
+Для других задач форма вывода отличается:
+
+Задача| Форма вывода| Описание  
+---|---|---  
+Детектирование| `(1, 300, 6)`| `[x1, y1, x2, y2, conf, class_id]`  
+Сегментация| `(1, 300, 38)` \+ `(1, 32, 160, 160)`| 6 значений бокса + 32 коэффициента маски, плюс тензор прототипной маски  
+Поза| `(1, 300, 57)`| 6 значений бокса + 17 ключевых точек × 3 (x, y, видимость)  
+OBB| `(1, 300, 7)`| 6 значений бокса + 1 угол поворота  
+  
+### Link to this sectionКак проверить, является ли моя экспортированная модель end-to-end?#
+
+Ты можешь проверить это с помощью Ultralytics Python API или напрямую просмотрев метаданные экспортированной модели ONNX:
+
+Проверка того, является ли модель end-to-end
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.onnx")
+    model.predict(verbose=False)  # run predict to setup predictor first
+    print(model.predictor.model.end2end)  # True if end-to-end is enabled
+
+Альтернативно, проверь форму вывода — end-to-end модели детекции выдают `(1, 300, 6)`, тогда как традиционные модели выдают `(1, nc + 4, 8400)`. Формы вывода для других задач см. в FAQ по форме вывода.
+
+### Link to this sectionПоддерживается ли end-to-end для задач instance segmentation, pose и OBB?#
+
+Да. Варианты задач YOLO26 в стиле детекции — [detection](/ru/tasks/detect), [instance segmentation](/ru/tasks/segment), [pose estimation](/ru/tasks/pose) и [oriented object detection (OBB)](/ru/tasks/obb) — поддерживают end-to-end инференс по умолчанию. Резервный вариант `end2end=False` также доступен для этих задач.
+
+Каждая задача расширяет базовый вывод детекции данными, специфичными для задачи:
+
+Задача| Модель| Сквозной вывод  
+---|---|---  
+Детектирование| `yolo26n.pt`| `(N, 300, 6)`  
+Instance Segmentation| `yolo26n-seg.pt`| `(N, 300, 38)` \+ proto `(N, 32, 160, 160)`  
+Поза| `yolo26n-pose.pt`| `(N, 300, 57)`  
+OBB| `yolo26n-obb.pt`| `(N, 300, 7)`  
+  
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/end2end-detection.md)
+
+[GLglenn-jocher5](https://github.com/glenn-jocher)[AMambitious-octopus1](https://github.com/ambitious-octopus)[RAraimbekovm1](https://github.com/raimbekovm)
+
+Создано 3 месяца назадОбновлено на прошлой неделе
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

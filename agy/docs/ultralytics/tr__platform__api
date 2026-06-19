@@ -1,0 +1,2062 @@
+---
+source_url: https://docs.ultralytics.com/tr/platform/api
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+# Link to this sectionREST API Referansı#
+
+[Ultralytics Platform](https://platform.ultralytics.com), veri setlerine, modellere, eğitime ve dağıtımlara programatik erişim için kapsamlı bir REST API sağlar.
+
+![Ultralytics Platform Api Genel Bakış](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/platform/platform-api-overview.avif)
+
+Hızlı Başlangıç
+    
+    
+    # List your datasets
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+Etkileşimli API Dokümanları
+
+Tam etkileşimli API referansını [Ultralytics Platform API dokümanlarında](https://platform.ultralytics.com/api/docs) keşfet.
+
+## Link to this sectionAPI Genel Bakış#
+
+API, temel platform kaynakları etrafında düzenlenmiştir:
+    
+    
+    graph LR
+        A[API Key] --> B[Datasets]
+        A --> C[Projects]
+        A --> D[Models]
+        A --> E[Deployments]
+        B -->|train on| D
+        C -->|contains| D
+        D -->|deploy to| E
+        D -->|export| F[Exports]
+        B -->|auto-annotate| B
+
+Kaynak| Açıklama| Temel İşlemler  
+---|---|---  
+[Veri Setleri](/tr/platform/data/datasets)| Etiketli görüntü koleksiyonları| CRUD, görüntüler, etiketler, dışa aktarma, sürümler, klonlama  
+[Projeler](/tr/platform/train/projects)| Eğitim çalışma alanları| CRUD, klonlama, simge  
+[Modeller](/tr/platform/train/models)| Eğitilmiş kontrol noktaları| CRUD, tahmin, indirme, klonlama, dışa aktarma  
+[Dağıtımlar](/tr/platform/deploy/endpoints)| Özel çıkarım uç noktaları| CRUD, başlatma/durdurma, metrikler, günlükler, sağlık durumu  
+[Dışa Aktarmalar](/tr/platform/train/models#export-model)| Format dönüştürme işleri| Oluşturma, durum, indirme  
+[Eğitim](/tr/platform/train/cloud-training)| Bulut GPU eğitim işleri| Başlatma, durum, iptal  
+[Faturalandırma](/tr/platform/account/billing)| Krediler ve abonelikler| Bakiye, bakiye yükleme, ödeme yöntemleri  
+[Takımlar](/tr/platform/account/teams)| Çalışma alanı iş birliği| Üyeler, davetler, roller  
+  
+## Link to this sectionKimlik Doğrulama#
+
+Veri setleri, projeler, modeller, eğitim, dışa aktarmalar ve tahminler gibi kaynak API'leri API anahtarı kimlik doğrulaması kullanır. Halka açık uç noktalar (halka açık veri setlerini, projeleri ve modelleri listeleme), anahtar gerektirmeden anonim okuma erişimini destekler. Hesap odaklı rotalar (aktivite, ayarlar, takımlar, faturalandırma ve GDPR süreçleri dahil), şu anda kimliği doğrulanmış bir tarayıcı oturumu gerektirir ve API anahtarı ile kullanılamaz.
+
+### Link to this sectionAPI Anahtarı Al#
+
+  1. `Settings` > `API Keys` yolunu izle
+  2. `Create Key` düğmesine tıkla
+  3. Oluşturulan anahtarı kopyala
+
+
+
+Detaylı talimatlar için [API Anahtarları](/tr/platform/account/api-keys) bölümüne bak.
+
+### Link to this sectionYetkilendirme Başlığı#
+
+API anahtarını tüm isteklerine dahil et:
+    
+    
+    Authorization: Bearer YOUR_API_KEY
+
+API Anahtarı Formatı
+
+API anahtarları `ul_` ve ardından gelen 40 onaltılık karakterden oluşan bir format kullanır. Anahtarını gizli tut; asla sürüm kontrolüne yükleme veya halka açık şekilde paylaşma.
+
+### Link to this sectionÖrnek#
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+## Link to this sectionTemel URL#
+
+Tüm API uç noktaları şunu kullanır:
+
+`https://platform.ultralytics.com/api `
+
+## Link to this sectionHız Sınırları#
+
+API, kötüye kullanımı önlemek ve meşru kullanımı kısıtlamadan korumak için API anahtarı başına hız sınırları (kayan pencere, Upstash Redis destekli) uygular. Anonim trafik ayrıca Vercel'in platform seviyesindeki kötüye kullanım kontrolleri ile korunur.
+
+Hız sınırına ulaşıldığında, API `429` kodu ve yeniden deneme meta verileri döner:
+    
+    
+    Retry-After: 12
+    X-RateLimit-Reset: 2026-02-21T12:34:56.000Z
+
+### Link to this sectionAPI Anahtarı Başına Sınırlar#
+
+Hız sınırları, çağrılan uç noktaya bağlı olarak otomatik uygulanır. Maliyetli işlemler, kötüye kullanımı önlemek için daha sıkı sınırlara sahiptir, standart CRUD işlemleri ise cömert bir varsayılan paylaşır:
+
+Uç Nokta| Sınır| Uygulanan  
+---|---|---  
+**Varsayılan**|  100 istek/dk| Aşağıda listelenmeyen tüm uç noktalar (listeleme, alma, oluşturma, güncelleme, silme)  
+**Eğitim**|  10 istek/dk| Bulut eğitim işlerini başlatma (`POST /api/training/start`)  
+**Yükleme**|  10 istek/dk| Dosya yüklemeleri, imzalı URL'ler ve veri seti alımı  
+**Tahmin**|  20 istek/dk| Paylaşımlı model çıkarımı (`POST /api/models/{id}/predict`)  
+**Dışa Aktar**|  20 istek/dk| Model format dışa aktarmaları (`POST /api/exports`), veri seti NDJSON dışa aktarmaları ve sürüm oluşturma  
+**İndirme**|  30 istek/dk| Model ağırlık dosyası indirmeleri (`GET /api/models/{id}/files`)  
+**Özel**| **Sınırsız**| [Özel uç noktalar](/tr/platform/deploy/endpoints) — kendi hizmetin, API sınırı yok  
+  
+Her kategorinin API anahtarı başına bağımsız bir sayacı vardır. Örneğin, 20 tahmin isteği yapmak, 100 istek/dk varsayılan hakkını etkilemez.
+
+### Link to this sectionÖzel Uç Noktalar (Sınırsız)#
+
+[Özel uç noktalar](/tr/platform/deploy/endpoints) **API anahtarı hız sınırlarına tabi değildir**. Bir modeli özel bir uç noktaya dağıttığında, o uç nokta URL'sine yapılan istekler (örneğin `https://predict-abc123.run.app/predict`), Platform'dan hız sınırlaması olmaksızın doğrudan senin özel hizmetine gider. İşlem gücü için ödeme yaptığın için, paylaşımlı API sınırları yerine özel hizmet yapılandırmandan elde ettiğin işlem hızını kullanırsın.
+
+Hız Sınırlarını Yönetme
+
+`429` durum kodu aldığında, yeniden denemeden önce `Retry-After` süresinin (veya `X-RateLimit-Reset` zamanına kadar) geçmesini bekle. Üstel geri çekilme (exponential backoff) uygulaması için hız sınırı SSS bölümüne bak.
+
+## Link to this sectionYanıt Formatı#
+
+### Link to this sectionBaşarılı Yanıtlar#
+
+Yanıtlar, kaynağa özel alanlar içeren JSON döner:
+    
+    
+    {
+        "datasets": [...],
+        "total": 100
+    }
+
+### Link to this sectionHata Yanıtları#
+    
+    
+    {
+        "error": "Dataset not found"
+    }
+
+HTTP Durumu| Anlamı  
+---|---  
+`200`| Başarılı  
+`201`| Oluşturuldu  
+`400`| Geçersiz istek  
+`401`| Kimlik doğrulama gerekli  
+`403`| Yetersiz izinler  
+`404`| Kaynak bulunamadı  
+`409`| Çakışma (kopya)  
+`429`| İstek limiti aşıldı  
+`500`| Sunucu hatası  
+  
+* * *
+
+## Link to this sectionVeri Kümeleri API'si#
+
+YOLO modellerini eğitmek için etiketli görüntü veri kümeleri oluştur, göz at ve yönet. [Veri Kümeleri belgelerine](/tr/platform/data/datasets) göz at.
+
+### Link to this sectionVeri Kümelerini Listele#
+    
+    
+    GET /api/datasets
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`username`| dize| Kullanıcı adına göre filtrele  
+`slug`| dize| Kısa ada göre tek bir veri kümesi getir  
+`limit`| tamsayı| Sayfa başına öğe sayısı (varsayılan: 1000, maksimum: 1000)  
+`owner`| dize| Çalışma alanı sahibi kullanıcı adı  
+      
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=10"
+
+**Yanıt:**
+    
+    
+    {
+        "datasets": [
+            {
+                "_id": "dataset_abc123",
+                "name": "my-dataset",
+                "slug": "my-dataset",
+                "task": "detect",
+                "imageCount": 1000,
+                "classCount": 10,
+                "classNames": ["person", "car"],
+                "visibility": "private",
+                "username": "johndoe",
+                "starCount": 3,
+                "isStarred": false,
+                "sampleImages": [
+                    {
+                        "url": "https://storage.example.com/...",
+                        "width": 1920,
+                        "height": 1080,
+                        "labels": [{ "classId": 0, "bbox": [0.5, 0.4, 0.3, 0.6] }]
+                    }
+                ],
+                "createdAt": "2024-01-15T10:00:00Z",
+                "updatedAt": "2024-01-16T08:30:00Z"
+            }
+        ],
+        "total": 1,
+        "region": "us"
+    }
+
+### Link to this sectionVeri Kümesini Getir#
+    
+    
+    GET /api/datasets/{datasetId}
+
+Meta veriler, sınıf adları ve bölme sayıları dahil olmak üzere tüm veri kümesi ayrıntılarını döndürür.
+
+### Link to this sectionVeri Kümesi Oluştur#
+    
+    
+    POST /api/datasets
+
+**Gövde:**
+    
+    
+    {
+        "slug": "my-dataset",
+        "name": "My Dataset",
+        "task": "detect",
+        "description": "A custom detection dataset",
+        "visibility": "private",
+        "classNames": ["person", "car"]
+    }
+
+Desteklenen Görevler
+
+Geçerli `task` değerleri: `detect`, `segment`, `semantic`, `classify`, `pose`, `obb`.
+
+### Link to this sectionVeri Kümesini Güncelle#
+    
+    
+    PATCH /api/datasets/{datasetId}
+
+**Gövde (kısmi güncelleme):**
+    
+    
+    {
+        "name": "Updated Name",
+        "description": "New description",
+        "visibility": "public"
+    }
+
+### Link to this sectionVeri Kümesi Simgesi#
+
+Bir veri kümesi simgesi yükle (görüntü dosyası ile multipart form):
+    
+    
+    POST /api/datasets/{datasetId}/icon
+
+Veri kümesi simgesini kaldır:
+    
+    
+    DELETE /api/datasets/{datasetId}/icon
+
+Her ikisi de aktif bir platform tarayıcı oturumu gerektirir — API anahtarı ile kullanılamaz.
+
+### Link to this sectionVeri Kümesini Sil#
+    
+    
+    DELETE /api/datasets/{datasetId}
+
+Veri kümesini yumuşak siler ( [çöp kutusuna](/tr/platform/account/trash) taşınır, 30 gün boyunca geri alınabilir).
+
+### Link to this sectionVeri Kümesini Kopyala#
+    
+    
+    POST /api/datasets/{datasetId}/clone
+
+Tüm görüntüleri ve etiketleri ile birlikte veri kümesinin bir kopyasını oluşturur. Yalnızca herkese açık, sahip olunan veya düzenlenebilir çalışma alanı veri kümeleri klonlanabilir. Aktif bir platform tarayıcı oturumu gerektirir; API key ile kullanılamaz.
+
+**Gövde (tüm alanlar isteğe bağlıdır):**
+    
+    
+    {
+        "name": "cloned-dataset",
+        "description": "My cloned dataset",
+        "visibility": "private",
+        "owner": "team-username"
+    }
+
+### Link to this sectionVeri Kümesini Dışa Aktar#
+    
+    
+    GET /api/datasets/{datasetId}/export
+
+En son veri kümesi dışa aktarımı için imzalı bir indirme URL'si içeren bir JSON yanıtı döndürür.
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`v`| tamsayı| Sürüm numarası (1'den başlar). Atlanırsa, en son (önbelleğe alınmamış) dışa aktarımı döndürür.  
+  
+**Yanıt:**
+    
+    
+    {
+        "downloadUrl": "https://storage.example.com/export.ndjson?signed=...",
+        "cached": true
+    }
+
+### Link to this sectionVeri Kümesi Sürümü Oluştur#
+    
+    
+    POST /api/datasets/{datasetId}/export
+
+Veri kümesinin numaralandırılmış yeni bir sürüm anlık görüntüsünü oluştur. Yalnızca sahibi tarafından yapılabilir. Sürüm; mevcut görüntü sayısını, sınıf sayısını, açıklama sayısını ve bölme dağılımını yakalar, ardından değiştirilemez bir NDJSON dışa aktarımı oluşturur ve depolar.
+
+**İstek Gövdesi:**
+    
+    
+    {
+        "description": "Added 500 training images"
+    }
+
+Tüm alanlar isteğe bağlıdır. `description` alanı, kullanıcı tarafından sağlanan bir sürüm etiketidir.
+
+**Yanıt:**
+    
+    
+    {
+        "version": 3,
+        "downloadUrl": "https://storage.example.com/v3.ndjson?signed=..."
+    }
+
+### Link to this sectionSürüm Açıklamasını Güncelle#
+    
+    
+    PATCH /api/datasets/{datasetId}/export
+
+Mevcut bir sürümün açıklamasını güncelle. Yalnızca sahibi tarafından yapılabilir.
+
+**İstek Gövdesi:**
+    
+    
+    {
+        "version": 2,
+        "description": "Fixed mislabeled classes"
+    }
+
+**Yanıt:**
+    
+    
+    {
+        "ok": true
+    }
+
+### Link to this sectionSınıf İstatistiklerini Getir#
+    
+    
+    GET /api/datasets/{datasetId}/class-stats
+
+Sınıf dağılımını, konum ısı haritasını ve boyut istatistiklerini döndürür. Sonuçlar 5 dakikaya kadar önbelleğe alınır.
+
+**Yanıt:**
+    
+    
+    {
+        "classes": [{ "classId": 0, "count": 1500, "imageCount": 450 }],
+        "imageStats": {
+            "widthHistogram": [{ "bin": 640, "count": 120 }],
+            "heightHistogram": [{ "bin": 480, "count": 95 }],
+            "pointsHistogram": [{ "bin": 4, "count": 200 }]
+        },
+        "locationHeatmap": {
+            "bins": [
+                [5, 10],
+                [8, 3]
+            ],
+            "maxCount": 50
+        },
+        "dimensionHeatmap": {
+            "bins": [
+                [2, 5],
+                [3, 1]
+            ],
+            "maxCount": 12,
+            "minWidth": 10,
+            "maxWidth": 1920,
+            "minHeight": 10,
+            "maxHeight": 1080
+        },
+        "classNames": ["person", "car", "dog"],
+        "cached": true,
+        "sampled": false,
+        "sampleSize": 1000
+    }
+
+### Link to this sectionSınıfları Yönet#
+
+Sınıfları birleştir (ek açıklamaları kaynak sınıflardan hedef sınıfa yeniden ata, ardından kaynakları kaldır):
+    
+    
+    POST /api/datasets/{datasetId}/classes/merge
+
+Sınıfları sil:
+    
+    
+    POST /api/datasets/{datasetId}/classes/delete
+
+### Link to this sectionBölümleri Yeniden Dağıt#
+    
+    
+    POST /api/datasets/{datasetId}/splits/redistribute
+
+Görüntüleri train/val/test bölümleri arasında yeniden ata. Her üçü de aktif bir platform tarayıcı oturumu gerektirir; API key ile kullanılamaz.
+
+### Link to this sectionVeri Kümesi Gömülüleri (Embeddings)#
+    
+    
+    GET /api/datasets/{datasetId}/embeddings
+    POST /api/datasets/{datasetId}/embeddings
+    DELETE /api/datasets/{datasetId}/embeddings
+
+GET, mevcut UMAP analiz özetini ve aktif iş durumunu döndürür; POST bir gömülü analiz işini sıraya alır; DELETE aktif işi iptal eder.
+
+### Link to this sectionGörüntü Kümeleme#
+    
+    
+    GET /api/datasets/{datasetId}/images/clustering
+
+Kümeleme dağılım görünümü için UMAP 2D düzenini ve görüntü başına meta verileri döndürür (sayfalandırılmış ve hız sınırlamalı).
+
+### Link to this sectionVeri Kümesinde Eğitilen Modelleri Getir#
+    
+    
+    GET /api/datasets/{datasetId}/models
+
+Bu veri kümesi kullanılarak eğitilen modelleri döndürür.
+
+**Yanıt:**
+    
+    
+    {
+        "models": [
+            {
+                "_id": "model_abc123",
+                "name": "experiment-1",
+                "slug": "experiment-1",
+                "status": "completed",
+                "task": "detect",
+                "epochs": 100,
+                "bestEpoch": 87,
+                "projectId": "project_xyz",
+                "projectSlug": "my-project",
+                "projectIconColor": "#3b82f6",
+                "projectIconLetter": "M",
+                "username": "johndoe",
+                "startedAt": "2024-01-14T22:00:00Z",
+                "completedAt": "2024-01-15T10:00:00Z",
+                "createdAt": "2024-01-14T21:55:00Z",
+                "metrics": {
+                    "mAP50": 0.85,
+                    "mAP50-95": 0.72,
+                    "precision": 0.88,
+                    "recall": 0.81
+                }
+            }
+        ],
+        "count": 1
+    }
+
+### Link to this sectionVeri Kümesini Otomatik Etiketle#
+    
+    
+    POST /api/datasets/{datasetId}/predict
+
+Açıklamaları otomatik olarak oluşturmak için veri kümesi görüntülerinde YOLO çıkarımı çalıştır. Etiketlenmemiş görüntüler için etiketleri tahmin etmek üzere seçili bir model kullanır.
+
+**Gövde:**
+
+Alan| Tip| Gerekli| Açıklama  
+---|---|---|---  
+`imageHash`| dize| Evet| Etiketlenecek görüntünün karması  
+`modelId`| dize| Hayır| Model to use for inference, as a `ul://` URI (e.g. `ul://username/project/model`). If omitted, the dataset's task-specific default model is used.  
+`confidence`| kayan nokta| Hayır| Güven eşiği (varsayılan: 0.25)  
+`iou`| kayan nokta| Hayır| IoU eşiği (varsayılan: 0.7)  
+  
+### Link to this sectionVeri Kümesi Alımı#
+    
+    
+    POST /api/datasets/ingest
+
+Görüntüler ve etiketler içeren `.tar.gz` ve `.tgz` dahil olmak üzere yüklenen ZIP veya TAR dosyalarını işlemek için bir veri kümesi alım işi oluştur.
+
+İstek gövdesi, `sessionId` (yüklenmiş bir arşivin yükleme oturumu) veya `sourceUrl` (uzak bir ZIP, TAR, TAR.GZ, TGZ veya NDJSON URL'si) seçeneklerinden tam olarak birini ve arşivin bölüm yapısını geçersiz kılmak için isteğe bağlı `targetSplit` (`train`, `val` veya `test`) parametresini alır.
+    
+    
+    graph LR
+        A[Upload Archive] --> B[POST /api/datasets/ingest]
+        B --> C[Process Archive]
+        C --> D[Extract images]
+        C --> E[Parse labels]
+        C --> F[Generate thumbnails]
+        D & E & F --> G[Dataset ready]
+
+### Link to this sectionVeri Kümesi Görüntüleri#
+
+#### Link to this sectionGörüntüleri Listele#
+    
+    
+    GET /api/datasets/{datasetId}/images
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`split`| dize| Bölmeye göre filtrele: `train`, `val`, `test`  
+`offset`| tamsayı| Sayfalama ofseti (varsayılan: 0)  
+`limit`| tamsayı| Sayfa başına öğe sayısı (varsayılan: 50, maksimum: 5000)  
+`sort`| dize| Sıralama düzeni: `newest`, `oldest`, `name-asc`, `name-desc`, `height-asc`, `height-desc`, `width-asc`, `width-desc`, `size-asc`, `size-desc`, `labels-asc`, `labels-desc` (100 binden fazla görüntü içeren veri kümeleri için bazıları devre dışıdır)  
+`hasLabel`| dize| Etiket durumuna göre filtrele (`true` veya `false`)  
+`hasError`| dize| Hata durumuna göre filtrele (`true` veya `false`)  
+`search`| dize| Dosya adına veya görüntü karmasına göre ara  
+`classIds`| dize| Virgülle ayrılmış sınıf kimlikleri; belirtilen sınıflardan herhangi birini içeren görüntüleri döndürür  
+`includeThumbnails`| dize| İmzalı küçük resim URL'lerini dahil et (varsayılan: `true`)  
+`includeImageUrls`| dize| İmzalı tam görüntü URL'lerini dahil et (varsayılan: `false`)  
+  
+#### Link to this sectionİmzalı Görüntü URL'lerini Getir#
+    
+    
+    POST /api/datasets/{datasetId}/images/urls
+
+(Tarayıcıda görüntülemek için) bir dizi görüntü karması için imzalı URL'leri al.
+
+#### Link to this sectionGörüntüyü Sil#
+    
+    
+    DELETE /api/datasets/{datasetId}/images/{hash}
+
+#### Link to this sectionGörüntü Etiketlerini Getir#
+    
+    
+    GET /api/datasets/{datasetId}/images/{hash}/labels
+
+Belirli bir görüntü için açıklamaları ve sınıf adlarını döndürür.
+
+#### Link to this sectionGörüntü Etiketlerini Güncelle#
+    
+    
+    PUT /api/datasets/{datasetId}/images/{hash}/labels
+
+**Gövde:**
+    
+    
+    {
+        "labels": [
+            { "classId": 0, "bbox": [0.5, 0.5, 0.2, 0.3] },
+            { "classId": 1, "segments": [0.1, 0.2, 0.3, 0.2, 0.2, 0.4] }
+        ]
+    }
+
+Koordinat Biçimi
+
+Etiket koordinatları 0 ile 1 arasında YOLO normalize değerlerini kullanır. Sınırlayıcı kutular `[x_center, y_center, width, height]` kullanır. Segmentasyon etiketleri, çokgen köşe noktalarının düzleştirilmiş bir listesi olan `segments` kullanır: `[x1, y1, x2, y2, ...]`.
+
+#### Link to this sectionToplu Görüntü İşlemleri#
+
+Görüntüleri bir veri kümesi içindeki bölmeler (train/val/test) arasında taşı:
+    
+    
+    PATCH /api/datasets/{datasetId}/images/bulk
+
+Görüntüleri toplu sil:
+    
+    
+    DELETE /api/datasets/{datasetId}/images/bulk
+
+* * *
+
+## Link to this sectionProjeler API'si#
+
+Modellerini projeler halinde düzenle. Her model bir projeye aittir. [Projeler belgelerine](/tr/platform/train/projects) göz at.
+
+### Link to this sectionProjeleri Listele#
+    
+    
+    GET /api/projects
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`username`| dize| Kullanıcı adına göre filtrele  
+`limit`| tamsayı| Sayfa başına öğe sayısı  
+`owner`| dize| Çalışma alanı sahibi kullanıcı adı  
+  
+### Link to this sectionProjeyi Getir#
+    
+    
+    GET /api/projects/{projectId}
+
+### Link to this sectionProje Oluştur#
+    
+    
+    POST /api/projects
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"name": "my-project", "slug": "my-project", "description": "Detection experiments"}' \
+      https://platform.ultralytics.com/api/projects
+
+### Link to this sectionProjeyi Güncelle#
+    
+    
+    PATCH /api/projects/{projectId}
+
+### Link to this sectionProjeyi Sil#
+    
+    
+    DELETE /api/projects/{projectId}
+
+Projeyi yumuşak siler ( [çöp kutusuna](/tr/platform/account/trash) taşınır).
+
+### Link to this sectionProjeyi Kopyala#
+    
+    
+    POST /api/projects/{projectId}/clone
+
+Herkese açık bir projeyi (tüm modelleriyle birlikte) çalışma alanına kopyalar. Etkin bir platform tarayıcı oturumu gerektirir — API anahtarı aracılığıyla kullanılamaz.
+
+### Link to this sectionProje Simgesi#
+
+Bir proje simgesi yükle (görüntü dosyası ile çok parçalı form):
+    
+    
+    POST /api/projects/{projectId}/icon
+
+Proje simgesini kaldır:
+    
+    
+    DELETE /api/projects/{projectId}/icon
+
+Her ikisi de aktif bir platform tarayıcı oturumu gerektirir — API anahtarı ile kullanılamaz.
+
+* * *
+
+## Link to this sectionModeller API'si#
+
+Eğitilmiş YOLO modellerini yönet; metrikleri görüntüle, ağırlıkları indir, çıkarım çalıştır ve diğer formatlara aktar. [Modeller dokümantasyonuna](/tr/platform/train/models) göz at.
+
+### Link to this sectionModelleri Listele#
+    
+    
+    GET /api/models
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Gerekli| Açıklama  
+---|---|---|---  
+`projectId`| dize| Evet| Proje Kimliği (gerekli)  
+`fields`| dize| Hayır| Alan seti: `summary`, `charts`  
+`ids`| dize| Hayır| Virgülle ayrılmış model kimlikleri  
+`limit`| tamsayı| Hayır| Maksimum sonuç (varsayılan 20, maks 100)  
+  
+### Link to this sectionTamamlanan Modelleri Listele#
+    
+    
+    GET /api/models/completed
+
+Eğitimi tamamlanmış modelleri döndürür (model seçicilerde ve dağıtımda kullanım için).
+
+### Link to this sectionModeli Getir#
+    
+    
+    GET /api/models/{modelId}
+
+### Link to this sectionModel Oluştur#
+    
+    
+    POST /api/models
+
+**JSON Gövdesi:**
+
+Alan| Tip| Gerekli| Açıklama  
+---|---|---|---  
+`projectId`| dize| Evet| Hedef proje kimliği  
+`slug`| dize| Hayır| URL uzantısı (küçük harf alfasayısal/tire)  
+`name`| dize| Hayır| Görünen ad (maks 100 karakter)  
+`description`| dize| Hayır| Model açıklaması (maks 1000 karakter)  
+`task`| dize| Hayır| Görev türü (detect, segment, semantic, pose, obb, classify)  
+  
+Model Dosyası Yükleme
+
+Model `.pt` dosyası yüklemeleri ayrı ele alınır. Model dosyalarını bir projeye sürükleyip bırakmak için platform arayüzünü kullan.
+
+### Link to this sectionModeli Güncelle#
+    
+    
+    PATCH /api/models/{modelId}
+
+### Link to this sectionModeli Sil#
+    
+    
+    DELETE /api/models/{modelId}
+
+### Link to this sectionModel Dosyalarını İndir#
+    
+    
+    GET /api/models/{modelId}/files
+
+Model dosyaları için imzalı indirme URL'leri döndürür.
+
+### Link to this sectionModeli Kopyala#
+    
+    
+    POST /api/models/{modelId}/clone
+
+Genel bir modeli projelerinden birine kopyala. Aktif bir platform tarayıcı oturumu gerektirir — API anahtarı ile kullanılamaz.
+
+**Gövde:**
+    
+    
+    {
+        "targetProjectSlug": "my-project",
+        "modelName": "cloned-model",
+        "description": "Cloned from public model",
+        "owner": "team-username"
+    }
+
+Alan| Tip| Gerekli| Açıklama  
+---|---|---|---  
+`targetProjectSlug`| dize| Evet| Hedef proje uzantısı  
+`modelName`| dize| Hayır| Kopyalanan model için ad  
+`description`| dize| Hayır| Model açıklaması  
+`owner`| dize| Hayır| Ekip kullanıcı adı (çalışma alanı kopyalama için)  
+  
+### Link to this sectionİndirmeyi İzle#
+    
+    
+    POST /api/models/{modelId}/track-download
+
+Model indirme analizlerini izle.
+
+### Link to this sectionÇıkarımı Çalıştır.#
+    
+    
+    POST /api/models/{modelId}/predict
+
+**Çok Parçalı Form:**
+
+Alan| Tip| Açıklama  
+---|---|---  
+`file`| dosya| Görüntü veya video dosyası (örneğin JPG, PNG, WebP, BMP, TIFF; MP4, MOV, AVI)  
+`conf`| kayan nokta| Güven eşiği (varsayılan: 0.25)  
+`iou`| kayan nokta| IoU eşiği (varsayılan: 0.7)  
+`imgsz`| tamsayı| Piksel cinsinden görüntü boyutu (varsayılan: 640)  
+`source`| dize| Görüntü URL'si veya base64 kodlu görüntü (`file` parametresine alternatif)  
+  
+Maksimum yükleme boyutu 100 MB'tır.
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -F "file=@image.jpg" \
+      -F "conf=0.5" \
+      https://platform.ultralytics.com/api/models/MODEL_ID/predict
+
+**Yanıt:**
+    
+    
+    {
+        "images": [
+            {
+                "shape": [1080, 1920],
+                "results": [
+                    {
+                        "class": 0,
+                        "name": "person",
+                        "confidence": 0.92,
+                        "box": { "x1": 100, "y1": 50, "x2": 300, "y2": 400 }
+                    }
+                ]
+            }
+        ],
+        "metadata": {
+            "imageCount": 1
+        }
+    }
+
+### Link to this sectionTahmin Jetonu Al#
+    
+    
+    POST /api/models/{modelId}/predict/token
+
+Sadece tarayıcı oturumu
+
+Bu rota, uygulama içi Tahmin sekmesi tarafından doğrudan tarayıcı → tahmin-servisi çağrıları için kısa ömürlü çıkarım jetonları oluşturmak amacıyla kullanılır (daha düşük gecikme, API proxy yok). Aktif bir platform tarayıcı oturumu gerektirir ve API anahtarı ile kullanılamaz. Programatik çıkarım için, API anahtarınla `POST /api/models/{modelId}/predict` çağrısını yap.
+
+### Link to this sectionModeli Isındır#
+    
+    
+    POST /api/models/{modelId}/predict/warmup
+
+Sadece tarayıcı oturumu
+
+Isındırma rotası, Tahmin sekmesi tarafından, kullanıcının ilk çıkarımından önce modelin ağırlıklarını tahmin servisinde önceden yüklemek için kullanılır. Aktif bir platform tarayıcı oturumu gerektirir ve API anahtarı ile kullanılamaz.
+
+* * *
+
+## Link to this sectionEğitim API'si#
+
+Bulut GPU'larında (RTX 2000 Ada'dan B300'e kadar 26 GPU tipi) YOLO eğitimini başlat ve ilerlemeyi gerçek zamanlı olarak izle. [Bulut Eğitimi dokümantasyonuna](/tr/platform/train/cloud-training) bak.
+    
+    
+    graph LR
+        A[POST /training/start] --> B[Job Created]
+        B --> C{Training}
+        C -->|progress| D[GET /models/id/training]
+        C -->|cancel| E[DELETE /models/id/training]
+        C -->|complete| F[Model Ready]
+        F --> G[Deploy or Export]
+
+### Link to this sectionEğitimi Başlat#
+    
+    
+    POST /api/training/start
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "modelId": "MODEL_ID",
+        "projectId": "PROJECT_ID",
+        "gpuType": "rtx-4090",
+        "trainArgs": {
+          "model": "yolo26n.pt",
+          "data": "ul://username/datasets/my-dataset",
+          "epochs": 100,
+          "imgsz": 640,
+          "batch": 16
+        }
+      }' \
+      https://platform.ultralytics.com/api/training/start
+
+GPU Türleri
+
+Mevcut GPU türleri arasında `rtx-4090`, `a100-80gb-pcie`, `a100-80gb-sxm`, `h100-sxm`, `rtx-pro-6000`, `b300` ve diğerleri bulunur. Fiyatlandırma ile tam liste için [Bulut Eğitimi](/tr/platform/train/cloud-training) sayfasına bak.
+
+### Link to this sectionGPU Uygunluğunu Getir#
+    
+    
+    GET /api/training/gpu-availability
+
+GPU türü kimliğine göre mevcut GPU stok durumunu (`High`, `Medium`, `Low` veya `null`) döndürür. Herkese açıktır, kimlik doğrulaması gerektirmez; 5 dakika boyunca önbelleğe alınır.
+
+### Link to this sectionEğitim Durumunu Al#
+    
+    
+    GET /api/models/{modelId}/training
+
+Bir model için mevcut eğitim işi durumunu, metrikleri ve ilerlemeyi döndürür. Genel projeler anonim olarak erişilebilirdir; özel projeler aktif bir platform tarayıcı oturumu gerektirir (bu rota API anahtarı kimlik doğrulamasını kabul etmez).
+
+### Link to this sectionEğitimi İptal Et#
+    
+    
+    DELETE /api/models/{modelId}/training
+
+Çalışan işlem örneğini sonlandırır ve işi iptal edilmiş olarak işaretler. Aktif bir platform tarayıcı oturumu gerektirir — API anahtarı ile kullanılamaz.
+
+* * *
+
+## Link to this sectionDağıtım API'si#
+
+Modelleri sağlık kontrolleri ve izleme ile özel çıkarım uç noktalarına dağıt. Yeni dağıtımlar varsayılan olarak sıfıra ölçeklemeyi kullanır ve API isteğe bağlı bir `resources` nesnesini kabul eder. [Uç Noktalar dokümantasyonuna](/tr/platform/deploy/endpoints) göz at.
+
+Rotaya göre API anahtarı desteği
+
+Sadece `GET /api/deployments`, `POST /api/deployments`, `GET /api/deployments/{deploymentId}` ve `DELETE /api/deployments/{deploymentId}` API anahtarı kimlik doğrulamasını destekler. `predict`, `health`, `logs`, `metrics`, `start` ve `stop` alt rotaları aktif bir platform tarayıcı oturumu gerektirir — bunlar uygulama içi arayüz için kolaylık proxy'leridir. Programatik çıkarım için, doğrudan API anahtarınla dağıtımın kendi uç nokta URL'sini (örneğin `https://predict-abc123.run.app/predict`) çağır. [Özel uç noktalar](/tr/platform/deploy/endpoints#using-endpoints) hız sınırlamasına tabi değildir.
+    
+    
+    graph LR
+        A[Create] --> B[Deploying]
+        B --> C[Ready]
+        C -->|stop| D[Stopped]
+        D -->|start| C
+        C -->|delete| E[Deleted]
+        D -->|delete| E
+        C -->|predict| F[Inference Results]
+
+### Link to this sectionDağıtımları Listele#
+    
+    
+    GET /api/deployments
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`modelId`| dize| Modele göre filtrele  
+`status`| dize| Duruma göre filtrele  
+`limit`| tamsayı| Maksimum sonuç (varsayılan: 20, maks: 100)  
+`owner`| dize| Çalışma alanı sahibi kullanıcı adı  
+  
+### Link to this sectionDağıtım Oluştur#
+    
+    
+    POST /api/deployments
+
+**Gövde:**
+    
+    
+    {
+        "modelId": "model_abc123",
+        "name": "my-deployment",
+        "region": "us-central1",
+        "resources": {
+            "cpu": 1,
+            "memoryGi": 2,
+            "minInstances": 0,
+            "maxInstances": 1
+        }
+    }
+
+Alan| Tip| Gerekli| Açıklama  
+---|---|---|---  
+`modelId`| dize| Evet| Dağıtılacak model kimliği  
+`name`| dize| Evet| Dağıtım adı  
+`region`| dize| Evet| Dağıtım bölgesi  
+`resources`| nesne| Hayır| Kaynak yapılandırması (`cpu`, `memoryGi`, `minInstances`, `maxInstances`)  
+  
+Belirtilen bölgede özel bir çıkarım uç noktası oluşturur. Uç nokta benzersiz bir URL aracılığıyla küresel olarak erişilebilirdir.
+
+Varsayılan Kaynaklar
+
+Dağıtım diyaloğu şu anda `cpu=1`, `memoryGi=2`, `minInstances=0` ve `maxInstances=1` sabit varsayılanlarını gönderir. API rotası bir `resources` nesnesini kabul eder, ancak plan sınırları `minInstances` değerini `0` ve `maxInstances` değerini `1` ile sınırlar.
+
+Bölge Seçimi
+
+En düşük gecikme için kullanıcılarına yakın bir bölge seç. Platform arayüzü, mevcut 43 bölgenin tümü için gecikme tahminlerini gösterir.
+
+### Link to this sectionDağıtımı Getir#
+    
+    
+    GET /api/deployments/{deploymentId}
+
+### Link to this sectionDağıtımı Sil#
+    
+    
+    DELETE /api/deployments/{deploymentId}
+
+### Link to this sectionDağıtımı Başlat#
+    
+    
+    POST /api/deployments/{deploymentId}/start
+
+Durdurulmuş bir dağıtımı devam ettir.
+
+### Link to this sectionDağıtımı Durdur#
+    
+    
+    POST /api/deployments/{deploymentId}/stop
+
+Çalışan bir dağıtımı duraklat (faturalandırmayı durdurur).
+
+### Link to this sectionSağlık Kontrolü#
+    
+    
+    GET /api/deployments/{deploymentId}/health
+
+Dağıtım uç noktasının sağlık durumunu döndürür.
+
+### Link to this sectionDağıtımda Çıkarım Çalıştır#
+    
+    
+    POST /api/deployments/{deploymentId}/predict
+
+Çıkarım için bir görüntüyü doğrudan dağıtım uç noktasına gönder. İşlevsel olarak model tahminiyle eşdeğerdir ancak daha düşük gecikme için özel uç nokta üzerinden yönlendirilir.
+
+**Çok Parçalı Form:**
+
+Alan| Tip| Açıklama  
+---|---|---  
+`file`| dosya| Görüntü dosyası (JPEG, PNG, WebP)  
+`conf`| kayan nokta| Güven eşiği (varsayılan: 0.25)  
+`iou`| kayan nokta| IoU eşiği (varsayılan: 0.7)  
+`imgsz`| tamsayı| Piksel cinsinden görüntü boyutu (varsayılan: 640)  
+  
+### Link to this sectionMetrikleri Getir#
+    
+    
+    GET /api/deployments/{deploymentId}/metrics
+
+İstek sayılarını, gecikmeyi ve hata oranı metriklerini kıvılcım grafiği verileriyle döndürür.
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`range`| dize| Zaman aralığı: `1h`, `6h`, `24h` (varsayılan), `7d`, `30d`  
+`sparkline`| dize| Gösterge paneli görünümü için optimize edilmiş kıvılcım grafiği verisi için `true` değerine ayarla  
+  
+### Link to this sectionGünlükleri Getir#
+    
+    
+    GET /api/deployments/{deploymentId}/logs
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`severity`| dize| Virgülle ayrılmış filtre: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`  
+`limit`| tamsayı| Girdi sayısı (varsayılan: 50, maks: 200)  
+`pageToken`| dize| Önceki yanıttan sayfalama jetonu  
+  
+* * *
+
+## Link to this sectionİzleme API'si#
+
+Sadece tarayıcı oturumu
+
+`GET /api/monitoring` yalnızca kullanıcı arayüzüne (UI) özel bir rotadır ve aktif bir platform tarayıcı oturumu gerektirir. API anahtarı ile kimlik doğrulamasını kabul etmez. Dağıtım bazlı rotalar (bunlar da yalnızca tarayıcı oturumu ile çalışır) üzerinden bireysel dağıtım metriklerini sorgulayabilir veya programatik erişim için dağıtılmış Cloud Run hizmetinde [Cloud Monitoring dışa aktarımlarını](https://cloud.google.com/monitoring) kullanabilirsin.
+
+### Link to this sectionToplanmış Metrikler#
+    
+    
+    GET /api/monitoring
+
+Tüm kullanıcı dağıtımları genelinde toplanmış metrikleri döndürür: toplam istek sayısı, aktif dağıtımlar, hata oranı ve ortalama gecikme süresi.
+
+* * *
+
+## Link to this sectionDışa Aktarma (Export) API#
+
+Modelleri uç cihazda dağıtım için ONNX, TensorRT, CoreML ve TFLite gibi optimize edilmiş formatlara dönüştür. [Dağıtım belgelerine](/tr/platform/deploy) göz at.
+
+### Link to this sectionDışa Aktarımları Listele#
+    
+    
+    GET /api/exports
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`modelId`| dize| Model Kimliği (gerekli)  
+`status`| dize| Duruma göre filtrele  
+`limit`| tamsayı| Maksimum sonuç (varsayılan: 20, maks: 100)  
+  
+### Link to this sectionDışa Aktarma Oluştur#
+    
+    
+    POST /api/exports
+
+**Gövde:**
+
+Alan| Tip| Gerekli| Açıklama  
+---|---|---|---  
+`modelId`| dize| Evet| Kaynak model kimliği  
+`format`| dize| Evet| Dışa aktarma formatı (aşağıdaki tabloya bak)  
+`gpuType`| dize| Koşullu| `format` değeri `engine` (TensorRT) olduğunda gereklidir  
+`args`| nesne| Hayır| Dışa aktarma argümanları (`imgsz`, `half`, `dynamic` vb.)  
+      
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"modelId": "MODEL_ID", "format": "onnx"}' \
+      https://platform.ultralytics.com/api/exports
+
+**Desteklenen Formatlar:**
+
+Format| Değer| Kullanım Durumu  
+---|---|---  
+ONNX| `onnx`| Platformlar arası çıkarım  
+TorchScript| `torchscript`| PyTorch dağıtımı  
+OpenVINO| `openvino`| Intel donanımı  
+TensorRT| `engine`| NVIDIA GPU optimizasyonu  
+CoreML| `coreml`| Apple cihazları  
+TFLite| `tflite`| Mobil ve gömülü sistemler  
+TF SavedModel| `saved_model`| TensorFlow Serving  
+TF GraphDef| `pb`| TensorFlow dondurulmuş grafik  
+PaddlePaddle| `paddle`| Baidu PaddlePaddle  
+NCNN| `ncnn`| Mobil sinir ağı  
+Edge TPU| `edgetpu`| Google Coral cihazları  
+TF.js| `tfjs`| Tarayıcı tabanlı çıkarım  
+MNN| `mnn`| Alibaba mobil çıkarım  
+RKNN| `rknn`| Rockchip NPU  
+Qualcomm| `qnn`| Qualcomm Snapdragon NPU  
+IMX| `imx`| Sony IMX500 sensörü  
+Axelera| `axelera`| Axelera AI hızlandırıcıları  
+ExecuTorch| `executorch`| Meta ExecuTorch çalışma zamanı  
+DeepX| `deepx`| DeepX NPU hızlandırıcıları  
+  
+### Link to this sectionDışa Aktarma Durumunu Al#
+    
+    
+    GET /api/exports/{exportId}
+
+### Link to this sectionDışa Aktarmayı İptal Et#
+    
+    
+    DELETE /api/exports/{exportId}
+
+### Link to this sectionDışa Aktarma İndirmesini İzle#
+    
+    
+    POST /api/exports/{exportId}/track-download
+
+* * *
+
+## Link to this sectionEtkinlik (Activity) API#
+
+Hesabındaki son eylemlerin akışını görüntüle — eğitim çalıştırmaları, yüklemeler ve daha fazlası. [Etkinlik belgelerine](/tr/platform/account/activity) bak.
+
+Yalnızca Tarayıcı Oturumu
+
+Etkinlik rotaları, platform arayüzünden gelen tarayıcı kimlik doğrulamalı isteklerle desteklenir. Herkese açık bir API olarak sunulmazlar, API anahtarı ile kimlik doğrulamasını kabul etmezler ve aşağıdaki rota yapıları yalnızca referans amacıyla belgelenmiştir. Etkinlikleri görüntülemek, işaretlemek veya arşivlemek için platform arayüzündeki Etkinlik akışını kullan.
+
+### Link to this sectionEtkinlikleri Listele#
+    
+    
+    GET /api/activity
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`limit`| tamsayı| Sayfa boyutu (varsayılan: 20, maks: 100)  
+`page`| tamsayı| Sayfa numarası (varsayılan: 1)  
+`archived`| boolean| Arşiv sekmesi için `true`, Gelen Kutusu için `false`  
+`search`| dize| Etkinlik alanlarında büyük/küçük harfe duyarlı olmayan arama  
+  
+### Link to this sectionEtkinlikleri Görüldü Olarak İşaretle#
+    
+    
+    POST /api/activity/mark-seen
+
+**Gövde:**
+    
+    
+    {
+        "all": true
+    }
+
+Veya belirli kimlikleri ilet:
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"]
+    }
+
+### Link to this sectionEtkinlikleri Arşivle#
+    
+    
+    POST /api/activity/archive
+
+**Gövde:**
+    
+    
+    {
+        "all": true,
+        "archive": true
+    }
+
+Veya belirli kimlikleri ilet:
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"],
+        "archive": false
+    }
+
+* * *
+
+## Link to this sectionÇöp Kutusu (Trash) API#
+
+Silinen öğeleri görüntüle ve geri yükle. Öğeler 30 gün sonra kalıcı olarak silinir. [Çöp Kutusu belgelerine](/tr/platform/account/trash) bak.
+
+### Link to this sectionÇöp Kutusunu Listele#
+    
+    
+    GET /api/trash
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`type`| dize| Filtre: `all`, `project`, `dataset`, `model`  
+`page`| tamsayı| Sayfa numarası (varsayılan: 1)  
+`limit`| tamsayı| Sayfa başına öğe sayısı (varsayılan: 50, maks: 200)  
+`owner`| dize| Çalışma alanı sahibi kullanıcı adı  
+  
+### Link to this sectionÖğeyi Geri Yükle#
+    
+    
+    POST /api/trash
+
+**Gövde:**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+### Link to this sectionÖğeyi Kalıcı Olarak Sil#
+    
+    
+    DELETE /api/trash
+
+**Gövde:**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+Geri döndürülemez
+
+Kalıcı silme işlemi geri alınamaz. Kaynak ve ilgili tüm veriler kaldırılacaktır.
+
+### Link to this sectionÇöp Kutusunu Boşalt#
+    
+    
+    DELETE /api/trash/empty
+
+Çöp kutusundaki tüm öğeleri kalıcı olarak siler.
+
+Kimlik Doğrulama
+
+`DELETE /api/trash/empty` kimlik doğrulamalı bir tarayıcı oturumu gerektirir ve API anahtarı ile kullanılamaz. Bunun yerine arayüzdeki **Çöp Kutusunu Boşalt** düğmesini kullan.
+
+* * *
+
+## Link to this sectionFaturalandırma API#
+
+Kredi bakiyeni kontrol et, kredi satın al, işlem geçmişini görüntüle ve otomatik yükleme ayarlarını yapılandır. [Faturalandırma belgelerine](/tr/platform/account/billing) bak.
+
+Para Birimi Birimleri
+
+Faturalandırma tutarları sent cinsindendir (`creditsCents`), burada `100 = $1.00` eder.
+
+### Link to this sectionBakiyeyi Al#
+    
+    
+    GET /api/billing/balance
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`owner`| dize| Çalışma alanı sahibi kullanıcı adı  
+  
+**Yanıt:**
+    
+    
+    {
+        "creditsCents": 2500,
+        "plan": "free"
+    }
+
+### Link to this sectionKullanım Özetini Al#
+    
+    
+    GET /api/billing/usage-summary
+
+Plan detaylarını, limitleri ve kullanım metriklerini döndürür.
+
+### Link to this sectionİşlemleri Al#
+    
+    
+    GET /api/billing/transactions
+
+İşlem geçmişini döndürür (en son işlem önce gelecek şekilde).
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`owner`| dize| Çalışma alanı sahibi kullanıcı adı  
+  
+### Link to this sectionÖdeme Oturumu Oluştur#
+    
+    
+    POST /api/billing/checkout-session
+
+**Gövde:**
+    
+    
+    {
+        "amount": 25,
+        "owner": "team-username"
+    }
+
+Alan| Tip| Gerekli| Açıklama  
+---|---|---|---  
+`amount`| sayı| Evet| Dolar cinsinden tutar ($5-$1000)  
+`owner`| dize| Hayır| Çalışma alanı (workspace) yüklemeleri için ekip kullanıcı adı (yönetici rolü gerektirir)  
+  
+Kredi satın alımı için bir ödeme oturumu oluşturur.
+
+### Link to this sectionAbonelik Ödemesi Oluştur#
+    
+    
+    POST /api/billing/subscription-checkout
+
+Pro abonelik yükseltmesi için bir ödeme oturumu oluşturur.
+
+**Gövde:**
+    
+    
+    {
+        "planId": "pro",
+        "billingCycle": "monthly",
+        "owner": "team-username"
+    }
+
+Alan| Tip| Gerekli| Açıklama  
+---|---|---|---  
+`planId`| dize| Evet| Abone olunacak plan (`pro`)  
+`billingCycle`| dize| Hayır| Faturalandırma döngüsü: `monthly` (varsayılan) veya `yearly`  
+`owner`| dize| Hayır| Çalışma alanı yükseltmeleri için ekip kullanıcı adı (yönetici rolü gerektirir)  
+  
+### Link to this sectionAboneliği İptal Et veya Devam Ettir#
+    
+    
+    DELETE /api/billing/subscription-checkout
+
+Varsayılan olarak Pro aboneliğini dönem sonunda iptal eder. Faturalandırma dönemi bitmeden planlanmış bir iptali geri almak için `{"resume": true}` gönder.
+
+**Gövde:**
+    
+    
+    {
+        "resume": true
+    }
+
+### Link to this sectionOtomatik Yükleme#
+
+Bakiye bir eşik değerin altına düştüğünde otomatik olarak kredi ekle.
+
+#### Link to this sectionOtomatik Yükleme Yapılandırmasını Al#
+    
+    
+    GET /api/billing/auto-topup
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`owner`| dize| Çalışma alanı sahibi kullanıcı adı  
+  
+#### Link to this sectionOtomatik Yükleme Yapılandırmasını Güncelle#
+    
+    
+    PATCH /api/billing/auto-topup
+
+**Gövde:**
+    
+    
+    {
+        "enabled": true,
+        "thresholdCents": 500,
+        "amountCents": 2500
+    }
+
+### Link to this sectionÖdeme Yöntemleri#
+
+#### Link to this sectionÖdeme Yöntemlerini Listele#
+    
+    
+    GET /api/billing/payment-methods
+
+#### Link to this sectionKurulum Amacı (Setup Intent) Oluştur#
+    
+    
+    POST /api/billing/payment-methods/setup
+
+Yeni bir ödeme yöntemi eklemek için bir istemci gizli anahtarı döndürür.
+
+#### Link to this sectionVarsayılan Ödeme Yöntemini Ayarla#
+    
+    
+    POST /api/billing/payment-methods/default
+
+**Gövde:**
+    
+    
+    {
+        "paymentMethodId": "pm_123"
+    }
+
+#### Link to this sectionFatura Bilgilerini Güncelle#
+    
+    
+    PATCH /api/billing/payment-methods
+
+**Gövde:**
+    
+    
+    {
+        "name": "Jane Doe",
+        "address": {
+            "line1": "123 Main St",
+            "city": "San Francisco",
+            "state": "CA",
+            "postal_code": "94105",
+            "country": "US"
+        }
+    }
+
+#### Link to this sectionÖdeme Yöntemini Sil#
+    
+    
+    DELETE /api/billing/payment-methods/{id}
+
+* * *
+
+## Link to this sectionDepolama API'si#
+
+Depolama kullanım dökümünü kategoriye (veri kümeleri, modeller, dışa aktarmalar) göre kontrol et ve en büyük öğelerini görüntüle.
+
+Sadece tarayıcı oturumu
+
+Depolama yolları aktif bir platform tarayıcı oturumu gerektirir ve API anahtarı ile erişilemez. Etkileşimli dökümler için kullanıcı arayüzündeki [Ayarlar > Profil](/tr/platform/account/settings#storage-usage) sayfasını kullan.
+
+### Link to this sectionDepolama Bilgisini Al#
+    
+    
+    GET /api/storage
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`details`| boolean| Set to `true` to include `topItems` (largest datasets, models, exports).  
+  
+**Yanıt:**
+    
+    
+    {
+        "tier": "free",
+        "usage": {
+            "storage": {
+                "current": 1073741824,
+                "limit": 107374182400,
+                "percent": 1.0
+            }
+        },
+        "region": "us",
+        "username": "johndoe",
+        "updatedAt": "2024-01-15T10:00:00Z",
+        "breakdown": {
+            "byCategory": {
+                "datasets": { "bytes": 536870912, "count": 2 },
+                "models": { "bytes": 268435456, "count": 4 },
+                "exports": { "bytes": 268435456, "count": 3 }
+            },
+            "topItems": [
+                {
+                    "_id": "dataset_abc123",
+                    "name": "my-dataset",
+                    "slug": "my-dataset",
+                    "sizeBytes": 536870912,
+                    "type": "dataset"
+                },
+                {
+                    "_id": "model_def456",
+                    "name": "experiment-1",
+                    "slug": "experiment-1",
+                    "sizeBytes": 134217728,
+                    "type": "model",
+                    "parentName": "My Project",
+                    "parentSlug": "my-project"
+                }
+            ]
+        }
+    }
+
+* * *
+
+## Link to this sectionYükleme API'si#
+
+Hızlı ve güvenilir transferler için imzalı URL'leri kullanarak dosyaları doğrudan bulut depolamaya yükle. İki adımlı bir akış kullanır: imzalı bir URL al, ardından dosyayı yükle. [Veri belgelerine](/tr/platform/data) bak.
+
+### Link to this sectionİmzalı Yükleme URL'sini Al#
+    
+    
+    POST /api/upload/signed-url
+
+Doğrudan bulut depolamaya dosya yüklemek için imzalı bir URL talep et. İmzalı URL, büyük dosya transferleri için API sunucusunu atlar.
+
+**Gövde:**
+    
+    
+    {
+        "assetType": "images",
+        "assetId": "abc123",
+        "filename": "my-image.jpg",
+        "contentType": "image/jpeg",
+        "totalBytes": 5242880
+    }
+
+Alan| Tip| Açıklama  
+---|---|---  
+`assetType`| dize| Varlık türü: `models`, `datasets`, `images`, `videos`  
+`assetId`| dize| Hedef varlığın kimliği  
+`filename`| dize| Orijinal dosya adı  
+`contentType`| dize| MIME türü  
+`totalBytes`| tamsayı| Bayt cinsinden dosya boyutu  
+  
+**Yanıt:**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "uploadUrl": "https://storage.example.com/...",
+        "gcsPath": "gs://bucket/users/user123/images/abc123/my-image.jpg",
+        "downloadUrl": "https://cdn.example.com/...",
+        "expiresAt": "2026-02-22T12:00:00Z"
+    }
+
+### Link to this sectionYüklemeyi Tamamla#
+    
+    
+    POST /api/upload/complete
+
+İşlemeye başlayabilmesi için platforma dosya yüklemesinin tamamlandığını bildir.
+
+**Gövde:**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "checksum": "<optional sha-256 hex>"
+    }
+
+* * *
+
+## Link to this sectionEntegrasyonlar API#
+
+Veri kümelerini üçüncü taraf hizmetlerden içe aktar. [Entegrasyonlar belgelerine](/tr/platform/integrations) göz at.
+
+### Link to this sectionRoboflow İçe Aktarmayı Önizle#
+    
+    
+    POST /api/integrations/roboflow/preview
+
+Bir Roboflow API key değerini toplu içe aktarma planına çözümle: çalışma alanı bilgisi, yeni içe aktarılacak projeler, zaten içe aktarılmış versiyon sayısı (atlandı) ve desteklenmeyen proje türleri. Roboflow API key gövdede iletilir ve kalıcı olarak saklanmaz.
+
+### Link to this sectionRoboflow'dan İçe Aktar#
+    
+    
+    POST /api/integrations/roboflow/import
+
+Seçilen Roboflow projelerini çalışma alanına içe aktarmak için veri kümesi alım işlerini sıraya al. Depolama alanı boşluğu gerektirir ve her veri kümesi planının içe aktarma başına boyut sınırına uygun olmalıdır.
+
+* * *
+
+## Link to this sectionAPI Anahtarları API'si#
+
+Programatik erişim için API anahtarlarını yönet. [API Anahtarları belgelerine](/tr/platform/account/api-keys) bak.
+
+### Link to this sectionAPI Anahtarlarını Listele#
+    
+    
+    GET /api/api-keys
+
+### Link to this sectionAPI Anahtarı Oluştur#
+    
+    
+    POST /api/api-keys
+
+**Gövde:**
+    
+    
+    {
+        "name": "training-server"
+    }
+
+### Link to this sectionAPI Anahtarını Sil#
+    
+    
+    DELETE /api/api-keys
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`keyId`| dize| İptal edilecek API anahtarı kimliği  
+  
+**Örnek:**
+    
+    
+    curl -X DELETE \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/api-keys?keyId=KEY_ID"
+
+* * *
+
+## Link to this sectionTakımlar ve Üyeler API'si#
+
+İş birliği için takım çalışma alanları oluştur, üyeleri davet et ve rolleri yönet. [Takımlar belgelerine](/tr/platform/account/teams) bak.
+
+### Link to this sectionTakımları Listele#
+    
+    
+    GET /api/teams
+
+### Link to this sectionTakım Oluştur#
+    
+    
+    POST /api/teams/create
+
+**Gövde:**
+    
+    
+    {
+        "username": "my-team",
+        "fullName": "My Team"
+    }
+
+### Link to this sectionÜyeleri Listele#
+    
+    
+    GET /api/members
+
+Mevcut çalışma alanındaki üyeleri döndürür.
+
+### Link to this sectionÜye Davet Et#
+    
+    
+    POST /api/members
+
+**Gövde:**
+    
+    
+    {
+        "email": "user@example.com",
+        "role": "editor"
+    }
+
+Üye Rolleri
+
+Rol| İzinler  
+---|---  
+`viewer`| Çalışma alanı kaynaklarına salt okunur erişim  
+`editor`| Kaynak oluşturma, düzenleme ve silme  
+`admin`| Üyeleri, faturalandırmayı ve tüm kaynakları yönetme (yalnızca takım sahibi tarafından atanabilir)  
+  
+Takım `owner` (sahibi) oluşturucudur ve davet edilemez. Sahip hakları, `POST /api/members/transfer-ownership` aracılığıyla ayrı olarak devredilir. Tam rol ayrıntıları için [Takımlar](/tr/platform/account/teams) sayfasına bak.
+
+### Link to this sectionÜye Rolünü Güncelle#
+    
+    
+    PATCH /api/members/{userId}
+
+### Link to this sectionÜyeyi Kaldır#
+    
+    
+    DELETE /api/members/{userId}
+
+### Link to this sectionSahipliği Devret#
+    
+    
+    POST /api/members/transfer-ownership
+
+### Link to this sectionDavetler#
+
+#### Link to this sectionDaveti Kabul Et#
+    
+    
+    POST /api/invites/accept
+
+#### Link to this sectionDavet Bilgisini Al#
+    
+    
+    GET /api/invites/info
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`token`| dize| Davet jetonu  
+  
+#### Link to this sectionDaveti İptal Et#
+    
+    
+    DELETE /api/invites/{inviteId}
+
+#### Link to this sectionDaveti Yeniden Gönder#
+    
+    
+    POST /api/invites/{inviteId}/resend
+
+* * *
+
+## Link to this sectionKeşfet (Explore) API'si#
+
+Topluluk tarafından paylaşılan herkese açık veri kümelerini ve projeleri ara ve göz at. [Keşfet belgelerine](/tr/platform/explore) bak.
+
+### Link to this sectionHerkese Açık İçeriği Ara#
+    
+    
+    GET /api/explore/search
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`q`| dize| Arama sorgusu  
+`type`| dize| Kaynak türü: `all` (varsayılan), `projects`, `datasets`  
+`sort`| dize| Sıralama düzeni: `newest` (varsayılan), `stars`, `oldest`, `name-asc`, `name-desc`, `count-desc`, `count-asc`  
+`offset`| tamsayı| Sayfalandırma ofseti (varsayılan: 0). Sonuçlar sayfa başına 20 öğe döndürür.  
+`task`| dize| İsteğe bağlı: veri kümelerini filtrelemek için virgülle ayrılmış YOLO görev türleri (`detect`, `segment`, `semantic`, `classify`, `pose`, `obb`)  
+  
+### Link to this sectionKenar Çubuğu Verileri#
+    
+    
+    GET /api/explore/sidebar
+
+Keşfet kenar çubuğu için küratörlü içeriği döndürür.
+
+* * *
+
+## Link to this sectionKullanıcı ve Ayarlar API'leri#
+
+Profilini, API anahtarlarını, depolama kullanımını ve veri gizliliği ayarlarını yönet. [Ayarlar belgelerine](/tr/platform/account/settings) bak.
+
+### Link to this sectionKullanıcı Adına Göre Kullanıcıyı Al#
+    
+    
+    GET /api/users
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`username`| dize| Aranacak kullanıcı adı  
+  
+### Link to this sectionKullanıcıyı Takip Et veya Takibi Bırak#
+    
+    
+    PATCH /api/users
+
+**Gövde:**
+    
+    
+    {
+        "username": "target-user",
+        "followed": true
+    }
+
+### Link to this sectionKullanıcı Adı Kullanılabilirliğini Kontrol Et#
+    
+    
+    GET /api/username/check
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`username`| dize| Kontrol edilecek kullanıcı adı  
+`suggest`| bool| İsteğe bağlı: alınmışsa bir öneri içermek için `true`  
+  
+### Link to this sectionAyarlar#
+    
+    
+    GET /api/settings
+    POST /api/settings
+
+Kullanıcı profili ayarlarını (görünen ad, biyografi, sosyal medya bağlantıları vb.) al veya güncelle.
+
+### Link to this sectionProfil Simgesi#
+    
+    
+    POST /api/settings/icon
+    DELETE /api/settings/icon
+
+Profil avatarını yükle veya kaldır.
+
+### Link to this sectionKatılım (Onboarding)#
+    
+    
+    POST /api/onboarding
+
+Katılım akışını tamamla (veri bölgesi, kullanıcı adı ayarla).
+
+* * *
+
+## Link to this sectionGDPR API'si#
+
+Tüm verilerinin bir dışa aktarımını talep et veya hesabını kalıcı olarak sil. [Ayarlar belgelerine](/tr/platform/account/settings) bak.
+
+### Link to this sectionGDPR İş Durumunu Al#
+    
+    
+    GET /api/gdpr
+
+**Sorgu Parametreleri:**
+
+Parametre| Tip| Açıklama  
+---|---|---  
+`jobId`| dize| Kontrol edilecek GDPR iş kimliği  
+  
+İş durumunu döndürür. Tamamlanan dışa aktarma işleri için yanıt bir `downloadUrl` içerir.
+
+### Link to this sectionDışa Aktarma veya Silme Akışını Başlat#
+    
+    
+    POST /api/gdpr
+
+**Gövde:**
+    
+    
+    {
+        "action": "export"
+    }
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE"
+    }
+
+Takım çalışma alanları için isteğe bağlı:
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE",
+        "teamUsername": "my-team"
+    }
+
+Geri Dönülemez Eylem
+
+Hesap silme kalıcıdır ve geri alınamaz. Tüm veriler, modeller ve dağıtımlar silinecektir.
+
+* * *
+
+## Link to this sectionHata Kodları#
+
+Kod| HTTP Durumu| Açıklama  
+---|---|---  
+`UNAUTHORIZED`| 401| Geçersiz veya eksik API anahtarı  
+`FORBIDDEN`| 403| Yetersiz izinler  
+`NOT_FOUND`| 404| Kaynak bulunamadı  
+`VALIDATION_ERROR`| 400| Geçersiz istek verisi  
+`RATE_LIMITED`| 429| Çok fazla istek  
+`INTERNAL_ERROR`| 500| Sunucu hatası  
+  
+* * *
+
+## Link to this sectionPython Entegrasyonu#
+
+Daha kolay entegrasyon için, kimlik doğrulama, yüklemeler ve gerçek zamanlı metrik akışını otomatik olarak yöneten Ultralytics Python paketini kullan.
+
+### Link to this sectionKurulum & Ayarlar#
+    
+    
+    pip install ultralytics
+
+Kurulumu doğrula:
+    
+    
+    yolo check
+
+Paket Sürümü Gereksinimi
+
+Platform entegrasyonu **ultralytics >=8.4.60** sürümünü gerektirir. Daha düşük sürümler Platform ile çalışmaz.
+
+### Link to this sectionKimlik Doğrulama#
+    
+    
+    yolo settings api_key=YOUR_API_KEY
+
+### Link to this sectionPlatform Veri Kümelerini Kullanma#
+
+Veri kümelerine `ul://` URI'leri ile referans ver:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Train on your Platform dataset
+    model.train(
+        data="ul://your-username/datasets/your-dataset",
+        epochs=100,
+        imgsz=640,
+    )
+
+**URI Formatı:**
+
+Desen| Açıklama  
+---|---  
+`ul://username/datasets/slug`| Veri Seti  
+`ul://username/project-name`| Proje  
+`ul://username/project/model-name`| Belirli model  
+`ul://ultralytics/yolo26/yolo26n`| Resmi model  
+  
+### Link to this sectionPlatforma Gönderme#
+
+Sonuçları bir Platform projesine gönder:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Results automatically sync to Platform
+    model.train(
+        data="coco8.yaml",
+        epochs=100,
+        project="your-username/my-project",
+        name="experiment-1",
+    )
+
+**Senkronize edilenler:**
+
+  * Eğitim metrikleri (gerçek zamanlı)
+  * Nihai model ağırlıkları
+  * Doğrulama grafikleri
+  * Konsol çıktısı
+  * Sistem metrikleri
+
+
+
+### Link to this sectionAPI Örnekleri#
+
+**Platformdan bir model yükle:**
+    
+    
+    # Your own model
+    model = YOLO("ul://username/project/model-name")
+    
+    # Official model
+    model = YOLO("ul://ultralytics/yolo26/yolo26n")
+
+**Çıkarım çalıştır:**
+    
+    
+    results = model("image.jpg")
+    
+    # Access results
+    for r in results:
+        boxes = r.boxes  # Detection boxes
+        masks = r.masks  # Segmentation masks
+        keypoints = r.keypoints  # Pose keypoints
+        probs = r.probs  # Classification probabilities
+
+**Modeli dışa aktar:**
+    
+    
+    # Export to ONNX
+    model.export(format="onnx", imgsz=640, half=True)
+    
+    # Export to TensorRT
+    model.export(format="engine", imgsz=640, half=True)
+    
+    # Export to CoreML
+    model.export(format="coreml", imgsz=640)
+
+**Doğrulama:**
+    
+    
+    metrics = model.val(data="ul://username/datasets/my-dataset")
+    
+    print(f"mAP50: {metrics.box.map50}")
+    print(f"mAP50-95: {metrics.box.map}")
+
+* * *
+
+## Link to this sectionWeb kancaları (Webhooks)#
+
+Platform, `ultralytics` Python SDK'sından (bulut GPU'larda veya uzak/yerel makinelerde çalışan) Platform'a gerçek zamanlı eğitim metriklerini — epoch bazlı kayıp, mAP, sistem istatistikleri ve tamamlanma durumu — aktarmak için dahili web kancaları kullanır. Bu web kancaları, eğitim işi başına sağlanan HMAC `webhookSecret` ile doğrulanır ve kullanıcı uygulamaları tarafından tüketilmek üzere tasarlanmamıştır.
+
+Kendi tarafında çalışma
+
+**Tüm planlar** : `ultralytics` SDK aracılığıyla eğitim ilerlemesi (gerçek zamanlı metrikler, tamamlanma bildirimleri) her planda otomatik olarak çalışır — eğitim sırasında `project=username/my-project name=my-run` ayarını yapman yeterlidir, SDK etkinlikleri Platform'a geri aktarır. Kullanıcı tarafında web kancası kaydı gerekmez.
+
+**Kullanıcıya yönelik web kancası abonelikleri** (kontrol ettiğin bir URL'ye POST geri aramaları) Enterprise yol haritasındadır ve şu anda mevcut değildir. Bu arada, durum için `GET /api/models/{modelId}/training` uç noktasını sorgula veya arayüzdeki etkinlik akışını kullan.
+
+* * *
+
+## Link to this sectionSSS#
+
+### Link to this sectionBüyük sonuçları nasıl sayfalandırırım?#
+
+Çoğu uç nokta, istek başına kaç sonucun döndürüleceğini kontrol etmek için bir `limit` parametresi kullanır:
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=50"
+
+Etkinlik ve Çöp Kutusu uç noktaları, sayfa tabanlı sayfalandırma için bir `page` parametresini de destekler:
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/activity?page=2&limit=20"
+
+The Explore Search endpoint uses `offset` instead of `page`, with a fixed page size of 20:
+    
+    
+    curl "https://platform.ultralytics.com/api/explore/search?type=datasets&offset=20&sort=stars"
+
+### Link to this sectionAPI'yi SDK olmadan kullanabilir miyim?#
+
+Evet, tüm işlevsellik REST aracılığıyla kullanılabilir. Python SDK, gerçek zamanlı metrik akışı ve otomatik model yükleme gibi özellikler ekleyen kullanışlı bir sarmalayıcıdır. Ayrıca tüm uç noktaları [platform.ultralytics.com/api/docs](https://platform.ultralytics.com/api/docs) adresinde etkileşimli olarak keşfedebilirsin.
+
+### Link to this sectionAPI istemci kütüphaneleri var mı?#
+
+Şu anda, Ultralytics Python paketini kullan veya doğrudan HTTP istekleri yap. Diğer diller için resmi istemci kütüphaneleri planlanmaktadır.
+
+### Link to this sectionHız sınırlarını (rate limits) nasıl yönetirim?#
+
+Doğru miktarda zaman beklemek için 429 yanıtındaki `Retry-After` başlığını kullan:
+    
+    
+    import time
+    
+    import requests
+    
+    def api_request_with_retry(url, headers, max_retries=3):
+        for attempt in range(max_retries):
+            response = requests.get(url, headers=headers)
+            if response.status_code != 429:
+                return response
+            wait = int(response.headers.get("Retry-After", 2**attempt))
+            time.sleep(wait)
+        raise Exception("Rate limit exceeded")
+
+### Link to this sectionModel veya veri kümesi kimliğimi (ID) nasıl bulurum?#
+
+Kaynak kimlikleri, API aracılığıyla kaynak oluşturduğunda döndürülür. Bunları platform URL'sinde de bulabilirsin:
+    
+    
+    https://platform.ultralytics.com/username/project/model-name
+                                      ^^^^^^^^ ^^^^^^^ ^^^^^^^^^^
+                                      username project   model
+
+İsme göre arama yapmak veya projeye göre filtrelemek için liste uç noktalarını kullan.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[MYmykolaxboiko2](https://github.com/mykolaxboiko)[LAlaodouya1](https://github.com/laodouya)[RAraimbekovm1](https://github.com/raimbekovm)[SEsergiuwaxmann1](https://github.com/sergiuwaxmann)[LALaughing-q1](https://github.com/Laughing-q)
+
+Oluşturulma 5 ay önceGüncellenme 5 saat önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

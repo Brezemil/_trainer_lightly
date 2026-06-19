@@ -1,0 +1,190 @@
+---
+source_url: https://docs.ultralytics.com/zh/yolov5/tutorials/model-ensembling
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-ensembling.md)
+
+# Link to this sectionYOLOv5 模型集成#
+
+📚 本指南介绍了如何在测试和推理过程中使用 Ultralytics YOLOv5 🚀 **模型集成 (model ensembling)** ，以提升 mAP 和 [Recall](https://www.ultralytics.com/glossary/recall) 指标。
+
+关于 [集成学习 (ensemble learning)](https://en.wikipedia.org/wiki/Ensemble_learning)：
+
+> 集成建模是一个通过创建多个不同模型来预测结果的过程，这些模型可以通过使用许多不同的建模算法或使用不同的 [训练数据](https://www.ultralytics.com/glossary/training-data) 集来创建。集成模型随后会汇总每个基模型的预测结果，从而针对未知数据给出一个最终预测。使用集成模型的初衷是为了减少预测的泛化误差。只要基模型具有多样性且相互独立，使用集成方法后模型的预测误差就会降低。这种方法旨在通过“群体智慧”来进行预测。尽管集成模型内部包含多个基模型，但其运行和表现方式就像单个模型一样。
+
+## Link to this section开始之前#
+
+Clone repo and install [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) in a [**Python >=3.8.0**](https://www.python.org/) environment, including [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). [Models](https://github.com/ultralytics/yolov5/tree/master/models) and [datasets](https://github.com/ultralytics/yolov5/tree/master/data) download automatically from the latest YOLOv5 [release](https://github.com/ultralytics/yolov5/releases).
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+## Link to this section常规测试#
+
+在进行集成之前，请先确定单个模型的基准性能。此命令用于在 640 像素图像尺寸下对 COCO val2017 数据集上的 YOLOv5x 进行测试。`yolov5x.pt` 是目前可用且精度最高的模型。其他选项包括 `yolov5s.pt`、`yolov5m.pt` 和 `yolov5l.pt`，或者你自己在训练自定义数据集后得到的检查点 `./weights/best.pt`。有关所有可用模型的详细信息，请参阅 [预训练检查点表格](https://docs.ultralytics.com/models/yolov5)。
+    
+    
+    python val.py --weights yolov5x.pt --data coco.yaml --img 640 --half
+
+输出：
+    
+    
+    val: data=./data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients
+    
+    val: Scanning '../datasets/coco/val2017' images and labels...4952 found, 48 missing, 0 empty, 0 corrupted: 100% 5000/5000 [00:01<00:00, 2846.03it/s]
+    val: New cache created: ../datasets/coco/val2017.cache
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [02:30<00:00,  1.05it/s]
+                     all       5000      36335      0.746      0.626       0.68       0.49
+    Speed: 0.1ms pre-process, 22.4ms inference, 1.4ms NMS per image at shape (32, 3, 640, 640)  # <--- baseline speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.504  # <--- baseline mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.688
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.546
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.351
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.551
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.644
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.382
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.628
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.681  # <--- baseline mAR
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.524
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.735
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.826
+
+## Link to this section集成测试#
+
+在测试和推理时，只需在现有的任何 val.py 或 detect.py 命令中向 `--weights` 参数追加额外的模型，即可将多个预训练模型集成在一起。此示例展示了如何同时测试两个模型的集成：
+
+  * YOLOv5x
+  * YOLOv5l6
+
+
+    
+    
+    python val.py --weights yolov5x.pt yolov5l6.pt --data coco.yaml --img 640 --half
+
+你可以根据需要列出任意数量的检查点，包括自定义权重，例如 `runs/train/exp-5/weights/best.pt`。YOLOv5 会自动运行每个模型，在单张图像的基础上对齐预测结果，并在执行 NMS 之前对输出进行平均处理。
+
+输出：
+    
+    
+    val: data=./data/coco.yaml, weights=['yolov5x.pt', 'yolov5l6.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.6, task=val, device=, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients  # Model 1
+    Fusing layers...
+    Model Summary: 501 layers, 77218620 parameters, 0 gradients  # Model 2
+    Ensemble created with ['yolov5x.pt', 'yolov5l6.pt']  # Ensemble notice
+    
+    val: Scanning '../datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupted: 100% 5000/5000 [00:00<00:00, 49695545.02it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [03:58<00:00,  1.52s/it]
+                     all       5000      36335      0.747      0.637      0.692      0.502
+    Speed: 0.1ms pre-process, 39.5ms inference, 2.0ms NMS per image at shape (32, 3, 640, 640)  # <--- ensemble speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-3/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.515  # <--- ensemble mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.699
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.557
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.356
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.563
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.668
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.387
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.638
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.689  # <--- ensemble mAR
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.526
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.743
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.844
+
+## Link to this section集成推理#
+
+向 `--weights` 参数追加额外模型即可运行集成推理：
+    
+    
+    python detect.py --weights yolov5x.pt yolov5l6.pt --img 640 --source data/images
+
+输出：
+    
+    
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients
+    Fusing layers...
+    Model Summary: 501 layers, 77218620 parameters, 0 gradients
+    Ensemble created with ['yolov5x.pt', 'yolov5l6.pt']
+    
+    image 1/2 /content/yolov5/data/images/bus.jpg: 640x512 4 persons, 1 bus, 1 tie, Done. (0.063s)
+    image 2/2 /content/yolov5/data/images/zidane.jpg: 384x640 3 persons, 2 ties, Done. (0.056s)
+    Results saved to runs/detect/exp-2
+    Done. (0.223s)
+
+![YOLO inference result](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolo-inference-result.avif)
+
+## Link to this section模型集成的优势#
+
+使用 YOLOv5 进行模型集成具有以下几个优势：
+
+  1. **更高的准确度** ：如上例所示，集成多个模型可将 mAP 从 0.504 提升至 0.515，并将 mAR 从 0.681 提升至 0.689。
+  2. **更好的泛化能力** ：结合多种不同的模型有助于减少过拟合，并提高在各类数据上的表现。
+  3. **更强的鲁棒性** ：集成模型通常对数据中的噪声和异常值具有更强的鲁棒性。
+  4. **互补优势** ：不同的模型可能擅长检测不同类型的对象或在不同的环境条件下表现更好。
+
+
+
+主要的权衡是增加了推理时间，如速度指标所示（单个模型为 22.4ms，而集成模型为 39.5ms）。
+
+## Link to this section何时使用模型集成#
+
+在以下场景中考虑使用模型集成：
+
+  * 当准确度比推理速度更重要时
+  * 对于必须最小化假阴性的关键应用场景
+  * 处理光照、遮挡或尺度各异的复杂图像时
+  * 在需要最高性能的竞赛或基准测试中
+
+
+
+对于有严格延迟要求的实时应用，使用单个模型进行推理可能更合适。
+
+## Link to this section支持的环境#
+
+Ultralytics 提供了一系列即用型环境，预装了 [CUDA](https://developer.nvidia.com/cuda)、[CUDNN](https://developer.nvidia.com/cudnn)、[Python](https://www.python.org/) 和 [PyTorch](https://pytorch.org/) 等关键依赖，助你快速启动项目。
+
+  * **免费 GPU 笔记本** ： [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [GCP 快速入门指南](/zh/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [AWS 快速入门指南](/zh/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [AzureML 快速入门指南](/zh/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Docker 快速入门指南](/zh/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this section项目状态#
+
+[![YOLOv5 CI](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+此徽章表示所有 [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) 持续集成 (CI) 测试均已成功通过。这些 CI 测试严格检查 YOLOv5 在 [训练](https://github.com/ultralytics/yolov5/blob/master/train.py)、[验证](https://github.com/ultralytics/yolov5/blob/master/val.py)、[推理](https://github.com/ultralytics/yolov5/blob/master/detect.py)、[导出](https://github.com/ultralytics/yolov5/blob/master/export.py) 和 [基准测试](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py) 等各个关键方面的功能和性能。它们确保了在 macOS、Windows 和 Ubuntu 上的稳定可靠运行，测试每 24 小时进行一次，并会在每次新提交代码时自动触发。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-ensembling.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+已创建 3天前已更新 3天前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

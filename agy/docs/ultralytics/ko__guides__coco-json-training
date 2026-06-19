@@ -1,0 +1,369 @@
+---
+source_url: https://docs.ultralytics.com/ko/guides/coco-json-training
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-json-training.md)
+
+# Link to this section변환 없이 COCO JSON으로 YOLO를 학습시키는 방법#
+
+## Link to this sectionCOCO JSON으로 직접 학습해야 하는 이유#
+
+[Annotations](https://www.ultralytics.com/glossary/data-labeling) in [COCO JSON](https://cocodataset.org/#format-data) format can be used directly for [Ultralytics YOLO](https://www.ultralytics.com/) training without converting to `.txt` files first. This is done by subclassing `YOLODataset` to parse COCO JSON on the fly and wiring it into the training pipeline through a custom trainer.
+
+이 접근 방식은 COCO JSON을 단일 진실 공급원(Single Source of Truth)으로 유지하므로 `convert_coco()` 호출이나 디렉토리 재구성, 중간 레이블 파일이 필요하지 않습니다. [YOLO26](/ko/models/yolo26) 및 다른 모든 Ultralytics YOLO 탐지 모델이 지원됩니다. 세그멘테이션 및 포즈 모델은 추가적인 레이블 필드가 필요합니다(FAQ 참조).
+
+일회성 변환 방법을 찾고 계신가요?
+
+See the [COCO to YOLO Conversion guide](/ko/guides/coco-to-yolo) for the standard `convert_coco()` workflow.
+
+## Link to this section아키텍처 개요#
+
+두 개의 클래스가 필요합니다:
+
+  1. **`COCODataset`** — COCO JSON을 읽고 학습 중에 [바운딩 박스](https://www.ultralytics.com/glossary/bounding-box)를 메모리에서 YOLO 형식으로 변환합니다.
+  2. **`COCOTrainer`** — overrides `build_dataset()` to use `COCODataset` instead of the default `YOLODataset`
+
+
+
+이 구현은 JSON 어노테이션을 직접 읽는 내장 `GroundingDataset`과 동일한 패턴을 따릅니다. `get_img_files()`, `cache_labels()`, `get_labels()` 등 세 가지 메서드가 재정의됩니다.
+
+## Link to this sectionCOCO JSON 데이터셋 클래스 구축#
+
+`COCODataset` 클래스는 `YOLODataset`을 상속받아 레이블 로딩 로직을 재정의합니다. 레이블 디렉토리에서 `.txt` 파일을 읽는 대신 COCO JSON 파일을 열고 이미지별로 그룹화된 어노테이션을 반복하며, 각 바운딩 박스를 COCO 픽셀 형식 `[x_min, y_min, width, height]`에서 YOLO 정규화된 중심 형식 `[x_center, y_center, width, height]`으로 변환합니다. 군중(crowd) 어노테이션(`iscrowd: 1`) 및 면적이 0인 박스는 자동으로 건너뜁니다.
+
+The `get_img_files()` method returns an empty list because image paths are resolved from the JSON `file_name` field inside `cache_labels()`. Category IDs are sorted and remapped to zero-indexed class indices, so both 1-based (standard COCO) and non-contiguous ID schemes work correctly.
+    
+    
+    import json
+    from collections import defaultdict
+    from pathlib import Path
+    
+    import numpy as np
+    
+    from ultralytics.data.dataset import DATASET_CACHE_VERSION, YOLODataset
+    from ultralytics.data.utils import get_hash, load_dataset_cache_file, save_dataset_cache_file
+    from ultralytics.utils import TQDM
+    
+    class COCODataset(YOLODataset):
+        """Dataset that reads COCO JSON annotations directly without conversion to .txt files."""
+    
+        def __init__(self, *args, json_file="", **kwargs):
+            """Initialize the dataset with a COCO JSON annotation file."""
+            self.json_file = json_file
+            super().__init__(*args, data={"channels": 3}, **kwargs)
+    
+        def get_img_files(self, img_path):
+            """Image paths are resolved from the JSON file, not from scanning a directory."""
+            return []
+    
+        def cache_labels(self, path=Path("./labels.cache")):
+            """Parse COCO JSON and convert annotations to YOLO format. Results are saved to a .cache file."""
+            x = {"labels": []}
+            with open(self.json_file) as f:
+                coco = json.load(f)
+    
+            images = {img["id"]: img for img in coco["images"]}
+    
+            # Sort categories by ID and map to 0-indexed classes
+            categories = {cat["id"]: i for i, cat in enumerate(sorted(coco["categories"], key=lambda c: c["id"]))}
+    
+            img_to_anns = defaultdict(list)
+            for ann in coco["annotations"]:
+                img_to_anns[ann["image_id"]].append(ann)
+    
+            for img_info in TQDM(coco["images"], desc="reading annotations"):
+                h, w = img_info["height"], img_info["width"]
+                im_file = Path(self.img_path) / img_info["file_name"]
+                if not im_file.exists():
+                    continue
+    
+                self.im_files.append(str(im_file))
+                bboxes = []
+                for ann in img_to_anns.get(img_info["id"], []):
+                    if ann.get("iscrowd", False):
+                        continue
+                    # COCO: [x, y, w, h] top-left in pixels -> YOLO: [cx, cy, w, h] center normalized
+                    box = np.array(ann["bbox"], dtype=np.float32)
+                    box[:2] += box[2:] / 2  # top-left to center
+                    box[[0, 2]] /= w  # normalize x
+                    box[[1, 3]] /= h  # normalize y
+                    if box[2] <= 0 or box[3] <= 0:
+                        continue
+                    cls = categories[ann["category_id"]]
+                    bboxes.append([cls, *box.tolist()])
+    
+                lb = np.array(bboxes, dtype=np.float32) if bboxes else np.zeros((0, 5), dtype=np.float32)
+                x["labels"].append(
+                    {
+                        "im_file": str(im_file),
+                        "shape": (h, w),
+                        "cls": lb[:, 0:1],
+                        "bboxes": lb[:, 1:],
+                        "segments": [],
+                        "normalized": True,
+                        "bbox_format": "xywh",
+                    }
+                )
+            x["hash"] = get_hash([self.json_file, str(self.img_path)])
+            save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+            return x
+    
+        def get_labels(self):
+            """Load labels from .cache file if available, otherwise parse JSON and create the cache."""
+            cache_path = Path(self.json_file).with_suffix(".cache")
+            try:
+                cache = load_dataset_cache_file(cache_path)
+                assert cache["version"] == DATASET_CACHE_VERSION
+                assert cache["hash"] == get_hash([self.json_file, str(self.img_path)])
+                self.im_files = [lb["im_file"] for lb in cache["labels"]]
+            except (FileNotFoundError, AssertionError, AttributeError, KeyError, ModuleNotFoundError):
+                cache = self.cache_labels(cache_path)
+            cache.pop("hash", None)
+            cache.pop("version", None)
+            return cache["labels"]
+
+파싱된 레이블은 JSON 옆의 `.cache` 파일(예: `instances_train.cache`)에 저장됩니다. 후속 학습 실행 시 캐시가 직접 로드되어 JSON 파싱 과정을 건너뜁니다. JSON 파일이 변경되면 해시 확인에 실패하고 캐시가 자동으로 다시 빌드됩니다.
+
+## Link to this section데이터셋을 학습 파이프라인에 연결하기#
+
+The only change needed in the trainer is overriding `build_dataset()`. The default `DetectionTrainer` builds a `YOLODataset` that scans for `.txt` label files. By replacing it with `COCODataset`, the trainer reads from the COCO JSON instead.
+
+JSON 파일 경로는 데이터 설정의 커스텀 `train_json` / `val_json` 필드에서 가져옵니다(3단계 참조). 학습 중에는 `mode="train"`이 `train_json`으로 해결되며, 검증 중에는 `mode="val"`이 `val_json`으로 해결됩니다. `val_json`이 설정되지 않은 경우 `train_json`으로 대체됩니다.
+    
+    
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    from ultralytics.utils import colorstr
+    
+    class COCOTrainer(DetectionTrainer):
+        """Trainer that uses COCODataset for direct COCO JSON training."""
+    
+        def build_dataset(self, img_path, mode="train", batch=None):
+            """Build a COCODataset for the given split using the JSON file from the data config."""
+            json_file = self.data["train_json"] if mode == "train" else self.data.get("val_json", self.data["train_json"])
+            return COCODataset(
+                img_path=img_path,
+                json_file=json_file,
+                imgsz=self.args.imgsz,
+                batch_size=batch,
+                augment=mode == "train",
+                hyp=self.args,
+                rect=self.args.rect or mode == "val",
+                cache=self.args.cache or None,
+                single_cls=self.args.single_cls or False,
+                stride=int(self.model.stride.max()) if hasattr(self, "model") and self.model else 32,
+                pad=0.0 if mode == "train" else 0.5,
+                prefix=colorstr(f"{mode}: "),
+                task=self.args.task,
+                classes=self.args.classes,
+                fraction=self.args.fraction if mode == "train" else 1.0,
+            )
+
+## Link to this sectionCOCO JSON을 위한 dataset.yaml 설정#
+
+`dataset.yaml`은 표준 `path`, `train`, `val` 필드를 사용하여 이미지 디렉토리를 찾습니다. 두 개의 추가 필드인 `train_json`과 `val_json`은 `COCOTrainer`가 읽을 COCO 어노테이션 파일을 지정합니다. `nc`와 `names` 필드는 클래스 수와 이름을 정의하며, JSON의 `categories` 정렬 순서와 일치해야 합니다.
+    
+    
+    path: /path/to/images # root directory with train/ and val/ subfolders
+    train: train
+    val: val
+    
+    # COCO JSON annotation files
+    train_json: /path/to/annotations/instances_train.json
+    val_json: /path/to/annotations/instances_val.json
+    
+    nc: 80
+    names:
+        0: person
+        1: bicycle
+        # ... remaining class names
+
+예상되는 디렉토리 구조:
+    
+    
+    my_dataset/
+      images/
+        train/
+          img_001.jpg
+          ...
+        val/
+          img_100.jpg
+          ...
+      annotations/
+        instances_train.json
+        instances_val.json
+      dataset.yaml
+
+## Link to this sectionCOCO JSON으로 학습 실행#
+
+데이터셋 클래스, 트레이너 클래스, YAML 설정이 준비되면 표준 `model.train()` 호출을 통해 학습이 진행됩니다. 일반적인 학습 실행과 유일한 차이점은 `trainer=COCOTrainer` 인수를 사용하는 것으로, 이는 Ultralytics가 기본 로더 대신 커스텀 데이터셋 로더를 사용하도록 지시합니다.
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    model.train(data="dataset.yaml", epochs=100, imgsz=640, trainer=COCOTrainer)
+
+전체 [학습](/ko/modes/train) 파이프라인은 [검증](/ko/modes/val), 체크포인트 저장, 메트릭 로깅을 포함하여 예상대로 실행됩니다.
+
+## Link to this section전체 구현#
+
+편의를 위해 전체 구현을 단일 복사-붙여넣기 스크립트로 아래에 제공합니다. 여기에는 커스텀 데이터셋, 커스텀 트레이너, 학습 호출이 포함되어 있습니다. 이를 `dataset.yaml`과 함께 저장하고 직접 실행하십시오.
+    
+    
+    import json
+    from collections import defaultdict
+    from pathlib import Path
+    
+    import numpy as np
+    
+    from ultralytics import YOLO
+    from ultralytics.data.dataset import DATASET_CACHE_VERSION, YOLODataset
+    from ultralytics.data.utils import get_hash, load_dataset_cache_file, save_dataset_cache_file
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    from ultralytics.utils import TQDM, colorstr
+    
+    class COCODataset(YOLODataset):
+        """Dataset that reads COCO JSON annotations directly without conversion to .txt files."""
+    
+        def __init__(self, *args, json_file="", **kwargs):
+            """Initialize the dataset with a COCO JSON annotation file."""
+            self.json_file = json_file
+            super().__init__(*args, data={"channels": 3}, **kwargs)
+    
+        def get_img_files(self, img_path):
+            """Image paths are resolved from the JSON file, not from scanning a directory."""
+            return []
+    
+        def cache_labels(self, path=Path("./labels.cache")):
+            """Parse COCO JSON and convert annotations to YOLO format, saving results to a .cache file."""
+            x = {"labels": []}
+            with open(self.json_file) as f:
+                coco = json.load(f)
+    
+            images = {img["id"]: img for img in coco["images"]}
+            categories = {cat["id"]: i for i, cat in enumerate(sorted(coco["categories"], key=lambda c: c["id"]))}
+    
+            img_to_anns = defaultdict(list)
+            for ann in coco["annotations"]:
+                img_to_anns[ann["image_id"]].append(ann)
+    
+            for img_info in TQDM(coco["images"], desc="reading annotations"):
+                h, w = img_info["height"], img_info["width"]
+                im_file = Path(self.img_path) / img_info["file_name"]
+                if not im_file.exists():
+                    continue
+    
+                self.im_files.append(str(im_file))
+                bboxes = []
+                for ann in img_to_anns.get(img_info["id"], []):
+                    if ann.get("iscrowd", False):
+                        continue
+                    box = np.array(ann["bbox"], dtype=np.float32)
+                    box[:2] += box[2:] / 2
+                    box[[0, 2]] /= w
+                    box[[1, 3]] /= h
+                    if box[2] <= 0 or box[3] <= 0:
+                        continue
+                    cls = categories[ann["category_id"]]
+                    bboxes.append([cls, *box.tolist()])
+    
+                lb = np.array(bboxes, dtype=np.float32) if bboxes else np.zeros((0, 5), dtype=np.float32)
+                x["labels"].append(
+                    {
+                        "im_file": str(im_file),
+                        "shape": (h, w),
+                        "cls": lb[:, 0:1],
+                        "bboxes": lb[:, 1:],
+                        "segments": [],
+                        "normalized": True,
+                        "bbox_format": "xywh",
+                    }
+                )
+            x["hash"] = get_hash([self.json_file, str(self.img_path)])
+            save_dataset_cache_file(self.prefix, path, x, DATASET_CACHE_VERSION)
+            return x
+    
+        def get_labels(self):
+            """Load labels from .cache file if available, otherwise parse JSON and create the cache."""
+            cache_path = Path(self.json_file).with_suffix(".cache")
+            try:
+                cache = load_dataset_cache_file(cache_path)
+                assert cache["version"] == DATASET_CACHE_VERSION
+                assert cache["hash"] == get_hash([self.json_file, str(self.img_path)])
+                self.im_files = [lb["im_file"] for lb in cache["labels"]]
+            except (FileNotFoundError, AssertionError, AttributeError, KeyError, ModuleNotFoundError):
+                cache = self.cache_labels(cache_path)
+            cache.pop("hash", None)
+            cache.pop("version", None)
+            return cache["labels"]
+    
+    class COCOTrainer(DetectionTrainer):
+        """Trainer that uses COCODataset for direct COCO JSON training."""
+    
+        def build_dataset(self, img_path, mode="train", batch=None):
+            """Build a COCODataset for the given split using the JSON file from the data config."""
+            json_file = self.data["train_json"] if mode == "train" else self.data.get("val_json", self.data["train_json"])
+            return COCODataset(
+                img_path=img_path,
+                json_file=json_file,
+                imgsz=self.args.imgsz,
+                batch_size=batch,
+                augment=mode == "train",
+                hyp=self.args,
+                rect=self.args.rect or mode == "val",
+                cache=self.args.cache or None,
+                single_cls=self.args.single_cls or False,
+                stride=int(self.model.stride.max()) if hasattr(self, "model") and self.model else 32,
+                pad=0.0 if mode == "train" else 0.5,
+                prefix=colorstr(f"{mode}: "),
+                task=self.args.task,
+                classes=self.args.classes,
+                fraction=self.args.fraction if mode == "train" else 1.0,
+            )
+    
+    model = YOLO("yolo26n.pt")
+    model.train(data="dataset.yaml", epochs=100, imgsz=640, trainer=COCOTrainer)
+
+[하이퍼파라미터](https://www.ultralytics.com/glossary/hyperparameter-tuning) 권장 사항은 [모델 학습 팁](/ko/guides/model-training-tips) 가이드를 참조하십시오.
+
+## Link to this sectionFAQ#
+
+### Link to this section이 방법과 convert_coco()의 차이점은 무엇인가요?#
+
+[`convert_coco()`](/reference/data/converter#ultralytics.data.converter.convert_coco)는 일회성 변환으로 `.txt` 레이블 파일을 디스크에 작성합니다. 이 접근 방식은 각 학습 실행 시작 시 JSON을 파싱하고 메모리에서 어노테이션을 변환합니다. 영구적인 YOLO 형식 레이블이 선호될 때는 `convert_coco()`를 사용하고, 추가 파일 생성 없이 COCO JSON을 단일 진실 공급원으로 유지하려면 이 접근 방식을 사용하십시오.
+
+### Link to this section커스텀 코드 없이 YOLO를 COCO JSON으로 학습할 수 있나요?#
+
+현재의 Ultralytics 파이프라인으로는 불가능하며, 기본적으로 YOLO `.txt` 레이블을 기대합니다. 이 가이드는 필요한 최소한의 커스텀 코드(하나의 데이터셋 클래스와 하나의 트레이너 클래스)를 제공합니다. 일단 정의되면 학습에는 표준 `model.train()` 호출만 필요합니다.
+
+### Link to this section세그멘테이션 및 포즈 추정을 지원하나요?#
+
+This guide covers [object detection](https://www.ultralytics.com/glossary/object-detection). To add [instance segmentation](https://www.ultralytics.com/glossary/instance-segmentation) support, include the `segmentation` polygon data from COCO annotations in the `segments` field of each label dictionary. For [pose estimation](https://www.ultralytics.com/glossary/pose-estimation), include `keypoints`. The `GroundingDataset` [source code](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/dataset.py) provides a reference implementation for handling segments.
+
+### Link to this section이 커스텀 데이터셋에서도 증강(Augmentation)이 작동하나요?#
+
+Yes. `COCODataset` extends `YOLODataset`, so all built-in [data augmentations](/ko/guides/yolo-data-augmentation) — [mosaic](/ko/guides/yolo-data-augmentation#mosaic-mosaic), [mixup](/ko/guides/yolo-data-augmentation#mixup-mixup), [copy-paste](/ko/guides/yolo-data-augmentation#copy-paste-copy_paste), and others — run without modification.
+
+### Link to this section카테고리 ID는 클래스 인덱스로 어떻게 매핑되나요?#
+
+Categories are sorted by `id` and mapped to sequential indices starting from 0. This handles 1-based IDs (standard COCO), 0-based IDs, and non-contiguous IDs. The `names` dictionary in `dataset.yaml` should follow the same sorted order as the COCO `categories` array.
+
+### Link to this section미리 변환된 레이블과 비교하여 성능 오버헤드가 있나요?#
+
+COCO JSON은 첫 번째 학습 실행 시 한 번 파싱됩니다. 파싱된 레이블은 `.cache` 파일에 저장되므로 후속 실행 시에는 다시 파싱할 필요 없이 즉시 로드됩니다. 어노테이션이 메모리에 유지되므로 학습 속도는 표준 YOLO 학습과 동일합니다. JSON 파일이 변경되면 캐시가 자동으로 다시 빌드됩니다.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-json-training.md)
+
+[GLglenn-jocher2](https://github.com/glenn-jocher)[RAraimbekovm2](https://github.com/raimbekovm)
+
+생성됨 2개월 전업데이트됨 지난주
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

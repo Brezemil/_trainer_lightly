@@ -1,0 +1,204 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/modal-quickstart
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/modal-quickstart.md)
+
+# Link to this sectionUltralytics向けModalクイックスタートガイド#
+
+This guide provides a comprehensive introduction to running [Ultralytics YOLO26](/ja/models/yolo26) on [Modal](https://modal.com/), covering serverless GPU inference and model training.
+
+## Link to this sectionModalとは何ですか？#
+
+[Modal](https://modal.com/) is a serverless [cloud computing](https://www.ultralytics.com/glossary/cloud-computing) platform for AI and [machine learning](https://www.ultralytics.com/glossary/machine-learning-ml) workloads. It handles provisioning, scaling, and execution automatically — you write Python code locally and Modal runs it in the cloud with GPU access. This makes it ideal for running [deep learning](https://www.ultralytics.com/glossary/deep-learning-dl) models like YOLO26 without managing infrastructure.
+
+## Link to this section学習内容#
+
+  * Modalのセットアップと認証
+  * ModalでのYOLO26推論の実行
+  * GPUを使用した推論の高速化
+  * ModalでのYOLO26モデルのトレーニング
+
+
+
+## Link to this section前提条件#
+
+  * Modalアカウント（[modal.com](https://modal.com/)で無料でサインアップできます）
+  * ローカルマシンにインストールされたPython 3.9以降
+
+
+
+## Link to this sectionインストール#
+
+ModalのPythonパッケージをインストールし、認証を行います：
+    
+    
+    pip install modal
+    
+    
+    modal token new
+
+認証
+
+`modal token new`コマンドを実行するとブラウザウィンドウが開き、Modalアカウントを認証できます。認証後、ターミナルからModalコマンドを実行できるようになります。
+
+## Link to this sectionYOLO26推論の実行#
+
+`modal_yolo.py`という新しいPythonファイルを作成し、以下のコードを記述します：
+    
+    
+    """
+    Modal + Ultralytics YOLO26 Quickstart
+    Run: modal run modal_yolo.py.
+    """
+    
+    import modal
+    
+    app = modal.App("ultralytics-yolo")
+    
+    image = modal.Image.debian_slim(python_version="3.11").apt_install("libgl1", "libglib2.0-0").pip_install("ultralytics")
+    
+    @app.function(image=image)
+    def predict(image_url: str):
+        """Run YOLO26 inference on an image URL."""
+        from ultralytics import YOLO
+    
+        model = YOLO("yolo26n.pt")
+        results = model(image_url)
+    
+        for r in results:
+            print(f"Detected {len(r.boxes)} objects:")
+            for box in r.boxes:
+                print(f"  - {model.names[int(box.cls)]}: {float(box.conf):.2f}")
+    
+    @app.local_entrypoint()
+    def main():
+        """Test inference with sample image."""
+        predict.remote("https://ultralytics.com/images/bus.jpg")
+
+推論を実行します：
+    
+    
+    modal run modal_yolo.py
+
+期待される出力：
+    
+    
+    ✓ Initialized. View run at https://modal.com/apps/your-username/main/ap-xxxxxxxx
+    ✓ Created objects.
+    ├── 🔨 Created mount modal_yolo.py
+    └── 🔨 Created function predict.
+    Downloading https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt to 'yolo26n.pt'...
+    Downloading https://ultralytics.com/images/bus.jpg to 'bus.jpg'...
+    image 1/1 /root/bus.jpg: 640x480 4 persons, 1 bus, 377.8ms
+    Speed: 5.8ms preprocess, 377.8ms inference, 0.3ms postprocess per image at shape (1, 3, 640, 480)
+    
+    Detected 5 objects:
+      - bus: 0.92
+      - person: 0.91
+      - person: 0.91
+      - person: 0.87
+      - person: 0.53
+    ✓ App completed.
+
+Modalダッシュボードで関数実行を監視できます：
+
+![Modal Dashboard Function Calls](https://cdn.jsdelivr.net/gh/ultralytics/assets@fda2504f1e5dab2f437097ac7b99a7da984e4243/docs/modal-dashboard-function-calls.avif)
+
+## Link to this sectionGPUを使用した推論の高速化#
+
+`gpu`パラメータを指定して、関数にGPUを追加します：
+    
+    
+    @app.function(image=image, gpu="T4")  # Options: "T4", "A10G", "A100", "H100"
+    def predict_gpu(image_url: str):
+        """Run YOLO26 inference on GPU."""
+        from ultralytics import YOLO
+    
+        model = YOLO("yolo26n.pt")
+        results = model(image_url)
+        print(results[0].boxes)
+
+GPU| メモリ| 用途  
+---|---|---  
+T4| 16 GB| 推論、小規模なモデルトレーニング  
+A10G| 24 GB| 中規模のトレーニングジョブ  
+A100| 40 GB| 大規模トレーニング  
+H100| 80 GB| 最高パフォーマンス  
+  
+## Link to this sectionModalでのYOLO26のトレーニング#
+
+トレーニングには、GPUと永続ストレージ用のModal [Volumes](https://modal.com/docs/guide/volumes)を使用します。`train_yolo.py`という新しいPythonファイルを作成してください：
+    
+    
+    import modal
+    
+    app = modal.App("ultralytics-training")
+    
+    volume = modal.Volume.from_name("yolo-training-vol", create_if_missing=True)
+    
+    image = modal.Image.debian_slim(python_version="3.11").apt_install("libgl1", "libglib2.0-0").pip_install("ultralytics")
+    
+    @app.function(image=image, gpu="T4", timeout=3600, volumes={"/data": volume})
+    def train():
+        """Train YOLO26 model on Modal."""
+        from ultralytics import YOLO
+    
+        model = YOLO("yolo26n.pt")
+        model.train(data="coco8.yaml", epochs=3, imgsz=640, project="/data/runs")
+    
+    @app.local_entrypoint()
+    def main():
+        train.remote()
+
+トレーニングを実行します：
+    
+    
+    modal run train_yolo.py
+
+ボリュームの永続性
+
+Modal Volumesは、関数実行間でデータを保持します。トレーニング済みの重みは`/data/runs/detect/train/weights/`に保存されます。
+
+おめでとうございます！これでModal上でUltralytics YOLO26のセットアップが完了しました。さらに学習を進めるには：
+
+  * 高度な機能については[Ultralytics YOLO26のドキュメント](/ja/models/yolo26)をご覧ください
+  * 独自のデータセットを使用した[カスタムモデルのトレーニング](/ja/modes/train)について学習してください
+  * 高度なプラットフォーム機能については[Modalのドキュメント](https://modal.com/docs)をご覧ください
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionYOLO26のワークロードに適したGPUを選択するにはどうすればよいですか？#
+
+推論の場合、通常はNVIDIA T4 (16 GB)で十分かつ費用対効果が高いです。トレーニングやYOLO26xのようなより大きなモデルの場合は、A10GまたはA100 GPUを検討してください。
+
+### Link to this sectionModalでYOLO26を実行するコストはどれくらいですか？#
+
+Modalは秒単位の従量課金制です。料金の目安：CPUは約$0.05/時間、T4は約$0.59/時間、A10Gは約$1.10/時間、A100は約$2.10/時間です。最新の料金については[Modalの価格ページ](https://modal.com/pricing)をご確認ください。
+
+### Link to this section独自のカスタムトレーニング済みYOLOモデルを使用できますか？#
+
+はい、可能です。Modal Volumeからカスタムモデルをロードしてください：
+    
+    
+    model = YOLO("/data/my_custom_model.pt")
+
+カスタムモデルのトレーニングに関する詳細については、[トレーニングガイド](/ja/modes/train)を参照してください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/modal-quickstart.md)
+
+[RAraimbekovm1](https://github.com/raimbekovm)
+
+作成日 先月更新日 先月
+
+## コメント
+
+このページの内容
+
+AIで探索

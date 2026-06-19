@@ -1,0 +1,177 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/model-testing
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-testing.md)
+
+# Link to this section如何测试计算机视觉模型#
+
+## Link to this section简介#
+
+模型测试旨在检查[训练好的模型](/zh/guides/model-training-tips)在未经处理的真实世界数据（例如运动的、光线不足或部分遮挡的物体，而非精心筛选的基准数据集）上的表现。虽然[模型评估](/zh/guides/model-evaluation-insights)是在标记数据集上测量指标，但模型测试是在部署前验证模型学习到的行为是否符合[应用目标](/zh/guides/defining-project-goals)。本指南涵盖了准备测试数据、测试 Ultralytics YOLO26 模型，以及发现[过拟合](https://www.ultralytics.com/glossary/overfitting)、欠拟合和数据泄露的方法。
+
+  
+
+
+  
+**Watch:** How to Test Machine Learning Models | Avoid Data Leakage in Computer Vision 🚀 
+
+## Link to this section模型测试与模型评估#
+
+模型测试和模型评估是[计算机视觉项目中的两个不同步骤](/zh/guides/steps-of-a-cv-project)。评估是在标记数据集上通过指标衡量性能；而测试则是检查模型学习到的行为是否在类似于部署的条件下依然稳健。
+
+假设你训练了一个[计算机视觉](https://www.ultralytics.com/glossary/computer-vision-cv)模型来识别猫和狗，并希望将其部署在宠物店以监测动物。在模型评估阶段，你使用一个标记好的数据集来计算[准确率](https://www.ultralytics.com/glossary/accuracy)、[精确率](https://www.ultralytics.com/glossary/precision)和[召回率](https://www.ultralytics.com/glossary/recall)等指标。例如，模型在某个数据集上区分猫和狗的准确率可能达到 98%。
+
+评估之后，你需要使用宠物店的真实图像测试模型，看看它在更多样化和更现实的条件下识别猫狗的效果如何。你需要检查模型在动物移动、不同光照条件或被玩具、家具等物体部分遮挡时，是否仍能正确标注它们。模型测试可以验证模型在受控评估环境之外的表现是否符合预期。
+
+## Link to this section准备模型测试#
+
+计算机视觉 [数据集](/zh/guides/preprocessing-annotated-data) 通常被划分为训练集和测试集，以模拟现实世界的情况：[训练数据](https://www.ultralytics.com/glossary/training-data) 用于教导模型，而测试数据则用于验证模型在未见过的数据上的表现。[Ultralytics Platform](https://platform.ultralytics.com) 将数据集的组织和标注集中管理，这有助于构建带有标签的测试集。
+
+测试前注意事项
+
+  * **真实代表性：** 未经处理的测试数据应类似于模型部署后将要处理的数据。这能提供模型能力的真实写照。
+  * **足够的规模：** 测试数据集必须足够大，才能为评估模型性能提供可靠的洞察。
+
+
+
+## Link to this section如何测试 YOLO26 模型#
+
+测试训练好的 YOLO26 模型涉及两个互补的工作流：在标记过的测试集上进行验证以获取定量指标，以及在新图像上进行预测以进行定性行为检查。
+
+### Link to this section在标记过的测试集上进行验证#
+
+[验证模式](/zh/modes/val)会将模型的预测结果与真实标签进行对比，并报告检测模型的精确率、召回率、mAP50 和 mAP50-95。它还会保存诸如混淆矩阵和精确率-召回率曲线等视觉辅助工具，帮助你发现模型表现不佳的具体区域。
+
+用法
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained model or your own trained checkpoint, e.g. "path/to/best.pt"
+    model = YOLO("yolo26n.pt")
+    
+    # Validate; add split="test" if your dataset YAML defines a test split
+    metrics = model.val(data="coco8.yaml")
+    print(metrics.box.map)  # mAP50-95
+
+默认情况下，验证会在数据集的 `val` 拆分上运行。若要衡量在留出测试集上的性能，请在你的数据集 YAML 中定义 `test:` 拆分并传入 `split="test"`。
+
+### Link to this section对新图像进行预测#
+
+[预测模式](/zh/modes/predict)会在无需标签的情况下在新数据上运行模型。它不会产生性能指标，但保存标注后的输出结果可以让你审查模型在真实图像上的行为——例如，一次性处理整个测试图像文件夹。
+
+用法
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained model or your own trained checkpoint, e.g. "path/to/best.pt"
+    model = YOLO("yolo26n.pt")
+    
+    # Run predictions on a folder of test images and save annotated results
+    results = model.predict(source="path/to/test_images", save=True)
+
+在自定义训练前测试预训练模型
+
+为了在投入自定义训练之前检查 YOLO26 是否适合你的应用，请使用预训练检查点在你自己的图像上运行预测模式。这些模型已经在 [COCO](/zh/datasets/detect/coco) 等数据集上进行了预训练，因此结果能让你快速了解模型在特定场景下的可能表现。
+
+### Link to this section验证与预测模式的对比#
+
+模式| 用途| 需要标签| 输出  
+---|---|---|---  
+[验证](/zh/modes/val)| 对照真实情况量化性能| 是| 精确率、召回率、mAP50、mAP50-95、混淆矩阵、PR 曲线  
+[预测](/zh/modes/predict)| 检查模型在未标注新数据上的行为| 否| 带标注的图像和预测结果，无指标  
+  
+## Link to this section如何分析测试结果#
+
+获得预测结果和指标后，深入挖掘模型失败的原因和位置：
+
+  * **误分类图像：** 识别并审查模型分类错误的图像，以了解出错环节。
+  * **错误分析：** 执行彻底的错误分析，以理解错误类型（例如误报与漏报）及其潜在原因。
+  * **偏见与公平性：** 检查模型预测中是否存在偏见。确保模型在不同数据子集上表现一致，特别是当数据涉及种族、性别或年龄等敏感属性时。
+
+
+
+## Link to this section机器学习中的过拟合与欠拟合#
+
+在测试[机器学习](https://www.ultralytics.com/glossary/machine-learning-ml)模型（尤其是计算机视觉模型）时，务必警惕过拟合和[欠拟合](https://www.ultralytics.com/glossary/underfitting)。这些问题会严重影响模型在新数据上的工作表现。
+
+问题| 常见征兆| 如何解决  
+---|---|---  
+**过拟合**|  训练准确率高但验证准确率低；对图像中的微小变化或无关细节过度敏感| 应用[正则化](https://www.ultralytics.com/glossary/regularization)（如 dropout），增加训练数据集规模，简化模型架构  
+**欠拟合**|  即便是训练集上的准确率也很低；始终无法识别明显的特征或物体| 使用更复杂的模型，提供更多相关特征，增加训练[轮次](https://www.ultralytics.com/glossary/epoch)  
+  
+关键在于找到平衡点，使模型在训练和验证数据集上都能表现良好。在测试期间定期监控指标并直观检查预测结果，可以帮助你发现模型向任一极端偏移的倾向。
+
+![Comparison of underfitting, appropriate fitting, and overfitting on the same dataset](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/overfitting-underfitting-appropriate-fitting.avif)
+
+## Link to this section计算机视觉中的数据泄露及其预防方法#
+
+数据泄露是指训练数据集之外的信息意外被用于模型训练。模型在训练过程中可能显得非常准确，但一旦发生数据泄露，它在处理新、未见数据时将表现不佳。
+
+泄露可能很难发现，通常源于训练数据中隐藏的偏见：
+
+偏见类型| 表现形式  
+---|---  
+**摄像机偏见**|  不同的角度、光照、阴影和摄像机运动引入了不必要的模式  
+**覆盖偏见**|  图像中的徽标、时间戳或其他叠加层误导了模型  
+**字体和物体偏见**|  特定类别中频繁出现的特定字体或物体会扭曲模型的学习效果  
+**空间偏见**|  前景-背景分布、[边界框](https://www.ultralytics.com/glossary/bounding-box)分布和物体位置的不平衡会影响训练  
+**标签和领域偏见**|  错误的标签或数据类型的转移导致泄露  
+  
+### Link to this section如何检测和避免数据泄露#
+
+要发现数据泄露，请检查模型结果是否好得令人意外，查看是否存在某个特征对结果贡献过大，再次确认模型的决策是否在直觉上合理，并验证数据在任何处理前是否被正确划分。
+
+为了防止泄露，应使用包含来自不同摄像机和环境的图像或视频的多样化数据集，并仔细审查数据中是否存在隐藏偏见——例如所有正样本均在一天中的特定时间采集。避免数据泄露能使你的计算机视觉模型在现实情况下更加可靠。
+
+## Link to this section模型测试之后的步骤#
+
+测试模型后，后续步骤取决于测试结果。如果模型表现良好，你可以将其部署到真实环境中。如果结果不理想，你需要进行改进。这可能涉及分析错误、[收集更多数据](/zh/guides/data-collection-and-annotation)、提高数据质量、[调整超参数](/zh/guides/hyperparameter-tuning)以及重新训练模型。
+
+## Link to this section结论#
+
+严谨的模型测试——在留出测试集上验证、在真实图像上预测、检查过拟合和数据泄露——是将一个评估良好的模型转化为可靠模型的关键。在部署前解决测试发现的问题，你的模型在生产环境中按预期表现的几率将大幅增加。如果过程中有任何问题，可以在 [Ultralytics GitHub 仓库](https://github.com/ultralytics/ultralytics) 或 [Ultralytics Discord 服务器](https://discord.com/invite/ultralytics) 上向社区提问。
+
+## Link to this section常见问题解答#
+
+### Link to this section计算机视觉中模型评估和模型测试的关键区别是什么？#
+
+模型评估是在标记数据集上通过指标衡量性能，而模型测试则是检查模型在类似于部署条件的新、未见数据上的行为。评估产生受控数据集下的精确率和 mAP 等数值；测试则揭示学习到的行为是否能在多变的光照、运动或遮挡条件下保持稳健。查看模型测试与模型评估获取具体案例。
+
+### Link to this section我该如何测试我的 Ultralytics YOLO26 模型在多张图像上的表现？#
+
+使用[预测模式](/zh/modes/predict)并将文件夹路径作为 `source` 传入——YOLO26 将运行文件夹中的每一张图像，并可保存标注后的结果以供审查。预测模式不计算指标；若要量化标记集上的性能，请改用[验证模式](/zh/modes/val)。这两个工作流在如何测试 YOLO26 模型中有展示。
+
+### Link to this sectionYOLO26 验证在测试集上会报告哪些指标？#
+
+对于检测模型，验证会报告精确率、召回率、mAP50 和 mAP50-95，并保存包括混淆矩阵和精确率-召回率曲线在内的图表。若要验证特定的测试拆分而非默认的 `val` 拆分，请在数据集 YAML 中定义 `test:` 并传入 `split="test"`。请参考[性能指标指南](/zh/guides/yolo-performance-metrics)了解如何解读每项指标。
+
+### Link to this section如果我的计算机视觉模型显示出过拟合或欠拟合的迹象，我该怎么办？#
+
+对于过拟合，可应用 dropout 等正则化技术、增加训练数据集规模或简化模型架构。对于欠拟合，可使用更复杂的模型、提供更多相关特征或增加训练轮次。每种问题的征兆及相应修复方法已汇总在机器学习中的过拟合与欠拟合中。
+
+### Link to this section我该如何检测和避免计算机视觉中的数据泄露？#
+
+当测试表现好得令人怀疑、单一特征主导预测或模型决策在直觉上不合理时，请怀疑数据泄露。预防方法包括使用来自不同摄像机和环境的多样化数据集、审查数据中的隐藏偏见，并验证训练/测试集划分发生在任何处理之前。查看计算机视觉中的数据泄露了解常见的偏见类型。
+
+### Link to this section测试计算机视觉模型后我应该采取什么步骤？#
+
+如果结果符合你的项目目标，则部署模型；否则，在部署前进行改进。这可能意味着分析错误、[收集更多多样化数据](/zh/guides/data-collection-and-annotation)、提高数据质量、[调整超参数](/zh/guides/hyperparameter-tuning)以及重新训练。在每一轮更改后重复测试，以确认修复是否有效。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-testing.md)
+
+[GLglenn-jocher8](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[RAraimbekovm1](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)[ABabirami-vina1](https://github.com/abirami-vina)
+
+已创建 2024年7月3日已更新 3天前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

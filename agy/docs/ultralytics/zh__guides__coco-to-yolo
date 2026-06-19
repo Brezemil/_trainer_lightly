@@ -1,0 +1,311 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/coco-to-yolo
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-to-yolo.md)
+
+# Link to this section如何将 COCO 标注转换为 YOLO 格式#
+
+训练 [Ultralytics YOLO](https://www.ultralytics.com/) 模型需要使用 YOLO 格式的标注，但许多流行的 [标注](https://www.ultralytics.com/glossary/data-labeling) 工具导出的是 [COCO JSON](https://cocodataset.org/#format-data) 格式。本指南将向你展示如何将 COCO 标注转换为 YOLO 格式，并开始训练 [目标检测](https://www.ultralytics.com/glossary/object-detection)、[实例分割](https://www.ultralytics.com/glossary/instance-segmentation) 和 [姿态估计](https://www.ultralytics.com/glossary/pose-estimation) 模型。
+
+## Link to this section为什么要从 COCO 转换为 YOLO？#
+
+COCO JSON 格式将所有标注存储在单个文件中，而 [YOLO](https://docs.ultralytics.com/datasets/detect#ultralytics-yolo-format) 则为每张图像使用一个带有归一化坐标的文本文件。转换之所以必要，是因为：
+
+  * **YOLO 模型需要`.txt` 标签文件**，每张图像对应一个文件，其中包含 `class x_center y_center width height` 的归一化坐标。
+  * **COCO JSON 使用像素坐标** ，采用 `[x_min, y_min, width, height]` 格式，并为所有图像使用一个 JSON 文件。
+  * **类别 ID 不同** — COCO 使用任意的 `category_id` 值，而 YOLO 要求使用从 0 开始索引的类别 ID。
+
+
+
+特性| COCO JSON| YOLO TXT  
+---|---|---  
+**结构**|  所有图像共用一个 JSON 文件| 每张图像一个 `.txt` 文件  
+**边界框格式**| `[x_min, y_min, width, height]`（以像素为单位）| `class x_center y_center width height`（已归一化，范围 0-1）  
+**类别 ID**| `category_id`（可以从任何数字开始）| 从 0 开始索引  
+**分割**| `segmentation` 字段中的多边形数组| 类别 ID 之后的多边形坐标  
+**关键点**| `[x, y, visibility, ...]`（以像素为单位）| `[x, y, visibility, ...]`（已归一化）  
+  
+## Link to this section快速入门#
+
+转换 COCO 标注并开始训练的最快方法：
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        labels_dir="path/to/annotations/",  # directory containing your JSON files
+        save_dir="path/to/output/",  # where to save converted labels
+        cls91to80=False,  # IMPORTANT: set False for custom datasets
+    )
+
+转换后，请整理目录结构、创建 dataset.yaml 并开始训练。请查看下方的完整分步指南。
+
+自定义数据集：请务必使用 `cls91to80=False`
+
+`cls91to80=True` 默认设置**仅** 针对拥有 80 个对象类别的标准 [COCO 数据集](/zh/datasets/detect/coco) 设计，它将 91 个非连续的类别 ID 映射到 80 个连续的类别 ID。对于任何自定义数据集，你**必须** 设置 `cls91to80=False` —— 否则你的类别 ID 将被错误地自动映射，导致模型学习到错误的类别。
+
+## Link to this section分步转换指南#
+
+### Link to this section1\. 准备你的 COCO 数据集#
+
+从标注工具导出的典型 COCO 格式数据集具有以下结构：
+    
+    
+    my_dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── img_001.jpg
+    │   │   ├── img_002.jpg
+    │   │   └── ...
+    │   └── val/
+    │       ├── img_100.jpg
+    │       └── ...
+    └── annotations/
+        ├── instances_train.json
+        └── instances_val.json
+
+每个 JSON 文件均遵循 [COCO 数据格式](https://cocodataset.org/#format-data) 规范，包含三个必需字段 —— `images`、`annotations` 和 `categories`：
+    
+    
+    {
+        "images": [{ "id": 1, "file_name": "img_001.jpg", "width": 640, "height": 480 }],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [100, 50, 200, 150],
+                "area": 30000,
+                "iscrowd": 0
+            }
+        ],
+        "categories": [
+            { "id": 1, "name": "helmet" },
+            { "id": 2, "name": "vest" }
+        ]
+    }
+
+### Link to this section2\. 转换标注#
+
+使用 [`convert_coco()`](/reference/data/converter#ultralytics.data.converter.convert_coco) 函数将 COCO JSON 标注转换为 YOLO `.txt` 格式：
+
+将 COCO 转换为 YOLO 格式
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        labels_dir="my_dataset/annotations/",
+        save_dir="my_dataset/converted/",
+        cls91to80=False,
+    )
+
+### Link to this section3\. 整理目录结构#
+
+转换后，标签文件需要放置在与图像相同的位置。YOLO 要求 `labels/` 目录与 `images/` 目录结构镜像对应：
+    
+    
+    import shutil
+    from pathlib import Path
+    
+    # Paths
+    converted_dir = Path("my_dataset/converted/labels")
+    dataset_dir = Path("my_dataset")
+    
+    # Move labels next to images for each split
+    for split in ["train", "val"]:
+        src = converted_dir / split  # convert_coco strips "instances_" prefix from JSON filename
+        dst = dataset_dir / "labels" / split
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in src.glob("*.txt"):
+            shutil.move(str(f), str(dst / f.name))
+
+最终的[数据集结构](/zh/datasets/detect#ultralytics-yolo-format)应该如下所示：
+    
+    
+    my_dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── img_001.jpg
+    │   │   └── ...
+    │   └── val/
+    │       └── ...
+    ├── labels/
+    │   ├── train/
+    │   │   ├── img_001.txt
+    │   │   └── ...
+    │   └── val/
+    │       └── ...
+    └── dataset.yaml
+
+### Link to this section4\. 创建 dataset.yaml#
+
+创建一个 `dataset.yaml` 配置文件，将 COCO 类别映射到 YOLO 类名。此文件告知 YOLO 数据的位置以及需要检测的类别：
+    
+    
+    import json
+    from pathlib import Path
+    
+    import yaml
+    
+    # Read categories from your COCO JSON
+    with open("my_dataset/annotations/instances_train.json") as f:
+        coco = json.load(f)
+    
+    # Build class names matching convert_coco output (category_id - 1)
+    categories = sorted(coco["categories"], key=lambda x: x["id"])
+    names = {cat["id"] - 1: cat["name"] for cat in categories}
+    # NOTE: convert_coco maps class IDs as category_id - 1, so category_id must
+    # start from 1. If your categories start from 0, add 1 to each ID first.
+    
+    # Create dataset.yaml
+    dataset = {
+        "path": str(Path("my_dataset").resolve()),
+        "train": "images/train",
+        "val": "images/val",
+        "names": names,
+    }
+    
+    with open("my_dataset/dataset.yaml", "w") as f:
+        yaml.dump(dataset, f, default_flow_style=False)
+
+生成的 YAML 文件：
+    
+    
+    path: /absolute/path/to/my_dataset
+    train: images/train
+    val: images/val
+    names:
+        0: helmet
+        1: vest
+
+有关数据集 YAML 格式的更多详细信息，请参阅[数据集配置指南](/zh/datasets/detect)。
+
+### Link to this section5\. 训练你的 YOLO 模型#
+
+准备好转换后的数据集后，即可训练 YOLO 模型：
+
+在转换后的 COCO 数据上进行训练
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load a pretrained model
+    results = model.train(data="my_dataset/dataset.yaml", epochs=100, imgsz=640)
+
+有关训练技巧和最佳实践，请参阅[模型训练指南](/zh/guides/model-training-tips)。
+
+### Link to this section6\. 验证转换结果#
+
+训练前，请抽查几个标签文件，确认类别 ID 和坐标是否正确：
+    
+    
+    from pathlib import Path
+    
+    label_file = Path("my_dataset/labels/train/img_001.txt")
+    for line in label_file.read_text().strip().splitlines():
+        parts = line.split()
+        cls_id = int(parts[0])
+        coords = [float(v) for v in parts[1:5]]
+        assert cls_id >= 0, f"Negative class ID {cls_id} — category_id in your JSON may start from 0"
+        assert all(0 <= v <= 1 for v in coords), f"Coordinates out of [0, 1] range: {coords}"
+
+提示
+
+If you see negative class IDs, your COCO JSON likely uses `category_id` starting from 0. Add 1 to all `category_id` values in your JSON before running `convert_coco()`, since it maps class IDs as `category_id - 1`.
+
+## Link to this section常见问题排查#
+
+### Link to this section转换后类别 ID 错误#
+
+如果模型可以训练但检测到的对象类别错误，说明你可能在自定义数据集上使用了 `cls91to80=True`（默认值）。这会通过 COCO 91 转 80 的查找表来映射你的 `category_id` 值，该表仅适用于标准的 [COCO 数据集](/zh/datasets/detect/coco)。
+
+**解决方案** ：自定义数据集请始终使用 `cls91to80=False`。
+
+### Link to this section训练期间未找到标签#
+
+如果训练显示 `WARNING: No labels found` 或 `0 images, N backgrounds`，说明你的标签文件不在预期的目录中。`convert_coco()` 会将标签保存到单独的输出目录（例如 `save_dir/labels/train/`），但 YOLO 要求 `labels/` 目录与数据集目录内的 `images/` 目录平行。
+
+**解决方案** ：移动标签文件以符合预期的目录结构。确保 `labels/train/` 是 `images/train/` 的同级目录。
+
+### Link to this section转换期间出现 KeyError#
+
+If you get `KeyError: 'bbox'` or similar errors when running `convert_coco()`, your `labels_dir` likely contains non-instance JSON files (e.g., `captions_train2017.json`) that have a different annotation structure.
+
+**Solution** : Only place instance annotation JSON files (e.g., `instances_train2017.json`) in the `labels_dir`.
+
+### Link to this section转换后标签文件为空#
+
+如果转换完成但 `.txt` 文件为空或丢失，说明所有标注可能都具有 `iscrowd: 1`（在使用 [SAM](/zh/models/sam) 生成的掩码时很常见），或者[边界框](https://www.ultralytics.com/glossary/bounding-box)的宽度或高度为零。
+
+**Solution** : Inspect your JSON annotations for `iscrowd` values. If using SAM masks, preprocess the JSON to set `iscrowd: 0`.
+
+### Link to this section转换后的标签中存在类别 ID 间隙#
+
+如果标签文件中的类别 ID 不连续（例如 0、4、9 而不是 0、1、2），则说明你的标注工具使用了非连续的 `category_id` 值。
+
+**Solution** : Verify the class IDs in your `.txt` files match the `names` dictionary in `dataset.yaml`. Remap IDs to contiguous values if needed.
+
+有关完整的 API 详细信息和参数描述，请参阅 [`convert_coco` API 参考](/reference/data/converter#ultralytics.data.converter.convert_coco)。
+
+## Link to this section常见问题 (FAQ)#
+
+### Link to this section如何将 COCO JSON 标注转换为 YOLO 格式？#
+
+使用 Ultralytics 的 `convert_coco()` 函数将 COCO JSON 标注转换为 YOLO `.txt` 格式。对于自定义数据集，请设置 `cls91to80=False`：
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="path/to/annotations/", save_dir="output/", cls91to80=False)
+
+转换后，重新整理标签文件，使 `labels/` 目录与 `images/` 目录镜像对应，然后创建一个 `dataset.yaml` 文件。请参阅分步指南获取完整流程。
+
+### Link to this section为什么 COCO 转换后 YOLO 训练显示“未找到标签”？#
+
+这是因为 `convert_coco()` 将标签保存到了 `save_dir/labels/` 的子目录（例如 `save_dir/labels/train/`）中，而不是直接保存到数据集的 `labels/train/` 中（与 `images/train/` 平行）。YOLO 要求标签与图像平行——例如，`images/train/img.jpg` 需要对应的 `labels/train/img.txt`。请移动转换后的标签以匹配此结构。请参阅修复目录结构。
+
+### Link to this sectionWhat does `cls91to80` do in `convert_coco()`?#
+
+`cls91to80` 参数控制 COCO `category_id` 值如何映射到 YOLO 类别 ID。当设置为 `True`（默认值）时，它使用专为标准 [COCO 数据集](/zh/datasets/detect/coco) 设计的查找表，该数据集拥有 80 个非连续 ID（1-90）的类别。对于**自定义数据集** ，请始终设置 `cls91to80=False` —— 这只会从每个 `category_id` 中减去 1，以创建从 0 开始索引的类别 ID。
+
+### Link to this section可以直接在 COCO JSON 上训练 YOLO 而无需转换吗？#
+
+目前的 YOLO 训练流水线不支持这样做——标注必须是 YOLO `.txt` 格式，且每张图像对应一个文件。请先使用 `convert_coco()` 转换 COCO JSON，然后按照此指南进行组织和训练。有关支持格式的更多信息，请参阅[数据集格式](/zh/datasets/detect)。
+
+### Link to this section可以将 COCO 分割标注转换为 YOLO 格式吗？#
+
+Yes, use `use_segments=True` when calling `convert_coco()` to include polygon segmentation masks in the converted YOLO labels. This produces label files compatible with [YOLO segmentation models](/zh/tasks/segment):
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="annotations/", save_dir="output/", use_segments=True, cls91to80=False)
+
+### Link to this section如何将 COCO 关键点标注转换为 YOLO 格式？#
+
+使用 `use_keypoints=True` 转换用于[姿态估计](/zh/tasks/pose)训练的 COCO 关键点标注：
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="annotations/", save_dir="output/", use_keypoints=True, cls91to80=False)
+
+请注意，如果 `use_segments` 和 `use_keypoints` 都设置为 `True`，则只有关键点会被写入标签文件——分割信息会被静默忽略。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-to-yolo.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[RAraimbekovm1](https://github.com/raimbekovm)
+
+已创建 2个月前已更新 上个月
+
+## 评论
+
+本页内容
+
+使用 AI 探索

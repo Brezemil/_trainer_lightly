@@ -1,0 +1,341 @@
+---
+source_url: https://docs.ultralytics.com/ko/yolov5/tutorials/train-custom-data
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/train-custom-data.md)
+
+# Link to this section사용자 지정 데이터로 YOLOv5 학습하기#
+
+📚 This guide explains how to train your own **custom dataset** using the [YOLOv5](https://github.com/ultralytics/yolov5) model 🚀. Training custom models is a fundamental step in tailoring [computer vision](https://www.ultralytics.com/glossary/computer-vision-cv) solutions to specific real-world applications beyond generic [object detection](https://docs.ultralytics.com/tasks/detect).
+
+## Link to this section시작하기 전에#
+
+먼저 필요한 환경이 설정되어 있는지 확인하십시오. YOLOv5 저장소를 복제하고 `requirements.txt`에서 필수 의존성을 설치하십시오. [**Python >=3.8.0**](https://www.python.org/) 환경과 [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/)이 필수입니다. 모델과 데이터셋은 로컬에서 찾을 수 없는 경우 최신 YOLOv5 [릴리스](https://github.com/ultralytics/yolov5/releases)에서 자동으로 다운로드됩니다.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # Clone the repository
+    cd yolov5
+    pip install -r requirements.txt # Install dependencies
+
+## Link to this section사용자 지정 데이터로 학습하기#
+
+[![Ultralytics 능동 학습 루프 다이어그램](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/ultralytics-active-learning-loop.avif)](https://platform.ultralytics.com)
+
+사용자 정의 [객체 탐지](https://docs.ultralytics.com/tasks/detect) 모델을 개발하는 것은 반복적인 과정입니다:
+
+  1. **이미지 수집 및 정리** : 특정 작업과 관련된 이미지를 수집하십시오. 고품질의 다양한 데이터가 중요합니다. [데이터 수집 및 라벨링](https://docs.ultralytics.com/guides/data-collection-and-annotation)에 대한 가이드를 참조하십시오.
+  2. **객체 라벨링** : 이미지 내 관심 객체를 정확하게 주석 처리하십시오.
+  3. **모델 학습** : 라벨링된 데이터를 사용하여 YOLOv5 모델을 [학습](https://docs.ultralytics.com/modes/train)하십시오. 사전 학습된 가중치로 시작하여 [전이 학습](https://www.ultralytics.com/glossary/transfer-learning)을 활용하십시오.
+  4. **배포 및 예측** : 학습된 모델을 사용하여 새롭고 본 적 없는 데이터에 대해 [추론](https://docs.ultralytics.com/modes/predict)을 수행하십시오.
+  5. **엣지 케이스 수집** : 모델이 잘 작동하지 않는 시나리오([엣지 케이스](https://en.wikipedia.org/wiki/Edge_case))를 식별하고 유사한 데이터를 데이터셋에 추가하여 견고성을 개선하십시오. 이 주기를 반복하십시오.
+
+
+
+[Ultralytics Platform](https://docs.ultralytics.com/platform)은 데이터셋 관리, 모델 학습 및 배포를 포함하는 이 전체 [머신 러닝 운영(MLOps)](https://www.ultralytics.com/glossary/machine-learning-operations-mlops) 주기에 대해 간소화된 노코드 솔루션을 제공합니다.
+
+라이선스
+
+Ultralytics는 다양한 사용 시나리오를 수용하기 위해 두 가지 라이선스 옵션을 제공합니다:
+
+  * **AGPL-3.0 라이선스** : 이 [OSI 승인](https://opensource.org/license/agpl-3.0) 오픈 소스 라이선스는 개방형 협업과 지식 공유에 열정적인 학생, 연구자 및 애호가에게 이상적입니다. 파생된 작업은 동일한 라이선스 하에 공유되어야 합니다. 자세한 내용은 [LICENSE](https://github.com/ultralytics/ultralytics/blob/main/LICENSE) 파일을 참조하십시오.
+  * **엔터프라이즈 라이선스** : 개발 및 프로덕션 용도로, 이 라이선스는 내부 도구, 자동화된 워크플로 및 프로덕션 배포를 포함하여 비즈니스 제품 및 서비스에 Ultralytics 소프트웨어 및 AI 모델을 원활하게 통합할 수 있도록 하며, AGPL-3.0의 오픈 소스 요구 사항을 우회합니다. 시작하려면 [Ultralytics 라이선싱](https://www.ultralytics.com/license)을 통해 문의하십시오.
+
+
+
+[Ultralytics 라이선싱](https://www.ultralytics.com/license) 페이지에서 라이선스 옵션을 더 자세히 살펴보십시오.
+
+학습을 시작하기 전에 데이터셋 준비가 필수입니다.
+
+## Link to this section데이터셋 생성#
+
+YOLOv5 모델은 객체 클래스의 시각적 특성을 학습하기 위해 라벨링된 데이터가 필요합니다. 데이터셋을 올바르게 구성하는 것이 핵심입니다.
+
+### Link to this section1.1 `dataset.yaml` 생성#
+
+데이터셋 구성 파일(예: `coco128.yaml`)은 데이터셋의 구조, 클래스 이름 및 이미지 디렉터리 경로를 정의합니다. [COCO128](https://docs.ultralytics.com/datasets/detect/coco128)은 광범위한 [COCO](https://docs.ultralytics.com/datasets/detect/coco) 데이터셋에서 처음 128개의 이미지로 구성된 작은 예제 데이터셋 역할을 합니다. 이는 학습 파이프라인을 빠르게 테스트하고 [과적합](https://www.ultralytics.com/glossary/overfitting)과 같은 잠재적인 문제를 진단하는 데 유용합니다.
+
+`dataset.yaml` 파일 구조에는 다음이 포함됩니다:
+
+  * `path`: 데이터셋을 포함하는 루트 디렉터리.
+  * `train`, `val`, `test`: 학습, 검증 및 테스트 세트에 대한 이미지 또는 이미지 경로가 나열된 텍스트 파일을 포함하는 디렉터리에 대한 `path`로부터의 상대 경로.
+  * `names`: 클래스 인덱스(0부터 시작)를 해당 클래스 이름에 매핑하는 딕셔너리.
+
+
+
+YOLOv5 저장소 루트에서 학습을 시작할 때 `path`를 절대 경로(예: `/home/user/datasets/coco128`) 또는 상대 경로(예: `../datasets/coco128`)로 설정할 수 있습니다.
+
+다음은 `coco128.yaml`의 구조입니다([GitHub에서 보기](https://github.com/ultralytics/yolov5/blob/master/data/coco128.yaml)):
+    
+    
+    # Dataset root directory relative to the yolov5 directory
+    path: coco128
+    
+    # Train/val/test sets: specify directories, *.txt files, or lists
+    train: images/train2017 # 128 images for training
+    val: images/train2017 # 128 images for validation
+    test: # Optional path to test images
+    
+    # Classes (example using 80 COCO classes)
+    names:
+        0: person
+        1: bicycle
+        2: car
+        # ... (remaining COCO classes)
+        77: teddy bear
+        78: hair drier
+        79: toothbrush
+
+### Link to this section1.2 자동 라벨링을 위한 모델 활용#
+
+수동 라벨링은 일반적인 접근 방식이지만 시간이 많이 걸립니다. 파운데이션 모델은 주석을 자동화하거나 반자동화하여 데이터셋 생성을 가속화할 수 있습니다. 라벨 생성에 도움이 될 수 있는 모델의 예는 다음과 같습니다:
+
+  * **[Google Gemini](https://colab.research.google.com/github/ultralytics/notebooks/blob/main/notebooks/how-to-use-google-gemini-models-for-object-detection-image-captioning-and-ocr.ipynb)** : Gemini와 같은 대형 멀티모달 모델은 강력한 이미지 이해 능력을 갖추고 있습니다. 프롬프트를 통해 이미지 내 객체를 식별하고 위치를 파악하여 YOLO 형식 라벨로 변환할 수 있는 바운딩 박스나 설명을 생성할 수 있습니다. 제공된 튜토리얼 노트북에서 그 가능성을 살펴보십시오.
+  * **[SAM2 (Segment Anything Model 2)](https://docs.ultralytics.com/models/sam-2)** : SAM2와 같이 세그멘테이션에 집중하는 파운데이션 모델은 객체를 높은 정밀도로 식별하고 묘사할 수 있습니다. 주로 세그멘테이션을 위한 것이지만, 결과 마스크는 종종 객체 탐지 작업에 적합한 바운딩 박스 주석으로 변환될 수 있습니다.
+  * **[YOLOWorld](https://docs.ultralytics.com/models/yolo-world)** : 이 모델은 오픈 어휘 탐지 기능을 제공합니다. 관심 있는 객체에 대한 텍스트 설명을 제공하면 YOLOWorld는 해당 클래스에 대한 사전 학습 없이도 이미지에서 객체를 찾을 수 있습니다. 이는 초기 라벨을 생성하는 시작점으로 사용될 수 있으며, 이후 정제할 수 있습니다.
+
+
+
+이 모델들을 사용하면 "사전 라벨링" 단계를 거쳐 수동 작업량을 줄일 수 있습니다. 하지만 자동으로 생성된 라벨의 품질이 학습된 YOLOv5 모델의 성능에 직접적인 영향을 미치므로, 정확성과 일관성을 보장하기 위해 검토하고 정제하는 것이 중요합니다. 라벨을 생성(및 잠재적으로 정제)한 후에는 **YOLO 형식** 을 준수하는지 확인하십시오: 이미지당 하나의 `*.txt` 파일, 각 행은 객체를 `class_index x_center y_center width height`(정규화된 좌표, 0부터 시작하는 인덱스 클래스)로 나타냅니다. 이미지에 관심 객체가 없으면 해당 `*.txt` 파일이 필요하지 않습니다.
+
+YOLO 형식 `*.txt` 파일 사양은 정확합니다:
+
+  * 객체당 한 행의 [바운딩 박스](https://www.ultralytics.com/glossary/bounding-box).
+  * 각 행은 다음을 포함해야 합니다: `class_index x_center y_center width height`.
+  * 좌표는 0과 1 사이의 범위로 **정규화** 되어야 합니다. 이를 위해 `x_center`와 `width`의 픽셀 값을 이미지의 전체 너비로 나누고, `y_center`와 `height`를 이미지의 전체 높이로 나눕니다.
+  * 클래스 인덱스는 0부터 시작합니다(즉, 첫 번째 클래스는 `0`, 두 번째는 `1` 등으로 표시됨).
+
+
+
+![Example image with two persons and a tie annotated](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/two-persons-tie.avif)
+
+위 이미지에 해당하는 라벨 파일로, 두 개의 'person' 객체(클래스 인덱스 `0`)와 하나의 'tie' 객체(클래스 인덱스 `27`)를 포함하는 경우 다음과 같습니다:
+
+![YOLO format label file content example](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/two-persons-tie-1.avif)
+
+### Link to this section1.3 디렉터리 정리#
+
+Structure your [datasets](https://docs.ultralytics.com/datasets) directory as illustrated below. By default, YOLOv5 anticipates the dataset directory (e.g., `/coco128`) to reside within a `/datasets` folder located **adjacent to** the `/yolov5` repository directory.
+
+YOLOv5는 이미지 경로에서 마지막 `/images/` 인스턴스를 `/labels/`로 대체하여 각 이미지에 대한 라벨을 자동으로 찾습니다. 예시:
+    
+    
+    ../datasets/coco128/images/im0.jpg # Path to the image file
+    ../datasets/coco128/labels/im0.txt # Path to the corresponding label file
+
+권장되는 디렉터리 구조는 다음과 같습니다:
+    
+    
+    /datasets/
+    └── coco128/  # Dataset root
+        ├── images/
+        │   ├── train2017/  # Training images
+        │   │   ├── 000000000009.jpg
+        │   │   └── ...
+        │   └── val2017/    # Validation images (optional if using same set for train/val)
+        │       └── ...
+        └── labels/
+            ├── train2017/  # Training labels
+            │   ├── 000000000009.txt
+            │   └── ...
+            └── val2017/    # Validation labels (optional if using same set for train/val)
+                └── ...
+
+![YOLOv5 recommended dataset directory structure](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-dataset-structure.avif)
+
+## Link to this section모델 선택#
+
+Choose a [pretrained model](https://docs.ultralytics.com/models) to initiate the training process. Starting with pretrained weights significantly accelerates learning and improves performance compared to training from scratch. YOLOv5 offers various model sizes, each balancing speed and accuracy differently. For example, [YOLOv5s](https://github.com/ultralytics/yolov5/blob/master/models/yolov5s.yaml) is the second-smallest and fastest model, suitable for resource-constrained environments. Consult the [README table](https://github.com/ultralytics/yolov5#pretrained-checkpoints) for a detailed comparison of all available [models](https://docs.ultralytics.com/models).
+
+![Comparison chart of YOLOv5 models showing size, speed, and accuracy](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-model-comparison.avif)
+
+## Link to this section학습#
+
+Begin the [model training](https://docs.ultralytics.com/modes/train) using the `train.py` script. Essential arguments include:
+
+  * `--img`: 입력 [이미지 크기](https://docs.ultralytics.com/usage/cfg#image-size)를 정의합니다(예: `--img 640`). 일반적으로 크기가 클수록 정확도가 높아지지만 더 많은 GPU 메모리가 필요합니다.
+  * `--batch`: [배치 크기](https://www.ultralytics.com/glossary/batch-size)를 결정합니다(예: `--batch 16`). GPU가 처리할 수 있는 가장 큰 크기를 선택하십시오.
+  * `--epochs`: 총 학습 [에포크](https://www.ultralytics.com/glossary/epoch) 수를 지정합니다(예: `--epochs 100`). 한 에포크는 전체 학습 데이터셋을 한 번 통과하는 것을 의미합니다.
+  * `--data`: `dataset.yaml` 파일의 경로(예: `--data coco128.yaml`).
+  * `--weights`: 초기 가중치 파일의 경로. 더 빠른 수렴과 우수한 결과를 위해 사전 학습된 가중치(예: `--weights yolov5s.pt`) 사용을 강력히 권장합니다. 처음부터 학습하려면(매우 큰 데이터셋과 특별한 요구 사항이 있는 경우 제외) `--weights '' --cfg yolov5s.yaml`을 사용하십시오.
+
+
+
+사전 학습된 가중치는 로컬에서 찾을 수 없는 경우 [최신 YOLOv5 릴리스](https://github.com/ultralytics/yolov5/releases)에서 자동으로 다운로드됩니다.
+    
+    
+    # Example: Train YOLOv5s on the COCO128 dataset for 3 epochs
+    python train.py --img 640 --batch 16 --epochs 3 --data coco128.yaml --weights yolov5s.pt
+
+학습 속도 최적화
+
+💡 `--cache ram` 또는 `--cache disk`를 사용하여 데이터셋 이미지를 각각 [RAM](https://en.wikipedia.org/wiki/Random-access_memory) 또는 로컬 디스크에 캐싱하십시오. 이는 특히 데이터셋 I/O(입/출력) 작업이 병목 현상일 때 학습 속도를 크게 향상시킵니다. 단, 상당한 RAM 또는 디스크 공간이 필요합니다.
+
+로컬 데이터 저장소
+
+💡 항상 로컬에 저장된 데이터셋을 사용하여 학습하십시오. 네트워크 드라이브(예: Google Drive)나 원격 저장소에서 데이터에 액세스하는 것은 훨씬 느릴 수 있으며 학습 성능을 저해할 수 있습니다. 데이터셋을 로컬 SSD에 복사하는 것이 가장 좋습니다.
+
+가중치와 로그를 포함한 모든 학습 출력은 `runs/train/` 디렉터리에 저장됩니다. 각 학습 세션은 새로운 하위 디렉터리(예: `runs/train/exp`, `runs/train/exp2` 등)를 생성합니다. 대화형 실습 경험을 원하시면 공식 튜토리얼 노트북의 학습 섹션을 살펴보십시오: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+
+## Link to this section시각화#
+
+YOLOv5는 학습 진행 상황 시각화, 결과 평가 및 실시간 성능 모니터링을 위한 다양한 도구와 원활하게 통합됩니다.
+
+### Link to this sectionComet 로깅 및 시각화#
+
+[Comet](https://docs.ultralytics.com/integrations/comet)은 포괄적인 실험 추적을 위해 완전히 통합되어 있습니다. 실시간으로 메트릭을 시각화하고, 하이퍼파라미터를 저장하고, 데이터셋 및 모델 체크포인트를 관리하고, 대화형 [Comet Custom Panels](https://bit.ly/yolov5-colab-comet-panels)를 사용하여 모델 예측을 분석하십시오.
+
+시작하기는 매우 쉽습니다:
+    
+    
+    pip install comet_ml                                                          # 1. Install Comet library
+    export COMET_API_KEY=YOUR_API_KEY_HERE                                        # 2. Set your Comet API key (create a free account at Comet.ml)
+    python train.py --img 640 --epochs 3 --data coco128.yaml --weights yolov5s.pt # 3. Train your model - Comet automatically logs everything!
+
+지원되는 기능에 대해 더 자세히 알아보려면 [Comet 통합 가이드](https://docs.ultralytics.com/integrations/comet)를 확인하십시오. Comet의 기능에 대한 자세한 내용은 공식 [문서](https://bit.ly/yolov5-colab-comet-docs)를 참조하십시오. 실시간 데모를 보려면 Comet Colab 노트북을 시도해보십시오: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1RG0WOQyxlDlo5Km8GogJpIEJlg_5lyYO?usp=sharing)
+
+![Comet UI showing YOLOv5 training metrics and visualizations](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolo-ui.avif)
+
+### Link to this sectionClearML 로깅 및 자동화#
+
+[ClearML](https://docs.ultralytics.com/integrations/clearml) 통합을 통해 상세한 실험 추적, 데이터셋 버전 관리 및 학습 실행의 원격 실행이 가능합니다. 간단한 단계로 ClearML을 활성화하십시오:
+
+  * 패키지 설치: `pip install clearml`
+  * ClearML 초기화: `clearml-init`를 한 번 실행하여 ClearML 서버(자체 호스팅 또는 [무료 티어](https://clear.ml/))에 연결하십시오.
+
+
+
+ClearML은 실험 세부 정보, 모델 업로드, 비교, 커밋되지 않은 코드 변경 사항 및 설치된 패키지를 자동으로 캡처하여 완벽한 재현성을 보장합니다. ClearML Data를 사용하여 원격 에이전트에서 학습 작업을 예약하고 데이터셋 버전을 쉽게 관리할 수 있습니다. 자세한 내용은 [ClearML 통합 가이드](https://docs.ultralytics.com/integrations/clearml)를 살펴보십시오.
+
+[ ![ClearML experiment management UI for YOLOv5](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/clearml-experiment-management-ui.avif)](https://clear.ml/)
+
+### Link to this section로컬 로깅#
+
+Training results are automatically logged using [TensorBoard](https://docs.ultralytics.com/integrations/tensorboard) and saved as [CSV](https://en.wikipedia.org/wiki/Comma-separated_values) files within the specific experiment directory (e.g., `runs/train/exp`). Logged data includes:
+
+  * 학습 및 검증 손실과 성능 메트릭.
+  * 적용된 증강(예: 모자이크)을 보여주는 샘플 이미지.
+  * 시각적 검사를 위한 모델 예측과 나란히 표시된 정답 라벨.
+  * [정밀도](https://www.ultralytics.com/glossary/precision)-[재현율](https://www.ultralytics.com/glossary/recall) (PR) 곡선과 같은 주요 평가 메트릭.
+  * 상세한 클래스별 성능 분석을 위한 [혼동 행렬](https://www.ultralytics.com/glossary/confusion-matrix).
+
+![YOLOv5 local logging results with charts and mosaics](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/local-logging-results.avif)
+
+`results.csv` 파일은 매 에포크마다 업데이트되며 학습이 종료되면 `results.png`로 플롯됩니다. 제공된 유틸리티 함수를 사용하여 `results.csv` 파일을 수동으로 플롯할 수도 있습니다:
+    
+    
+    from utils.plots import plot_results
+    
+    # Plot results from a specific training run directory
+    plot_results("runs/train/exp/results.csv")  # This will generate 'results.png' in the same directory
+
+![YOLOv5 results.png training metrics plot](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-training-results-plot.avif)
+
+## Link to this section다음 단계#
+
+학습이 성공적으로 완료되면 성능이 가장 좋은 모델 체크포인트(`best.pt`)가 저장되며 배포나 추가 정제를 준비하게 됩니다. 가능한 다음 단계는 다음과 같습니다:
+
+  * Run [inference](https://docs.ultralytics.com/modes/predict) on new images or videos using the trained model via the [CLI](https://github.com/ultralytics/yolov5#quick-start-examples) or [Python](/ko/yolov5/tutorials/pytorch-hub-model-loading).
+  * [검증](https://docs.ultralytics.com/modes/val)을 수행하여 다양한 데이터 분할(예: 보류된 테스트 세트)에서 모델의 [정확도](https://www.ultralytics.com/glossary/accuracy)와 일반화 능력을 평가하십시오.
+  * [Export](https://docs.ultralytics.com/modes/export) the model to various deployment formats like [ONNX](https://docs.ultralytics.com/integrations/onnx), [TensorFlow SavedModel](https://docs.ultralytics.com/integrations/tf-savedmodel), or [TensorRT](https://docs.ultralytics.com/integrations/tensorrt) for optimized inference on diverse platforms.
+  * [하이퍼파라미터 튜닝](https://docs.ultralytics.com/guides/hyperparameter-tuning) 기술을 사용하여 성능 향상을 추가로 얻어보십시오.
+  * [최고의 학습 결과를 위한 팁](https://docs.ultralytics.com/guides/model-training-tips)을 따르고 성능 분석에 따라 더 다양하고 도전적인 데이터를 반복적으로 추가하여 모델을 계속 개선하십시오.
+
+
+
+## Link to this section지원되는 환경#
+
+Ultralytics는 [CUDA](https://developer.nvidia.com/cuda), [cuDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/) 및 [PyTorch](https://pytorch.org/)와 같은 필수 의존성을 갖춘 즉시 사용 가능한 환경을 제공하여 원활한 시작을 지원합니다.
+
+  * **무료 GPU 노트북** : 
+    * [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook)
+    * [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb)
+    * [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **클라우드 플랫폼** : 
+    * **Google Cloud** : [GCP 시작 가이드](/ko/yolov5/environments/google-cloud-quickstart-tutorial)
+    * **Amazon AWS** : [AWS 시작 가이드](/ko/yolov5/environments/aws-quickstart-tutorial)
+    * **Microsoft Azure** : [AzureML 퀵스타트 가이드](https://docs.ultralytics.com/guides/azureml-quickstart)
+  * **로컬 설정** : 
+    * **Docker** : [Docker 퀵스타트 가이드](https://docs.ultralytics.com/guides/docker-quickstart) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this section프로젝트 상태#
+
+[![YOLOv5 지속적 통합 상태 배지](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+이 배지는 모든 YOLOv5 [GitHub Actions](https://github.com/ultralytics/yolov5/actions) [지속적 통합(CI)](https://www.ultralytics.com/glossary/continuous-integration-ci) 테스트가 성공적으로 통과되었음을 나타냅니다. 이러한 엄격한 CI 테스트는 macOS, Windows, Ubuntu 운영 체제 전반에서 [학습](https://docs.ultralytics.com/modes/train), [검증](https://docs.ultralytics.com/modes/val), [추론](https://docs.ultralytics.com/modes/predict), [내보내기](https://docs.ultralytics.com/modes/export) 및 [벤치마크](https://docs.ultralytics.com/modes/benchmark)를 포함한 핵심 기능을 다룹니다. 테스트는 24시간마다 그리고 각 코드 커밋 시 자동으로 실행되어 일관된 안정성과 최적의 성능을 보장합니다.
+
+## Link to this sectionFAQ#
+
+### Link to this section나만의 사용자 지정 데이터셋으로 YOLOv5를 어떻게 학습시킬 수 있나요?#
+
+사용자 지정 데이터셋으로 YOLOv5를 학습시키는 과정은 몇 가지 주요 단계로 구성됩니다:
+
+  1. **데이터셋 준비** : 이미지를 수집하고 주석을 답니다. 주석이 필수 [YOLO 형식](https://docs.ultralytics.com/datasets/detect)을 따르는지 확인합니다. 이미지와 레이블을 `train/` 및 `val/` (그리고 선택적으로 `test/`) 디렉터리로 구성합니다. [Google Gemini](https://colab.research.google.com/github/ultralytics/notebooks/blob/main/notebooks/how-to-use-google-gemini-models-for-object-detection-image-captioning-and-ocr.ipynb), [SAM2](https://docs.ultralytics.com/models/sam-2) 또는 [YOLOWorld](https://docs.ultralytics.com/models/yolo-world)와 같은 모델을 사용하여 라벨링 프로세스를 지원하거나 자동화하는 것을 고려하십시오(1.2절 참조).
+  2. **환경 설정** : YOLOv5 저장소를 복제하고 `pip install -r requirements.txt`를 사용하여 종속성을 설치합니다. 
+         
+         git clone https://github.com/ultralytics/yolov5
+         cd yolov5
+         pip install -r requirements.txt
+
+  3. **데이터셋 구성 생성** : `dataset.yaml` 파일에 데이터셋 경로, 클래스 수 및 클래스 이름을 정의합니다.
+  4. **학습 시작** : `train.py` 스크립트를 실행하고 `dataset.yaml` 경로, 원하는 사전 학습된 가중치(예: `yolov5s.pt`), 이미지 크기, 배치 크기 및 에포크(epoch) 수를 제공하십시오. 
+         
+         python train.py --img 640 --batch 16 --epochs 100 --data path/to/your/dataset.yaml --weights yolov5s.pt
+
+
+
+
+### Link to this sectionYOLO 모델 학습을 위해 Ultralytics Platform을 사용해야 하는 이유는 무엇인가요?#
+
+[Ultralytics Platform](https://docs.ultralytics.com/platform)은 코드 작성 없이도 YOLO 모델 개발 수명 주기 전체를 간소화하도록 설계된 종합 플랫폼입니다. 주요 이점은 다음과 같습니다:
+
+  * **학습 간소화** : 사전 구성된 환경과 직관적인 사용자 인터페이스를 사용하여 모델을 쉽게 학습시킬 수 있습니다.
+  * **통합 데이터 관리** : 플랫폼 내에서 효율적으로 데이터셋을 업로드하고 버전 제어하며 관리할 수 있습니다.
+  * **실시간 모니터링** : [Comet](https://docs.ultralytics.com/integrations/comet) 또는 TensorBoard와 같은 통합 도구를 사용하여 학습 진행 상황을 추적하고 성능 지표를 시각화할 수 있습니다.
+  * **협업 기능** : 공유 리소스, 프로젝트 관리 도구 및 쉬운 모델 공유를 통해 팀워크를 원활하게 합니다.
+  * **코드 없는 배포(No-Code Deployment)** : 학습된 모델을 다양한 타겟에 직접 배포할 수 있습니다.
+
+
+
+실용적인 가이드는 블로그 게시물을 확인하십시오: [Ultralytics Platform으로 사용자 지정 모델을 학습시키는 방법](https://www.ultralytics.com/blog/how-to-train-your-custom-models-with-ultralytics-hub).
+
+### Link to this section주석이 달린 데이터를 YOLOv5 형식으로 어떻게 변환하나요?#
+
+수동으로 주석을 달든 자동화된 도구(1.2절에서 언급된 것과 같은)를 사용하든, 최종 레이블은 YOLOv5에서 요구하는 특정 **YOLO 형식** 이어야 합니다:
+
+  * Create one `.txt` file for each image. The filename should match the image filename (e.g., `image1.jpg` corresponds to `image1.txt`). Place these files in a `labels/` directory parallel to your `images/` directory (e.g., `../datasets/mydataset/labels/train/`).
+  * `.txt` 파일 내의 각 줄은 하나의 객체 주석을 나타내며 `class_index center_x center_y width height` 형식을 따릅니다.
+  * 좌표(`center_x`, `center_y`, `width`, `height`)는 이미지 치수에 상대적으로 **정규화**(0.0에서 1.0 사이의 값)되어야 합니다.
+  * 클래스 인덱스는 **0부터 시작합니다**(첫 번째 클래스는 `0`, 두 번째는 `1` 등).
+
+
+
+많은 수동 주석 도구가 YOLO 형식으로 직접 내보내기를 지원합니다. 자동화된 모델을 사용하는 경우, 해당 출력(예: BBox 좌표, 세그멘테이션 마스크)을 이 특정 정규화된 텍스트 형식으로 변환하기 위한 스크립트나 프로세스가 필요합니다. 최종 데이터셋 구조가 가이드에 제공된 예제를 준수하는지 확인하십시오. 자세한 내용은 [데이터 수집 및 주석 가이드](https://docs.ultralytics.com/guides/data-collection-and-annotation)를 참조하십시오.
+
+### Link to this section상업적 애플리케이션에서 YOLOv5를 사용하기 위한 라이선스 옵션은 무엇인가요?#
+
+Ultralytics는 다양한 요구 사항에 맞춰 조정된 유연한 라이선스를 제공합니다:
+
+  * **AGPL-3.0 라이선스** : 이 오픈 소스 라이선스는 학술 연구, 개인 프로젝트 및 오픈 소스 규정 준수가 허용되는 상황에 적합합니다. 수정 사항과 파생 저작물 또한 AGPL-3.0에 따라 오픈 소스로 공개해야 합니다. [AGPL-3.0 라이선스 세부 정보](https://www.ultralytics.com/legal/agpl-3-0-software-license)를 검토하십시오.
+  * **Enterprise License** : A commercial license designed for businesses integrating YOLOv5 into proprietary products or services. This license removes the open-source obligations of AGPL-3.0, allowing for closed-source distribution. Visit our [Licensing page](https://www.ultralytics.com/license) for further details or to request an [Enterprise License](https://www.ultralytics.com/legal/enterprise-software-license).
+
+
+
+프로젝트의 요구 사항 및 배포 모델에 가장 적합한 라이선스를 선택하십시오.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/train-custom-data.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+생성됨 3일 전업데이트됨 3일 전
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

@@ -1,0 +1,300 @@
+---
+source_url: https://docs.ultralytics.com/ko/guides/docker-quickstart
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/docker-quickstart.md)
+
+# Link to this sectionUltralytics를 위한 Docker 퀵스타트 가이드#
+
+![Ultralytics Docker Package Visual](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/ultralytics-docker-package-visual.avif)
+
+이 가이드는 Ultralytics 프로젝트를 위한 Docker 환경 설정에 대한 종합적인 입문서입니다. [Docker](https://www.docker.com/)는 애플리케이션을 컨테이너화하여 개발, 배포 및 실행하기 위한 플랫폼입니다. 이는 소프트웨어가 배포되는 환경에 관계없이 항상 동일하게 작동하도록 보장하는 데 특히 유용합니다. 자세한 내용은 [Docker Hub](https://hub.docker.com/r/ultralytics/ultralytics)의 Ultralytics Docker 저장소를 참조하십시오.
+
+[![Docker Image Version](https://img.shields.io/docker/v/ultralytics/ultralytics?sort=semver&logo=docker)](https://hub.docker.com/r/ultralytics/ultralytics) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/ultralytics)](https://hub.docker.com/r/ultralytics/ultralytics)
+
+## Link to this section학습 내용#
+
+  * NVIDIA 지원이 포함된 Docker 설정
+  * Ultralytics Docker 이미지 설치
+  * CPU 또는 GPU 지원을 통한 Docker 컨테이너에서 Ultralytics 실행
+  * Docker에서 디스플레이 서버를 사용하여 Ultralytics 탐지 결과 표시
+  * 로컬 디렉토리를 컨테이너에 마운트
+
+
+
+  
+
+
+  
+**Watch:** How to Get started with Docker | Usage of Ultralytics Python Package inside Docker live demo 🎉 
+
+* * *
+
+## Link to this section사전 요구 사항#
+
+  * 시스템에 Docker가 설치되어 있는지 확인하십시오. 설치되어 있지 않은 경우 [Docker 웹사이트](https://www.docker.com/products/docker-desktop/)에서 다운로드하여 설치할 수 있습니다.
+  * 시스템에 NVIDIA GPU가 있고 NVIDIA 드라이버가 설치되어 있는지 확인하십시오.
+  * NVIDIA Jetson 장치를 사용하는 경우 적절한 JetPack 버전이 설치되어 있는지 확인하십시오. 자세한 내용은 [NVIDIA Jetson 가이드](https://docs.ultralytics.com/guides/nvidia-jetson)를 참조하십시오.
+
+
+
+* * *
+
+## Link to this sectionNVIDIA 지원을 통한 Docker 설정#
+
+먼저 다음 명령어를 실행하여 NVIDIA 드라이버가 올바르게 설치되었는지 확인하십시오:
+    
+    
+    nvidia-smi
+
+### Link to this sectionNVIDIA Container Toolkit 설치#
+
+이제 Docker 컨테이너에서 GPU 지원을 활성화하기 위해 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/index.html)을 설치하겠습니다:
+    
+    
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+      && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+      | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+        | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+패키지 목록을 업데이트하고 nvidia-container-toolkit 패키지를 설치합니다:
+    
+    
+    sudo apt-get update
+
+최신 버전의 `nvidia-container-toolkit`을 설치하십시오:
+    
+    
+    sudo apt-get install -y nvidia-container-toolkit \
+      nvidia-container-toolkit-base libnvidia-container-tools \
+      libnvidia-container1
+
+선택 사항: 특정 버전의 nvidia-container-toolkit 설치
+
+`NVIDIA_CONTAINER_TOOLKIT_VERSION` 환경 변수를 설정하여 특정 버전의 nvidia-container-toolkit을 선택적으로 설치할 수 있습니다:
+    
+    
+    export NVIDIA_CONTAINER_TOOLKIT_VERSION=1.17.8-1
+    sudo apt-get install -y \
+      nvidia-container-toolkit=${NVIDIA_CONTAINER_TOOLKIT_VERSION} \
+      nvidia-container-toolkit-base=${NVIDIA_CONTAINER_TOOLKIT_VERSION} \
+      libnvidia-container-tools=${NVIDIA_CONTAINER_TOOLKIT_VERSION} \
+      libnvidia-container1=${NVIDIA_CONTAINER_TOOLKIT_VERSION}
+    
+    
+    sudo nvidia-ctk runtime configure --runtime=docker
+    sudo systemctl restart docker
+
+### Link to this sectionDocker로 NVIDIA 런타임 확인#
+
+`docker info | grep -i runtime`을 실행하여 런타임 목록에 `nvidia`가 표시되는지 확인하십시오:
+    
+    
+    docker info | grep -i runtime
+
+* * *
+
+## Link to this sectionUltralytics Docker 이미지 설치#
+
+Ultralytics는 다양한 플랫폼 및 사용 사례에 최적화된 여러 Docker 이미지를 제공합니다:
+
+  * **Dockerfile:** 학습에 최적화된 GPU 이미지입니다.
+  * **Dockerfile-arm64:** ARM64 아키텍처용이며, [Raspberry Pi](/ko/guides/raspberry-pi)와 같은 장치에 적합합니다.
+  * **Dockerfile-cpu:** 추론 및 비-GPU 환경을 위한 CPU 전용 버전입니다.
+  * **Dockerfile-jetson-jetpack4:** Optimized for [NVIDIA Jetson](https://docs.ultralytics.com/guides/nvidia-jetson) devices running [NVIDIA JetPack 4](https://developer.nvidia.com/embedded/jetpack-sdk-461).
+  * **Dockerfile-jetson-jetpack5:** Optimized for [NVIDIA Jetson](https://docs.ultralytics.com/guides/nvidia-jetson) devices running [NVIDIA JetPack 5](https://developer.nvidia.com/embedded/jetpack-sdk-512).
+  * **Dockerfile-jetson-jetpack6:** Optimized for [NVIDIA Jetson](https://docs.ultralytics.com/guides/nvidia-jetson) devices running [NVIDIA JetPack 6](https://developer.nvidia.com/embedded/jetpack-sdk-61).
+  * **Dockerfile-jupyter:** 브라우저에서 JupyterLab을 사용한 대화형 개발용입니다.
+  * **Dockerfile-nvidia-arm64:** Jetson AGX Thor 및 DGX Spark와 같은 NVIDIA ARM64 장치용이며, JetPack 7.0 및 DGX OS를 지원합니다.
+  * **Dockerfile-python:** 경량 애플리케이션을 위한 최소 Python 환경입니다.
+  * **Dockerfile-python-export:** YOLO 모델 변환을 위한 전체 내보내기 기능이 포함된 최소 Python 이미지입니다.
+  * **Dockerfile-conda:** [Miniconda3](https://www.anaconda.com/docs/main) 및 Conda를 통해 설치된 Ultralytics 패키지를 포함합니다.
+  * **Dockerfile-export:** 모델 변환 및 벤치마킹을 위해 모든 내보내기 형식 종속성이 사전 설치된 GPU 이미지입니다.
+
+
+
+최신 이미지를 가져오려면 다음을 수행하십시오:
+    
+    
+    # Set image name as a variable
+    t=ultralytics/ultralytics:latest
+    
+    # Pull the latest Ultralytics image from Docker Hub
+    sudo docker pull $t
+
+* * *
+
+## Link to this sectionDocker 컨테이너에서 Ultralytics 실행#
+
+Ultralytics Docker 컨테이너를 실행하는 방법은 다음과 같습니다:
+
+### Link to this sectionCPU만 사용#
+    
+    
+    # Run without GPU
+    sudo docker run -it --ipc=host $t
+
+### Link to this sectionGPU 사용#
+    
+    
+    # Run with all GPUs
+    sudo docker run -it --ipc=host --runtime=nvidia --gpus all $t
+    
+    # Run specifying which GPUs to use
+    sudo docker run -it --ipc=host --runtime=nvidia --gpus '"device=2,3"' $t
+
+`-it` 플래그는 의사 TTY(pseudo-TTY)를 할당하고 stdin을 열어 두어 컨테이너와 상호 작용할 수 있게 합니다. `--ipc=host` 플래그는 호스트의 IPC 네임스페이스 공유를 활성화하며, 이는 프로세스 간 메모리 공유에 필수적입니다. `--gpus` 플래그는 컨테이너가 호스트의 GPU에 액세스할 수 있도록 합니다.
+
+### Link to this section파일 접근성에 대한 참고 사항#
+
+컨테이너 내에서 로컬 머신의 파일을 작업하려면 Docker 볼륨을 사용할 수 있습니다:
+    
+    
+    # Mount a local directory into the container
+    sudo docker run -it --ipc=host --runtime=nvidia --gpus all -v /path/on/host:/path/in/container $t
+
+`/path/on/host`를 로컬 머신의 디렉토리 경로로, `/path/in/container`를 Docker 컨테이너 내부의 원하는 경로로 바꾸십시오.
+
+### Link to this section학습 출력 지속#
+
+학습 출력은 기본적으로 컨테이너 내부의 `/ultralytics/runs/<task>/<name>/`에 저장됩니다. 호스트 디렉토리를 마운트하지 않으면 컨테이너가 제거될 때 출력이 손실됩니다.
+
+학습 출력을 유지하려면:
+    
+    
+    # Recommended: mount workspace and specify project path
+    sudo docker run --rm -it -v "$(pwd)":/w -w /w ultralytics/ultralytics:latest \
+      yolo train model=yolo26n.pt data=coco8.yaml project=/w/runs
+
+이렇게 하면 모든 학습 출력이 호스트 머신의 `./runs`에 저장됩니다.
+
+## Link to this sectionDocker 컨테이너에서 그래픽 사용자 인터페이스(GUI) 애플리케이션 실행#
+
+실험적 기능 - 모든 위험은 사용자가 감수
+
+다음 지침은 실험적입니다. Docker 컨테이너와 X11 소켓을 공유하면 잠재적인 보안 위험이 발생할 수 있습니다. 따라서 이 솔루션은 제어된 환경에서만 테스트하는 것이 좋습니다. `xhost`[(1)](http://users.stat.umn.edu/~geyer/secure.html)[(2)](https://linux.die.net/man/1/xhost) 사용 방법에 대한 자세한 내용은 다음 리소스를 참조하십시오.
+
+Docker는 주로 백그라운드 애플리케이션과 CLI 프로그램을 컨테이너화하는 데 사용되지만 그래픽 프로그램도 실행할 수 있습니다. Linux 환경에서는 [X11](https://en.wikipedia.org/wiki/X_Window_System)(X Window System이라고도 함)과 [Wayland](https://en.wikipedia.org/wiki/Wayland_\(protocol\))라는 두 가지 주요 그래픽 서버가 그래픽 표시를 처리합니다. 시작하기 전에 현재 사용 중인 그래픽 서버를 확인하는 것이 중요합니다. 확인하려면 다음 명령어를 실행하십시오:
+    
+    
+    env | grep -E -i 'x11|xorg|wayland'
+
+X11 또는 Wayland 디스플레이 서버의 설정 및 구성은 이 가이드의 범위를 벗어납니다. 위 명령어가 아무것도 반환하지 않으면 계속하기 전에 해당 서버 중 하나를 시스템에서 작동시켜야 합니다.
+
+### Link to this sectionGUI가 있는 Docker 컨테이너 실행#
+
+예시
+
+GPU 사용
+
+GPU를 사용하는 경우 명령어에 `--gpus all` 플래그를 추가할 수 있습니다.
+
+Docker 런타임 플래그
+
+Docker 설치에서 기본적으로 `nvidia` 런타임을 사용하지 않는 경우 명령어에 `--runtime=nvidia` 플래그를 추가할 수 있습니다.
+
+X11을 사용하는 경우 다음 명령어를 실행하여 Docker 컨테이너가 X11 소켓에 액세스하도록 허용할 수 있습니다:
+    
+    
+    xhost +local:docker && docker run -e DISPLAY=$DISPLAY \
+      -v /tmp/.X11-unix:/tmp/.X11-unix \
+      -v ~/.Xauthority:/root/.Xauthority \
+      -it --ipc=host $t
+
+이 명령어는 `DISPLAY` 환경 변수를 호스트의 디스플레이로 설정하고, X11 소켓을 마운트하며, `.Xauthority` 파일을 컨테이너에 매핑합니다. `xhost +local:docker` 명령어는 Docker 컨테이너가 X11 서버에 액세스할 수 있도록 허용합니다.
+
+### Link to this sectionGUI와 함께 Docker 사용#
+
+Now you can display graphical applications inside your Docker container. For example, you can run the following [CLI command](/ko/usage/cli) to visualize the [predictions](/ko/modes/predict) from a [YOLO26 model](/ko/models/yolo26):
+    
+    
+    yolo predict model=yolo26n.pt show=True
+
+테스트
+
+Docker 그룹이 X11 서버에 액세스할 수 있는지 확인하는 간단한 방법은 [`xclock`](https://xorg.freedesktop.org/archive/X11R6.8.1/doc/xclock.1.html)이나 [`xeyes`](https://xorg.freedesktop.org/archive/X11R7.5/doc/man/man1/xeyes.1.html)와 같은 GUI 프로그램으로 컨테이너를 실행하는 것입니다. 또는 Ultralytics Docker 컨테이너에 이러한 프로그램을 설치하여 GNU-Linux 디스플레이 서버의 X11 서버에 대한 액세스를 테스트할 수도 있습니다. 문제가 발생하면 환경 변수 `-e QT_DEBUG_PLUGINS=1` 설정을 고려하십시오. 이 환경 변수를 설정하면 디버깅 정보가 출력되어 문제 해결 과정에 도움이 됩니다.
+
+### Link to this sectionDocker GUI 사용 종료 시#
+
+액세스 권한 취소
+
+두 경우 모두 작업이 완료되면 Docker 그룹의 액세스 권한을 취소하는 것을 잊지 마십시오.
+    
+    
+    xhost -local:docker
+
+이미지 결과를 터미널에서 직접 보고 싶으십니까?
+
+[터미널을 사용하여 이미지 결과 보기](/ko/guides/view-results-in-terminal)에 대한 다음 가이드를 참조하십시오.
+
+* * *
+
+이제 Docker로 Ultralytics를 사용할 준비가 완료되었으며 그 기능을 활용할 수 있습니다. 대체 설치 방법은 [Ultralytics 퀵스타트 문서](/ko/quickstart)를 참조하십시오.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionDocker로 Ultralytics를 어떻게 설정합니까?#
+
+Ultralytics를 Docker로 설정하려면 먼저 시스템에 Docker가 설치되어 있는지 확인하십시오. NVIDIA GPU가 있는 경우 NVIDIA Container Toolkit을 설치하여 GPU 지원을 활성화하십시오. 그런 다음 다음 명령어를 사용하여 Docker Hub에서 최신 Ultralytics Docker 이미지를 가져오십시오:
+    
+    
+    sudo docker pull ultralytics/ultralytics:latest
+
+자세한 단계는 Docker 퀵스타트 가이드를 참조하십시오.
+
+### Link to this section머신러닝 프로젝트에 Ultralytics Docker 이미지를 사용할 때의 이점은 무엇입니까?#
+
+Ultralytics Docker 이미지를 사용하면 서로 다른 머신에서 동일한 소프트웨어와 종속성을 복제하여 일관된 환경을 보장합니다. 이는 [팀 간 협업](https://www.ultralytics.com/blog/how-ultralytics-integration-can-enhance-your-workflow), 다양한 하드웨어에서 모델 실행 및 재현성 유지에 특히 유용합니다. GPU 기반 학습을 위해 Ultralytics는 일반 GPU 사용을 위한 `Dockerfile`과 NVIDIA Jetson 장치를 위한 `Dockerfile-jetson`과 같은 최적화된 Docker 이미지를 제공합니다. 자세한 내용은 [Ultralytics Docker Hub](https://hub.docker.com/r/ultralytics/ultralytics)를 살펴보십시오.
+
+### Link to this sectionDocker 컨테이너에서 GPU 지원과 함께 Ultralytics YOLO를 어떻게 실행할 수 있습니까?#
+
+먼저 NVIDIA Container Toolkit이 설치 및 구성되었는지 확인하십시오. 그런 다음 다음 명령어를 사용하여 GPU 지원과 함께 Ultralytics YOLO를 실행하십시오:
+    
+    
+    sudo docker run -it --ipc=host --runtime=nvidia --gpus all ultralytics/ultralytics:latest # all GPUs
+
+이 명령어는 GPU 액세스가 포함된 Docker 컨테이너를 설정합니다. 자세한 내용은 Docker 퀵스타트 가이드를 참조하십시오.
+
+### Link to this section디스플레이 서버가 있는 Docker 컨테이너에서 YOLO 예측 결과를 어떻게 시각화합니까?#
+
+Docker 컨테이너 내의 GUI로 YOLO 예측 결과를 시각화하려면 Docker가 디스플레이 서버에 액세스할 수 있도록 허용해야 합니다. X11을 실행하는 시스템의 경우 명령어는 다음과 같습니다:
+    
+    
+    xhost +local:docker && docker run -e DISPLAY=$DISPLAY \
+      -v /tmp/.X11-unix:/tmp/.X11-unix \
+      -v ~/.Xauthority:/root/.Xauthority \
+      -it --ipc=host ultralytics/ultralytics:latest
+
+Wayland를 실행하는 시스템의 경우 다음을 사용하십시오:
+    
+    
+    xhost +local:docker && docker run -e DISPLAY=$DISPLAY \
+      -v $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/$WAYLAND_DISPLAY \
+      --net=host -it --ipc=host ultralytics/ultralytics:latest
+
+자세한 내용은 Docker 컨테이너에서 그래픽 사용자 인터페이스(GUI) 애플리케이션 실행 섹션에서 확인할 수 있습니다.
+
+### Link to this section로컬 디렉토리를 Ultralytics Docker 컨테이너에 마운트할 수 있습니까?#
+
+네, `-v` 플래그를 사용하여 로컬 디렉토리를 Ultralytics Docker 컨테이너에 마운트할 수 있습니다:
+    
+    
+    sudo docker run -it --ipc=host --runtime=nvidia --gpus all -v /path/on/host:/path/in/container ultralytics/ultralytics:latest
+
+`/path/on/host`를 로컬 머신의 디렉토리로, `/path/in/container`를 컨테이너 내부의 원하는 경로로 바꾸십시오. 이 설정을 통해 컨테이너 내에서 로컬 파일을 작업할 수 있습니다. 자세한 내용은 파일 접근성에 대한 참고 사항 섹션을 참조하십시오.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/docker-quickstart.md)
+
+[GLglenn-jocher16](https://github.com/glenn-jocher)[ONonuralpszr3](https://github.com/onuralpszr)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[RAraimbekovm1](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)[SHSHOscarChen1](https://github.com/SHOscarChen)[PIpicsalex1](https://github.com/picsalex)[LAlakshanthad1](https://github.com/lakshanthad)[FRFruchtzwerg941](https://github.com/Fruchtzwerg94)[BUBurhan-Q1](https://github.com/Burhan-Q)JOJoão Fonseca1
+
+생성됨 2023년 11월 12일업데이트됨 5일 전
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

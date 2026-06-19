@@ -1,0 +1,352 @@
+---
+source_url: https://docs.ultralytics.com/ko/datasets/explorer/api
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/explorer/api.md)
+
+# Link to this sectionUltralytics Explorer API#
+
+커뮤니티 알림 ⚠️
+
+**`ultralytics>=8.3.12`** 버전부터 Ultralytics Explorer가 제거되었습니다. Explorer를 사용하려면 `pip install ultralytics==8.3.11` 명령어로 설치하십시오. 유사한(그리고 확장된) 데이터셋 탐색 기능은 [Ultralytics Platform](https://platform.ultralytics.com/)에서 이용할 수 있습니다.
+
+## Link to this section소개#
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/ultralytics/blob/main/docs/en/datasets/explorer/explorer.ipynb) Explorer API는 데이터셋 탐색을 위한 Python API입니다. SQL 쿼리, 벡터 유사도 검색 및 의미론적 검색을 사용하여 데이터셋을 필터링하고 검색하는 기능을 지원합니다.
+
+  
+
+
+  
+**Watch:** Ultralytics Explorer API Overview 
+
+## Link to this section설치#
+
+Explorer는 일부 기능을 위해 외부 라이브러리에 의존합니다. 이러한 라이브러리는 Explorer를 사용할 때 자동으로 설치됩니다. 이 종속성들을 수동으로 설치하려면 다음 명령어를 사용하십시오:
+    
+    
+    pip install ultralytics[explorer]
+
+## Link to this section사용법#
+    
+    
+    from ultralytics import Explorer
+    
+    # Create an Explorer object
+    explorer = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    
+    # Create embeddings for your dataset
+    explorer.create_embeddings_table()
+    
+    # Search for similar images to a given image/images
+    df = explorer.get_similar(img="path/to/image.jpg")
+    
+    # Or search for similar images to a given index/indices
+    df = explorer.get_similar(idx=0)
+
+참고
+
+특정 데이터셋 및 모델 쌍에 대한 [임베딩](https://www.ultralytics.com/glossary/embeddings) 테이블은 한 번만 생성되고 재사용됩니다. 이는 내부적으로 [LanceDB](https://lancedb.github.io/lancedb/)를 사용하며, 디스크 기반으로 확장되므로 메모리 부족 문제 없이 COCO와 같은 대규모 데이터셋에 대한 임베딩을 생성하고 재사용할 수 있습니다.
+
+In case you want to force update the embeddings table, you can pass `force=True` to `create_embeddings_table` method.
+
+LanceDB 테이블 객체에 직접 접근하여 고급 분석을 수행할 수 있습니다. 자세한 내용은 임베딩 테이블 작업 섹션을 참조하십시오.
+
+## Link to this section1\. 유사도 검색#
+
+유사도 검색은 주어진 이미지와 유사한 이미지를 찾는 기술입니다. 이는 유사한 이미지가 유사한 임베딩을 가질 것이라는 개념에 기반합니다. 임베딩 테이블이 구축되면 다음 방법 중 하나로 의미론적 검색을 실행할 수 있습니다:
+
+  * 데이터셋의 특정 인덱스 또는 인덱스 목록에 대해: `exp.get_similar(idx=[1,10], limit=10)`
+  * 데이터셋에 없는 이미지 또는 이미지 목록에 대해: `exp.get_similar(img=["path/to/img1", "path/to/img2"], limit=10)`
+
+
+
+여러 입력을 사용하는 경우, 해당 입력들의 임베딩 집계값이 사용됩니다.
+
+입력값과 가장 유사한 데이터 포인트 `limit` 개수가 포함된 pandas DataFrame을 얻게 되며, 임베딩 공간에서의 거리 정보도 함께 제공됩니다. 이 데이터셋을 사용하여 추가 필터링을 수행할 수 있습니다.
+
+의미론적 검색
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    similar = exp.get_similar(img="https://ultralytics.com/images/bus.jpg", limit=10)
+    print(similar.head())
+    
+    # Search using multiple indices
+    similar = exp.get_similar(
+        img=["https://ultralytics.com/images/bus.jpg", "https://ultralytics.com/images/bus.jpg"],
+        limit=10,
+    )
+    print(similar.head())
+
+### Link to this section유사 이미지 시각화#
+
+`plot_similar` 메서드를 사용하여 유사한 이미지를 시각화할 수도 있습니다. 이 메서드는 `get_similar`와 동일한 인수를 취하며 그리드 형태로 유사한 이미지를 표시합니다.
+
+유사 이미지 시각화
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    plt = exp.plot_similar(img="https://ultralytics.com/images/bus.jpg", limit=10)
+    plt.show()
+
+## Link to this section2\. AI에게 질문하기 (자연어 쿼리)#
+
+이 기능을 사용하면 SQL을 작성하지 않고도 자연어를 사용하여 데이터셋을 필터링할 수 있습니다. AI 기반 쿼리 생성기가 프롬프트를 쿼리로 변환하여 일치하는 결과를 반환합니다. 예를 들어, "사람 1명과 개 2마리가 있는 이미지 100장을 보여줘. 다른 객체가 있어도 돼"라고 질문하면 쿼리를 생성하고 해당 결과를 보여줍니다. 참고: 이 기능은 LLM을 사용하므로 결과가 확률적이며 부정확할 수 있습니다.
+
+AI에게 질문하기
+    
+    
+    from ultralytics.data.explorer import plot_query_result
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    df = exp.ask_ai("show me 100 images with exactly one person and 2 dogs. There can be other objects too")
+    print(df.head())
+    
+    # plot the results
+    plt = plot_query_result(df)
+    plt.show()
+
+## Link to this section3\. SQL 쿼리#
+
+`sql_query` 메서드를 사용하여 데이터셋에 대해 SQL 쿼리를 실행할 수 있습니다. 이 메서드는 SQL 쿼리를 입력으로 받아 결과가 포함된 pandas DataFrame을 반환합니다.
+
+SQL 쿼리
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    df = exp.sql_query("WHERE labels LIKE '%person%' AND labels LIKE '%dog%'")
+    print(df.head())
+
+### Link to this sectionSQL 쿼리 결과 시각화#
+
+`plot_sql_query` 메서드를 사용하여 SQL 쿼리 결과를 시각화할 수도 있습니다. 이 메서드는 `sql_query`와 동일한 인수를 취하며 결과를 그리드 형태로 표시합니다.
+
+SQL 쿼리 결과 시각화
+    
+    
+    from ultralytics import Explorer
+    
+    # create an Explorer object
+    exp = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    exp.create_embeddings_table()
+    
+    # plot the SQL Query
+    exp.plot_sql_query("WHERE labels LIKE '%person%' AND labels LIKE '%dog%' LIMIT 10")
+
+## Link to this section4\. 임베딩 테이블 작업#
+
+임베딩 테이블을 직접 다룰 수도 있습니다. 테이블이 생성되면 `Explorer.table`을 사용하여 접근할 수 있습니다.
+
+팁
+
+Explorer는 내부적으로 [LanceDB](https://lancedb.github.io/lancedb/) 테이블을 사용합니다. `Explorer.table` 객체를 통해 이 테이블에 직접 접근하여 원시 쿼리를 실행하거나, 사전/사후 필터를 적용하는 등의 작업을 수행할 수 있습니다.
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer()
+    exp.create_embeddings_table()
+    table = exp.table
+
+테이블로 할 수 있는 작업의 몇 가지 예시는 다음과 같습니다:
+
+### Link to this section원시 임베딩 가져오기#
+
+예시
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer()
+    exp.create_embeddings_table()
+    table = exp.table
+    
+    embeddings = table.to_pandas()["vector"]
+    print(embeddings)
+
+### Link to this section사전 및 사후 필터를 이용한 고급 쿼리#
+
+예시
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer(model="yolo11n.pt")
+    exp.create_embeddings_table()
+    table = exp.table
+    
+    # Dummy embedding
+    embedding = [i for i in range(256)]
+    rs = table.search(embedding).metric("cosine").where("").limit(10)
+
+### Link to this section벡터 인덱스 생성#
+
+대규모 데이터셋을 사용할 때는 더 빠른 쿼리를 위해 전용 벡터 인덱스를 생성할 수 있습니다. 이는 LanceDB 테이블에서 `create_index` 메서드를 사용하여 수행합니다.
+    
+    
+    table.create_index(num_partitions=..., num_sub_vectors=...)
+
+## Link to this section5\. 임베딩 애플리케이션#
+
+임베딩 테이블을 사용하여 다양한 탐색적 분석을 수행할 수 있습니다. 몇 가지 예시는 다음과 같습니다:
+
+### Link to this section유사도 인덱스#
+
+Explorer에는 `similarity_index` 연산이 포함되어 있습니다:
+
+  * 이는 각 데이터 포인트가 데이터셋의 나머지 부분과 얼마나 유사한지 추정하려고 합니다.
+  * It does that by counting how many image embeddings lie closer than `max_dist` to the current image in the generated embedding space, considering `top_k` similar images at a time.
+
+
+
+다음 컬럼이 포함된 pandas DataFrame을 반환합니다:
+
+  * `idx`: 데이터셋 내 이미지 인덱스
+  * `im_file`: 이미지 파일 경로
+  * `count`: 데이터셋 내에서 현재 이미지와의 거리가 `max_dist`보다 가까운 이미지의 개수
+  * `sim_im_files`: `count`에 해당하는 유사 이미지들의 경로 목록
+
+
+
+팁
+
+특정 데이터셋, 모델, `max_dist` 및 `top_k`에 대해 유사도 인덱스가 생성되면 이후 재사용됩니다. 데이터셋이 변경되었거나 유사도 인덱스를 다시 생성해야 하는 경우 `force=True`를 전달할 수 있습니다.
+
+유사도 인덱스
+    
+    
+    from ultralytics import Explorer
+    
+    exp = Explorer()
+    exp.create_embeddings_table()
+    
+    sim_idx = exp.similarity_index()
+
+유사도 인덱스를 사용하여 데이터셋을 필터링하기 위한 사용자 지정 조건을 만들 수 있습니다. 예를 들어, 다음 코드를 사용하여 데이터셋의 다른 이미지와 유사하지 않은 이미지를 필터링할 수 있습니다:
+    
+    
+    import numpy as np
+    
+    sim_count = np.array(sim_idx["count"])
+    sim_idx["im_file"][sim_count > 30]
+
+### Link to this section임베딩 공간 시각화#
+
+원하는 시각화 도구를 사용하여 임베딩 공간을 시각화할 수도 있습니다. 예를 들어 Matplotlib을 사용한 간단한 예시는 다음과 같습니다:
+    
+    
+    import matplotlib.pyplot as plt
+    from sklearn.decomposition import PCA
+    
+    # Reduce dimensions using PCA to 3 components for visualization in 3D
+    pca = PCA(n_components=3)
+    reduced_data = pca.fit_transform(embeddings)
+    
+    # Create a 3D scatter plot using Matplotlib Axes3D
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    
+    # Scatter plot
+    ax.scatter(reduced_data[:, 0], reduced_data[:, 1], reduced_data[:, 2], alpha=0.5)
+    ax.set_title("3D Scatter Plot of Reduced 256-Dimensional Data (PCA)")
+    ax.set_xlabel("Component 1")
+    ax.set_ylabel("Component 2")
+    ax.set_zlabel("Component 3")
+    
+    plt.show()
+
+Explorer API를 사용하여 나만의 CV 데이터셋 탐색 보고서를 작성해 보십시오. 영감을 얻으려면 [VOC 탐색 예시](/ko/datasets/explorer/explorer)를 확인하십시오.
+
+## Link to this sectionUltralytics Explorer로 빌드된 앱#
+
+Explorer API 기반의 [GUI 데모](/ko/datasets/explorer/dashboard)를 사용해 보십시오.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionUltralytics Explorer API는 어떤 용도로 사용됩니까?#
+
+Ultralytics Explorer API는 종합적인 데이터셋 탐색을 위해 설계되었습니다. 사용자는 SQL 쿼리, 벡터 유사도 검색 및 의미론적 검색을 사용하여 데이터셋을 필터링하고 검색할 수 있습니다. 이 강력한 Python API는 대규모 데이터셋을 처리할 수 있어 Ultralytics 모델을 사용하는 다양한 [컴퓨터 비전](https://www.ultralytics.com/glossary/computer-vision-cv) 작업에 이상적입니다.
+
+### Link to this sectionUltralytics Explorer API는 어떻게 설치합니까?#
+
+Ultralytics Explorer API와 그 종속성을 설치하려면 다음 명령어를 사용하십시오:
+    
+    
+    pip install ultralytics[explorer]
+
+이 명령어를 사용하면 Explorer API 기능을 위해 필요한 모든 외부 라이브러리가 자동으로 설치됩니다. 추가 설정 세부 정보는 문서의 설치 섹션을 참조하십시오.
+
+### Link to this sectionUltralytics Explorer API를 사용하여 유사도 검색을 하려면 어떻게 해야 합니까?#
+
+Ultralytics Explorer API를 사용하여 임베딩 테이블을 만들고 유사한 이미지를 쿼리함으로써 유사도 검색을 수행할 수 있습니다. 기본적인 예시는 다음과 같습니다:
+    
+    
+    from ultralytics import Explorer
+    
+    # Create an Explorer object
+    explorer = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    explorer.create_embeddings_table()
+    
+    # Search for similar images to a given image
+    similar_images_df = explorer.get_similar(img="path/to/image.jpg")
+    print(similar_images_df.head())
+
+더 자세한 내용은 유사도 검색 섹션을 방문하십시오.
+
+### Link to this sectionUltralytics Explorer와 함께 LanceDB를 사용하면 어떤 이점이 있습니까?#
+
+Ultralytics Explorer 내부에서 사용되는 LanceDB는 확장 가능한 디스크 기반 임베딩 테이블을 제공합니다. 이를 통해 메모리 부족 문제 없이 COCO와 같은 대규모 데이터셋에 대한 임베딩을 생성하고 재사용할 수 있습니다. 이러한 테이블은 한 번만 생성하면 재사용이 가능하여 데이터 처리 효율성을 높여줍니다.
+
+### Link to this sectionUltralytics Explorer API의 'AI에게 질문하기' 기능은 어떻게 작동합니까?#
+
+'AI에게 질문하기' 기능을 사용하면 사용자가 자연어 쿼리를 사용하여 데이터셋을 필터링할 수 있습니다. 이 기능은 LLM을 활용하여 내부적으로 이러한 쿼리를 SQL 쿼리로 변환합니다. 다음은 그 예시입니다:
+    
+    
+    from ultralytics import Explorer
+    
+    # Create an Explorer object
+    explorer = Explorer(data="coco128.yaml", model="yolo11n.pt")
+    explorer.create_embeddings_table()
+    
+    # Query with natural language
+    query_result = explorer.ask_ai("show me 100 images with exactly one person and 2 dogs. There can be other objects too")
+    print(query_result.head())
+
+더 많은 예시는 AI에게 질문하기 섹션을 확인하십시오.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/explorer/api.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[RIRizwanMunawar3](https://github.com/RizwanMunawar)[RAraimbekovm2](https://github.com/raimbekovm)[AYAyushExel2](https://github.com/AyushExel)[PDpderrenger1](https://github.com/pderrenger)[MImiles-deans-ultralytics1](https://github.com/miles-deans-ultralytics)[ONonuralpszr1](https://github.com/onuralpszr)[MAMatthewNoyce1](https://github.com/MatthewNoyce)[ANankanpy1](https://github.com/ankanpy)
+
+생성됨 2024년 1월 6일업데이트됨 2주 전
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

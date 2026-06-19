@@ -1,0 +1,520 @@
+---
+source_url: https://docs.ultralytics.com/vi/models/yoloe
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/yoloe.md)
+
+# Link to this sectionYOLOE: Real-Time Seeing Anything#
+
+## Link to this sectionGiới thiệu#
+
+![YOLOE Prompting Options](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yoloe-visualization.avif)
+
+[YOLOE (Real-Time Seeing Anything)](https://arxiv.org/html/2503.07465v1) là một bước tiến mới trong các mô hình YOLO zero-shot có khả năng gợi ý (promptable), được thiết kế cho phát hiện và phân đoạn **open-vocabulary**. Không giống các mô hình YOLO trước đây bị giới hạn trong các danh mục cố định, YOLOE sử dụng các gợi ý bằng văn bản, hình ảnh hoặc từ vựng nội bộ, cho phép phát hiện thời gian thực bất kỳ lớp đối tượng nào. Được xây dựng trên YOLOv10 và lấy cảm hứng từ [YOLO-World](/vi/models/yolo-world), YOLOE đạt **hiệu suất zero-shot tiên tiến nhất** mà vẫn giữ được tốc độ và độ chính xác tối ưu.
+
+  
+
+
+  
+**Watch:** How to use Ultralytics YOLOE-26 (New) | Open Vocabulary & Real-Time Seeing Anything 🚀 
+
+So với các mô hình YOLO trước đó, YOLOE tăng đáng kể hiệu quả và độ chính xác. Nó cải thiện **+3.5 AP** so với YOLO-Worldv2 trên LVIS trong khi chỉ sử dụng một phần ba tài nguyên huấn luyện và đạt tốc độ inference nhanh hơn 1.4 lần. Được tinh chỉnh trên COCO, YOLOE-v8-large vượt qua YOLOv8-L với **0.1 mAP** , sử dụng gần **4 lần ít thời gian huấn luyện hơn**. Điều này chứng minh sự cân bằng vượt trội giữa độ chính xác, hiệu suất và tính linh hoạt của YOLOE. Các phần dưới đây khám phá kiến trúc, so sánh benchmark và khả năng tích hợp của YOLOE với framework [Ultralytics](https://www.ultralytics.com/).
+
+## Link to this sectionTổng quan về kiến trúc#
+
+![YOLOE Architecture](https://github.com/THU-MIG/yoloe/raw/main/figures/pipeline.svg)
+
+YOLOE giữ nguyên cấu trúc YOLO tiêu chuẩn—một **backbone** tích chập (ví dụ: CSP-Darknet) để trích xuất đặc trưng, một **neck** (ví dụ: PAN-FPN) để hợp nhất đa quy mô, và một **head** phát hiện **anchor-free, decoupled** (như trong YOLOv8/YOLO11) dự đoán độc lập objectness, các lớp và hộp (boxes). YOLOE giới thiệu ba mô-đun mới cho phép phát hiện open-vocabulary:
+
+  * **Re-parameterizable Region-Text Alignment (RepRTA)** : Hỗ trợ **phát hiện bằng văn bản gợi ý (text-prompted detection)** bằng cách tinh chỉnh các [embeddings](https://www.ultralytics.com/glossary/embeddings) văn bản (ví dụ: từ CLIP) thông qua một mạng phụ trợ nhỏ. Tại thời điểm inference, mạng này được gộp vào mô hình chính, đảm bảo không có chi phí bổ sung. Do đó, YOLOE phát hiện được các đối tượng được dán nhãn văn bản tùy ý (ví dụ: "đèn giao thông" chưa thấy trước đó) mà không bị phạt về hiệu năng runtime.
+
+  * **Semantic-Activated Visual Prompt Encoder (SAVPE)** : Cho phép **phát hiện bằng gợi ý trực quan (visual-prompted detection)** thông qua một nhánh embedding nhẹ. Với một hình ảnh tham chiếu, SAVPE mã hóa các đặc trưng ngữ nghĩa và kích hoạt, giúp mô hình nhận diện các đối tượng có hình dáng tương tự—một khả năng phát hiện one-shot hữu ích cho logo hoặc các bộ phận cụ thể.
+
+  * **Lazy Region-Prompt Contrast (LRPC)** : Ở **chế độ không cần gợi ý (prompt-free mode)** , YOLOE thực hiện nhận diện open-set bằng cách sử dụng các embedding nội bộ đã được huấn luyện trên từ vựng lớn (hơn 1200 danh mục từ LVIS và Objects365). Không cần gợi ý hoặc encoder bên ngoài, YOLOE xác định đối tượng thông qua tra cứu độ tương đồng embedding, xử lý hiệu quả không gian nhãn lớn tại thời điểm inference.
+
+
+
+
+Ngoài ra, YOLOE tích hợp **instance segmentation** thời gian thực bằng cách mở rộng head phát hiện với một nhánh dự đoán mặt nạ (giống như YOLACT hoặc YOLOv8-Seg), với mức chi phí tăng thêm tối thiểu.
+
+Quan trọng là, các mô-đun open-world của YOLOE không gây **chi phí inference** khi được sử dụng như một YOLO closed-set thông thường. Sau khi huấn luyện, các tham số YOLOE có thể được tái tham số hóa (re-parameterized) thành một head YOLO tiêu chuẩn, giữ nguyên FLOPs và tốc độ (ví dụ: khớp chính xác với [YOLO11](/vi/models/yolo11)).
+
+## Link to this sectionCác model có sẵn, tác vụ được hỗ trợ và chế độ vận hành#
+
+Phần này trình bày chi tiết các mô hình hiện có cùng với các trọng số pretrained cụ thể của chúng, các tác vụ mà chúng hỗ trợ, và khả năng tương thích với các chế độ vận hành khác nhau như [Inference](/vi/modes/predict), [Validation](/vi/modes/val), [Training](/vi/modes/train), và [Export](/vi/modes/export), được ký hiệu bằng ✅ cho các chế độ được hỗ trợ và ❌ cho các chế độ không được hỗ trợ.
+
+### Link to this sectionCác mô hình Text/Visual Prompt#
+
+Loại model| Trọng số Pretrained| Các tác vụ được hỗ trợ| Suy luận| Validation| Huấn luyện| Xuất (Export)  
+---|---|---|---|---|---|---  
+YOLOE-11S| [yoloe-11s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11s-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11M| [yoloe-11m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11m-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11L| [yoloe-11l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11l-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8S| [yoloe-v8s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8s-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8M| [yoloe-v8m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8m-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8L| [yoloe-v8l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8l-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26N| [yoloe-26n-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26S| [yoloe-26s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26s-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26M| [yoloe-26m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26m-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26L| [yoloe-26l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26l-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26X| [yoloe-26x-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26x-seg.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+  
+### Link to this sectionCác mô hình Prompt Free#
+
+Loại model| Trọng số Pretrained| Các tác vụ được hỗ trợ| Suy luận| Validation| Huấn luyện| Xuất (Export)  
+---|---|---|---|---|---|---  
+YOLOE-11S-PF| [yoloe-11s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11s-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11M-PF| [yoloe-11m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11m-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11L-PF| [yoloe-11l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11l-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8S-PF| [yoloe-v8s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8s-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8M-PF| [yoloe-v8m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8m-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8L-PF| [yoloe-v8l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8l-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26N-PF| [yoloe-26n-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26S-PF| [yoloe-26s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26s-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26M-PF| [yoloe-26m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26m-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26L-PF| [yoloe-26l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26l-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26X-PF| [yoloe-26x-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26x-seg-pf.pt)| [Phân đoạn Instance](/vi/tasks/segment)| ✅| ✅| ✅| ✅  
+  
+Hiệu suất YOLOE-26
+
+Để biết các benchmark hiệu suất chi tiết của các mô hình YOLOE-26, xem [Tài liệu YOLO26](/vi/models/yolo26#yoloe-26-open-vocabulary-detection-and-segmentation).
+
+## Link to this sectionVí dụ Sử dụng#
+
+Các mô hình YOLOE rất dễ tích hợp vào các ứng dụng Python của bạn. Ultralytics cung cấp [Python API](/vi/usage/python) thân thiện với người dùng và [CLI commands](/vi/usage/cli) để hợp lý hóa quá trình phát triển.
+
+### Link to this sectionCách sử dụng Train#
+
+#### Link to this sectionTinh chỉnh trên tập dữ liệu tùy chỉnh#
+
+Bạn có thể tinh chỉnh bất kỳ mô hình YOLOE tiền huấn luyện nào trên tập dữ liệu YOLO tùy chỉnh của mình cho cả tác vụ phát hiện và phân đoạn đối tượng (instance segmentation).
+
+  
+
+
+  
+**Watch:** How to Train YOLOE on Car Parts Segmentation Dataset | Open-Vocabulary Model, Prediction & Export 🚀 
+
+Ví dụ
+
+**Phân đoạn đối tượng (Instance segmentation)**
+
+Việc tinh chỉnh một checkpoint YOLOE tiền huấn luyện phần lớn tuân theo [quy trình huấn luyện YOLO tiêu chuẩn](/vi/modes/train). Sự khác biệt chính là chỉ định rõ `YOLOEPESegTrainer` làm tham số `trainer` cho `model.train()`:
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer
+    
+    model = YOLOE("yoloe-26s-seg.pt")
+    
+    # Fine-tune on your segmentation dataset
+    results = model.train(
+        data="coco128-seg.yaml",  # Segmentation dataset
+        epochs=80,
+        patience=10,
+        trainer=YOLOEPESegTrainer,  # <- Important: use segmentation trainer
+    )
+
+**Phát hiện đối tượng (Object detection)**
+
+Tất cả các mô hình YOLOE tiền huấn luyện mặc định đều thực hiện phân đoạn đối tượng. Để sử dụng các checkpoint tiền huấn luyện này cho việc huấn luyện mô hình phát hiện, hãy khởi tạo một mô hình phát hiện từ đầu bằng cấu hình YAML, sau đó tải checkpoint phân đoạn tiền huấn luyện cùng quy mô. Lưu ý rằng chúng ta sử dụng `YOLOEPETrainer` thay vì `YOLOEPESegTrainer` vì chúng ta đang huấn luyện mô hình phát hiện:
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOEPETrainer
+    
+    # Initialize a detection model from a config
+    model = YOLOE("yoloe-26s.yaml")
+    
+    # Load weights from a pretrained segmentation checkpoint (same scale)
+    model.load("yoloe-26s-seg.pt")
+    
+    # Fine-tune on your detection dataset
+    results = model.train(
+        data="coco128.yaml",  # Detection dataset
+        epochs=80,
+        patience=10,
+        trainer=YOLOEPETrainer,  # <- Important: use detection trainer
+    )
+
+### Link to this sectionCách sử dụng Predict#
+
+YOLOE hỗ trợ cả gợi ý bằng văn bản và hình ảnh. Việc sử dụng gợi ý rất đơn giản—chỉ cần truyền chúng qua phương thức `predict` như dưới đây:
+
+Ví dụ
+
+Gợi ý bằng văn bản cho phép bạn chỉ định các lớp bạn muốn phát hiện thông qua mô tả bằng văn bản. Mã sau đây cho thấy cách bạn có thể sử dụng YOLOE để phát hiện người và xe buýt trong một hình ảnh:
+    
+    
+    from ultralytics import YOLOE
+    
+    # Initialize a YOLOE model
+    model = YOLOE("yoloe-26l-seg.pt")  # or yoloe-26s/m-seg.pt for different sizes
+    
+    # Set text prompt to detect person and bus. You only need to do this once after you load the model.
+    model.set_classes(["person", "bus"])
+    
+    # Run detection on the given image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+### Link to this sectionCách sử dụng Val#
+
+Việc validation mô hình trên một tập dữ liệu được tinh giản như sau:
+
+Ví dụ
+    
+    
+    from ultralytics import YOLOE
+    
+    # Create a YOLOE model
+    model = YOLOE("yoloe-26l-seg.pt")  # or yoloe-26s/m-seg.pt for different sizes
+    
+    # Conduct model validation on the COCO128-seg example dataset
+    metrics = model.val(data="coco128-seg.yaml")
+
+### Link to this sectionCách sử dụng xuất (Export)#
+
+Quy trình xuất tương tự như các mô hình YOLO khác, với sự linh hoạt bổ sung trong việc xử lý các gợi ý bằng văn bản và hình ảnh:
+
+Các mô hình đã xuất là tĩnh
+
+Các lớp được cấu hình bằng `set_classes()` (hoặc qua `refer_image` cho gợi ý trực quan) được nhúng vào các trọng số đã xuất. Sau khi xuất, mô hình không còn có thể chấp nhận các gợi ý mới: gọi `set_classes()` hoặc truyền `visual_prompts=...` vào `predict()` trên bản xuất đã tải sẽ thất bại. Để thay đổi các lớp được phát hiện, hãy xuất lại từ checkpoint `.pt` gốc với các gợi ý mới đã được cấu hình. Tệp đã xuất hoạt động giống như một bộ phát hiện YOLO tiêu chuẩn và cũng có thể được tải bằng `YOLO()` thay vì `YOLOE()`.
+
+Ví dụ
+    
+    
+    from ultralytics import YOLOE
+    
+    # Select yoloe-26s/m-seg.pt for different sizes
+    model = YOLOE("yoloe-26l-seg.pt")
+    
+    # Configure the set_classes() before exporting the model
+    model.set_classes(["person", "bus"])
+    
+    export_model = model.export(format="onnx")
+    model = YOLOE(export_model)
+    
+    # Run detection on the given image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+### Link to this sectionHuấn luyện các mô hình chính thức#
+
+#### Link to this sectionChuẩn bị tập dữ liệu#
+
+Lưu ý
+
+Việc huấn luyện các model YOLOE chính thức cần các annotation phân đoạn cho dữ liệu huấn luyện, dưới đây là [script được cung cấp bởi đội ngũ chính thức](https://github.com/THU-MIG/yoloe/blob/main/tools/generate_sam_masks.py) giúp chuyển đổi các dataset thành annotation phân đoạn, được hỗ trợ bởi các [model SAM2.1](/vi/models/sam-2). Hoặc bạn có thể tải xuống trực tiếp các `Processed Segment Annotations` được cung cấp trong bảng dưới đây bởi đội ngũ chính thức.
+
+  * Dữ liệu huấn luyện
+
+
+
+Tập dữ liệu (Dataset)| Loại| Mẫu| Boxes| Chú thích phát hiện thô| Chú thích phân đoạn đã xử lý  
+---|---|---|---|---|---  
+[Objects365v1](https://opendatalab.com/OpenDataLab/Objects365_v1)| Detection| 609k| 9621k| [objects365_train.json](https://opendatalab.com/OpenDataLab/Objects365_v1)| [objects365_train_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/objects365_train_segm.json)  
+[GQA](https://cs.stanford.edu/people/dorarad/gqa/about.html)| [Grounding](https://www.ultralytics.com/glossary/grounding)| 621k| 3681k| [final_mixed_train_no_coco.json](https://huggingface.co/GLIPModel/GLIP/resolve/main/mdetr_annotations/final_mixed_train_no_coco.json)| [final_mixed_train_no_coco_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/final_mixed_train_no_coco_segm.json)  
+[Flickr30k](https://shannon.cs.illinois.edu/DenotationGraph/)| Grounding| 149k| 641k| [final_flickr_separateGT_train.json](https://huggingface.co/GLIPModel/GLIP/resolve/main/mdetr_annotations/final_flickr_separateGT_train.json)| [final_flickr_separateGT_train_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/final_flickr_separateGT_train_segm.json)  
+  
+  * Dữ liệu Val
+
+
+
+Tập dữ liệu (Dataset)| Loại| Tệp chú thích  
+---|---|---  
+[LVIS minival](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/lvis.yaml)| Detection| [minival.txt](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/lvis.yaml)  
+  
+#### Link to this sectionBắt đầu huấn luyện từ đầu#
+
+Lưu ý
+
+Các mô hình `Visual Prompt` được tinh chỉnh dựa trên các mô hình `Text Prompt` đã được huấn luyện tốt.
+
+Ví dụ
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOESegTrainerFromScratch
+    
+    # Option 1: Use Python dictionary
+    data = dict(
+        train=dict(
+            yolo_data=["Objects365.yaml"],
+            grounding_data=[
+                dict(
+                    img_path="flickr/full_images/",
+                    json_file="flickr/annotations/final_flickr_separateGT_train_segm.json",
+                ),
+                dict(
+                    img_path="mixed_grounding/gqa/images",
+                    json_file="mixed_grounding/annotations/final_mixed_train_no_coco_segm.json",
+                ),
+            ],
+        ),
+        val=dict(yolo_data=["lvis.yaml"]),
+    )
+    
+    # Option 2: Use YAML file (yoloe_data.yaml)
+    # train:
+    #   yolo_data:
+    #     - Objects365.yaml
+    #   grounding_data:
+    #     - img_path: flickr/full_images/
+    #       json_file: flickr/annotations/final_flickr_separateGT_train_segm.json
+    #     - img_path: mixed_grounding/gqa/images
+    #       json_file: mixed_grounding/annotations/final_mixed_train_no_coco_segm.json
+    # val:
+    #   yolo_data:
+    #     - lvis.yaml
+    
+    model = YOLOE("yoloe-26l-seg.yaml")
+    model.train(
+        data=data,  # or data="yoloe_data.yaml" if using YAML file
+        batch=128,
+        epochs=30,
+        close_mosaic=2,
+        optimizer="AdamW",
+        lr0=2e-3,
+        warmup_bias_lr=0.0,
+        weight_decay=0.025,
+        momentum=0.9,
+        workers=4,
+        trainer=YOLOESegTrainerFromScratch,
+        device="0,1,2,3,4,5,6,7",
+    )
+
+## Link to this sectionSo sánh hiệu suất YOLOE#
+
+YOLOE đạt hoặc vượt độ chính xác của các mô hình YOLO đóng (closed-set) trên các chuẩn đánh giá như COCO và LVIS, mà không làm giảm tốc độ hay kích thước mô hình. Bảng dưới đây so sánh YOLOE-L (xây dựng trên YOLO11) và YOLOE26-L (xây dựng trên [YOLO26](/vi/models/yolo26)) với các mô hình đóng tương ứng:
+
+Mô hình| COCO mAP50-95| LVIS mAP50-95| Tốc độ suy luận (T4)| Tham số| GFLOPs (640px)  
+---|---|---|---|---|---  
+**YOLOv8-L** (đóng)| 52.9%| -| **9.06 ms** (110 FPS)| 43.7 M| 165.2 B  
+**YOLO11-L** (đóng)| 53.5%| -| **6.2 ms** (161 FPS)| 26.2 M| 86.9 B  
+**YOLOE-L** (mở)| 52.6%| 35.2%| **6.2 ms** (161 FPS)| 26.2 M| 86.9 B†  
+**YOLOE26-L** (mở)| -| 36.8%| **6.2 ms** (161 FPS)| 32.3 M| 88.3 B†  
+  
+† _YOLOE-L chia sẻ kiến trúc của YOLO11-L và YOLOE26-L chia sẻ kiến trúc của YOLO26-L, dẫn đến tốc độ suy luận và GFLOPs tương đương._
+
+YOLOE26-L đạt **36.8% LVIS mAP** với **32.3M tham số** và **88.3B FLOPs** , xử lý ảnh 640×640 ở mức **6.2 ms (161 FPS)** trên GPU T4. Điều này cải thiện so với **35.2% LVIS mAP** của YOLOE-L trong khi vẫn duy trì tốc độ suy luận tương đương. Quan trọng là, các module open-vocabulary của YOLOE không phát sinh **chi phí suy luận** , minh chứng cho thiết kế **"không có bữa trưa miễn phí"**.
+
+Đối với các tác vụ zero-shot, YOLOE26 vượt trội đáng kể so với các bộ phát hiện open-vocabulary trước đó: trên LVIS, YOLOE26-S đạt **29.9% mAP** , vượt qua YOLO-World-S tới **+11.4 AP** , trong khi YOLOE26-L đạt **36.8% mAP** , vượt qua YOLO-World-L tới **+10.0 AP**. YOLOE26 duy trì suy luận hiệu quả ở mức **161 FPS** trên GPU T4, lý tưởng cho các ứng dụng open-vocabulary thời gian thực.
+
+Lưu ý
+
+**Điều kiện kiểm chuẩn:** Kết quả của YOLOE đến từ các mô hình được huấn luyện trước trên Objects365, GoldG và LVIS, sau đó được tinh chỉnh hoặc đánh giá trên COCO. Ưu thế nhỏ về mAP của YOLOE so với YOLOv8 đến từ quá trình huấn luyện trước kỹ lưỡng. Nếu không có quá trình huấn luyện mở này, YOLOE tương đương với các mô hình YOLO có kích thước tương tự, khẳng định độ chính xác SOTA và tính linh hoạt trong thế giới mở mà không bị giảm hiệu suất.
+
+## Link to this sectionSo sánh với các mô hình trước đây#
+
+YOLOE mang lại những tiến bộ đáng chú ý so với các mô hình YOLO và các bộ phát hiện open-vocabulary trước đó:
+
+  * **YOLOE so với YOLOv5:** [YOLOv5](/vi/models/yolov5) cung cấp sự cân bằng tốt giữa tốc độ và độ chính xác nhưng yêu cầu huấn luyện lại cho các lớp mới và sử dụng các head dựa trên neo (anchor-based). Ngược lại, YOLOE là **anchor-free** và phát hiện các lớp mới một cách linh hoạt. Dựa trên các cải tiến của YOLOv8, YOLOE đạt độ chính xác cao hơn (52.6% so với ~50% mAP của YOLOv5 trên COCO) và tích hợp phân đoạn đối tượng, không giống như YOLOv5.
+
+  * **YOLOE so với YOLOv8:** YOLOE mở rộng kiến trúc được thiết kế lại của [YOLOv8](/vi/models/yolov8), đạt độ chính xác tương đương hoặc vượt trội (**52.6% mAP với ~26M tham số** so với **52.9% với ~44M tham số** của YOLOv8-L). Nó giảm đáng kể thời gian huấn luyện nhờ quá trình huấn luyện trước mạnh mẽ hơn. Tiến bộ then chốt là **khả năng thế giới mở** của YOLOE, giúp phát hiện các đối tượng chưa từng thấy (ví dụ: "**xe scooter** " hoặc "**biểu tượng hòa bình** ") thông qua gợi ý, khác với thiết kế đóng của YOLOv8.
+
+  * **YOLOE so với YOLO11:** [YOLO11](/vi/models/yolo11) cải thiện YOLOv8 với hiệu suất nâng cao và ít tham số hơn (giảm ~22%). YOLOE kế thừa trực tiếp những lợi ích này, tương đương với tốc độ suy luận và số lượng tham số của YOLO11 (~26M tham số), đồng thời bổ sung **phát hiện và phân đoạn open-vocabulary**. Trong các kịch bản đóng, YOLOE tương đương với YOLO11, nhưng quan trọng là nó bổ sung khả năng thích ứng để phát hiện các lớp chưa biết, đạt được **YOLO11 + khả năng thế giới mở** mà không làm giảm tốc độ.
+
+  * **YOLOE26 so với YOLOE (dựa trên YOLO11):** YOLOE26 xây dựng trên kiến trúc của [YOLO26](/vi/models/yolo26), kế thừa thiết kế end-to-end không cần NMS để suy luận nhanh hơn. Trên LVIS, YOLOE26-L đạt **36.8% mAP** , cải thiện so với **35.2% mAP** của YOLOE-L. YOLOE26 cung cấp cả năm quy mô mô hình (N/S/M/L/X) so với ba quy mô của YOLOE (S/M/L), mang lại sự linh hoạt hơn cho các tình huống triển khai khác nhau.
+
+  * **YOLOE26 so với các bộ phát hiện open-vocabulary trước đây:** Các mô hình open-vocab trước đó (GLIP, OWL-ViT, [YOLO-World](/vi/models/yolo-world)) dựa nhiều vào [transformers](https://www.ultralytics.com/glossary/transformer) tầm nhìn-ngôn ngữ, dẫn đến suy luận chậm. Trên LVIS, YOLOE26-S đạt **29.9% mAP** (**+11.4 AP** so với YOLO-World-S) và YOLOE26-L đạt **36.8% mAP** (**+10.0 AP** so với YOLO-World-L), trong khi duy trì suy luận thời gian thực ở mức **161 FPS** trên GPU T4. So với các phương pháp dựa trên transformer (ví dụ: GLIP), YOLOE26 cung cấp tốc độ suy luận nhanh hơn gấp nhiều lần, thực sự thu hẹp khoảng cách giữa độ chính xác và hiệu quả trong phát hiện tập mở.
+
+
+
+
+Tóm lại, YOLOE và YOLOE26 duy trì tốc độ và hiệu suất nổi tiếng của YOLO, vượt qua các phiên bản tiền nhiệm về độ chính xác, tích hợp phân đoạn và giới thiệu khả năng phát hiện thế giới mở mạnh mẽ. YOLOE26 tiếp tục nâng cao kiến trúc với khả năng suy luận end-to-end không cần NMS từ YOLO26, lý tưởng cho các ứng dụng open-vocabulary thời gian thực.
+
+## Link to this sectionCác trường hợp sử dụng và ứng dụng#
+
+Khả năng phát hiện và phân đoạn open-vocabulary của YOLOE cho phép triển khai nhiều ứng dụng đa dạng vượt xa các mô hình lớp cố định truyền thống:
+
+  * **Phát hiện đối tượng thế giới mở:** Lý tưởng cho các kịch bản động như [robotics](https://www.ultralytics.com/blog/understanding-the-integration-of-computer-vision-in-robotics), nơi robot nhận dạng các đối tượng chưa từng thấy trước đây bằng cách sử dụng gợi ý, hoặc [hệ thống an ninh](https://www.ultralytics.com/blog/computer-vision-for-theft-prevention-enhancing-security) nhanh chóng thích ứng với các mối đe dọa mới (ví dụ: vật phẩm nguy hiểm) mà không cần huấn luyện lại.
+
+  * **Phát hiện ít mẫu (Few-Shot) và một mẫu (One-Shot):** Sử dụng visual prompt (SAVPE), YOLOE học nhanh các đối tượng mới từ hình ảnh tham chiếu đơn lẻ—hoàn hảo cho [kiểm tra công nghiệp](https://www.ultralytics.com/blog/computer-vision-in-manufacturing-improving-production-and-quality) (nhận diện các bộ phận hoặc lỗi ngay lập tức) hoặc **giám sát tùy chỉnh** , cho phép tìm kiếm trực quan với thiết lập tối thiểu.
+
+  * **Nhận dạng từ vựng lớn & Long-Tail:** Được trang bị từ vựng gồm 1000+ lớp, YOLOE vượt trội trong các tác vụ như [giám sát đa dạng sinh học](https://www.ultralytics.com/blog/ai-in-wildlife-conservation) (phát hiện các loài hiếm), **bộ sưu tập bảo tàng** , [quản lý kho bán lẻ](https://www.ultralytics.com/blog/ai-for-smarter-retail-inventory-management), hoặc **thương mại điện tử** , xác định đáng tin cậy nhiều lớp mà không cần huấn luyện chuyên sâu cho từng lớp.
+
+  * **Phát hiện và phân đoạn tương tác:** YOLOE hỗ trợ các ứng dụng tương tác thời gian thực như **truy xuất video/ảnh có thể tìm kiếm** , **thực tế tăng cường (AR)** , và **chỉnh sửa ảnh** trực quan, được điều khiển bởi các đầu vào tự nhiên (gợi ý bằng văn bản hoặc trực quan). Người dùng có thể tách biệt, xác định hoặc chỉnh sửa đối tượng một cách động và chính xác bằng cách sử dụng mặt nạ phân đoạn.
+
+  * **Gán nhãn và khởi tạo dữ liệu tự động:** YOLOE tạo thuận lợi cho việc tạo tập dữ liệu nhanh chóng bằng cách cung cấp các chú thích bounding box và phân đoạn ban đầu, giảm đáng kể nỗ lực gán nhãn của con người. Đặc biệt có giá trị trong **phân tích các bộ sưu tập phương tiện lớn** , nơi nó có thể tự động xác định các đối tượng hiện có, hỗ trợ xây dựng các mô hình chuyên biệt nhanh hơn.
+
+  * **Phân đoạn cho bất kỳ đối tượng nào:** Mở rộng khả năng phân đoạn cho các đối tượng bất kỳ thông qua các gợi ý—đặc biệt có lợi cho [hình ảnh y tế](https://www.ultralytics.com/blog/ai-and-radiology-a-new-era-of-precision-and-efficiency), **hiển vi** , hoặc [phân tích hình ảnh vệ tinh](https://www.ultralytics.com/blog/using-computer-vision-to-analyze-satellite-imagery), tự động xác định và phân đoạn chính xác các cấu trúc mà không cần các mô hình được huấn luyện trước chuyên biệt. Không giống như các mô hình như [SAM](/vi/models/sam), YOLOE đồng thời nhận diện và phân đoạn đối tượng một cách tự động, hỗ trợ các tác vụ như **tạo nội dung** hoặc **hiểu cảnh**.
+
+
+
+
+Xuyên suốt các trường hợp sử dụng này, lợi thế cốt lõi của YOLOE là **tính linh hoạt** , cung cấp một mô hình thống nhất cho việc phát hiện, nhận dạng và phân đoạn trên các kịch bản động. Hiệu suất của nó đảm bảo hiệu năng thời gian thực trên các thiết bị hạn chế về tài nguyên, lý tưởng cho robot, [xe tự lái](https://www.ultralytics.com/blog/ai-in-self-driving-cars), quốc phòng và hơn thế nữa.
+
+Mẹo
+
+Chọn chế độ của YOLOE dựa trên nhu cầu của bạn:
+
+  * **Chế độ đóng (Closed-set mode):** Cho các tác vụ lớp cố định (tốc độ và độ chính xác tối đa).
+  * **Chế độ gợi ý (Prompted mode):** Thêm các đối tượng mới nhanh chóng thông qua văn bản hoặc gợi ý trực quan.
+  * **Chế độ tập mở không cần gợi ý (Prompt-free open-set mode):** Phát hiện tổng quát trên nhiều danh mục (lý tưởng cho việc lập danh mục và khám phá).
+
+
+
+Thông thường, việc kết hợp các chế độ—ví dụ: khám phá không cần gợi ý sau đó đến các gợi ý mục tiêu—sẽ tận dụng tối đa tiềm năng của YOLOE.
+
+## Link to this sectionHuấn luyện và Suy luận#
+
+YOLOE tích hợp liền mạch với [Ultralytics Python API](/vi/usage/python) và [CLI](/vi/usage/cli), tương tự như các mô hình YOLO khác (YOLOv8, YOLO-World). Đây là cách bắt đầu nhanh chóng:
+
+Huấn luyện và suy luận với YOLOE
+    
+    
+    from ultralytics import YOLO
+    
+    # Load pretrained YOLOE model and train on custom data
+    model = YOLO("yoloe-26s-seg.pt")
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+    
+    # Run inference using text prompts ("person", "bus")
+    model.set_classes(["person", "bus"])
+    results = model.predict(source="test_images/street.jpg")
+    results[0].save()  # save annotated output
+
+Ở đây, YOLOE hoạt động như một bộ phát hiện tiêu chuẩn theo mặc định nhưng dễ dàng chuyển sang phát hiện có gợi ý bằng cách chỉ định các lớp (`set_classes`). Kết quả bao gồm bounding box, mặt nạ và nhãn.
+
+### Link to this sectionCác tác vụ được hỗ trợ khác#
+
+  * **Validation:** Đánh giá độ chính xác dễ dàng với `model.val()` hoặc `yolo val`.
+  * **Export:** Xuất các mô hình YOLOE (`model.export()`) sang ONNX, TensorRT, v.v., tạo điều kiện triển khai.
+  * **Tracking:** YOLOE hỗ trợ theo dõi đối tượng (`yolo track`) khi được tích hợp, hữu ích cho việc theo dõi các lớp đã gợi ý trong video.
+
+
+
+Lưu ý
+
+YOLOE tự động bao gồm **mặt nạ phân đoạn** trong kết quả suy luận (`results[0].masks`), giúp đơn giản hóa các tác vụ chính xác đến từng pixel như trích xuất đối tượng hoặc đo lường mà không cần các mô hình riêng biệt.
+
+## Link to this sectionBắt đầu#
+
+Thiết lập nhanh YOLOE với Ultralytics bằng cách thực hiện theo các bước sau:
+
+  1. **Cài đặt** : Cài đặt hoặc cập nhật gói Ultralytics:
+         
+         pip install -U ultralytics
+
+  2. **Tải xuống trọng số YOLOE** : Các mô hình YOLOE đã được huấn luyện trước (ví dụ: YOLOE-v8-S/L, các biến thể YOLOE-11) có sẵn từ các bản phát hành GitHub của YOLOE. Chỉ cần tải xuống tệp `.pt` mong muốn để tải vào lớp YOLO của Ultralytics.
+
+  3. **Yêu cầu phần cứng** :
+
+     * **Suy luận** : Khuyến nghị GPU (NVIDIA với VRAM ≥4-8GB). Các mô hình nhỏ chạy hiệu quả trên GPU biên (ví dụ: [Jetson](/vi/guides/nvidia-jetson)) hoặc CPU ở độ phân giải thấp hơn. Để suy luận hiệu năng cao trên các máy trạm nhỏ gọn, hãy xem hướng dẫn [NVIDIA DGX Spark](/vi/guides/nvidia-dgx-spark) của chúng tôi.
+     * **Huấn luyện** : Việc tinh chỉnh YOLOE trên dữ liệu tùy chỉnh thường chỉ yêu cầu một GPU. Quá trình huấn luyện trước open-vocabulary chuyên sâu (LVIS/Objects365) được các tác giả sử dụng đòi hỏi tài nguyên tính toán đáng kể (8× GPU RTX 4090).
+  4. **Cấu hình** : Các cấu hình YOLOE sử dụng các tệp YAML tiêu chuẩn của Ultralytics. Các cấu hình mặc định (ví dụ: `yoloe-26s-seg.yaml`) thường là đủ, nhưng bạn có thể sửa đổi backbone, các lớp hoặc kích thước hình ảnh nếu cần.
+
+  5. **Chạy YOLOE** :
+
+     * **Suy luận nhanh** (không gợi ý):
+           
+           yolo predict model=yoloe-26s-seg-pf.pt source="image.jpg"
+
+     * **Phát hiện có gợi ý** (ví dụ về gợi ý văn bản):
+           
+           from ultralytics import YOLO
+           
+           model = YOLO("yoloe-26s-seg.pt")
+           model.set_classes(["bowl", "apple"])
+           results = model.predict("kitchen.jpg")
+           results[0].save()
+
+  6. **Mẹo tích hợp** :
+
+     * **Tên lớp** : Các đầu ra mặc định của YOLOE sử dụng danh mục LVIS; hãy sử dụng `set_classes()` để chỉ định nhãn của riêng bạn.
+     * **Tốc độ** : YOLOE không có chi phí bổ sung trừ khi sử dụng gợi ý. Gợi ý văn bản có tác động tối thiểu; gợi ý trực quan thì lớn hơn một chút.
+     * **Hành vi NMS** : YOLOE tự động sử dụng `agnostic_nms=True` trong quá trình dự đoán, gộp các hộp chồng lấp giữa các lớp. Điều này ngăn chặn việc phát hiện trùng lặp khi cùng một đối tượng khớp với nhiều danh mục trong từ vựng lớn của YOLOE (1200+ danh mục LVIS). Bạn có thể ghi đè điều này bằng cách truyền `agnostic_nms=False` một cách rõ ràng.
+     * **Suy luận hàng loạt** : Được hỗ trợ trực tiếp (`model.predict([img1, img2])`). Đối với các gợi ý cụ thể cho ảnh, hãy chạy ảnh riêng lẻ.
+
+
+
+[Tài liệu Ultralytics](https://docs.ultralytics.com/) cung cấp thêm các tài nguyên khác. YOLOE cho phép bạn dễ dàng khám phá các khả năng thế giới mở mạnh mẽ trong hệ sinh thái YOLO quen thuộc.
+
+Mẹo
+
+**Mẹo chuyên nghiệp:** Để tối đa hóa độ chính xác zero-shot của YOLOE, hãy tinh chỉnh từ các checkpoint được cung cấp thay vì huấn luyện từ đầu. Sử dụng các từ gợi ý phù hợp với các nhãn huấn luyện phổ biến (xem danh mục LVIS) để cải thiện độ chính xác khi phát hiện.
+
+## Link to this sectionTrích dẫn và Ghi nhận#
+
+Nếu YOLOE đã đóng góp cho nghiên cứu hoặc dự án của bạn, vui lòng trích dẫn bài báo gốc bởi **Ao Wang, Lihao Liu, Hui Chen, Zijia Lin, Jungong Han, và Guiguang Ding** từ **Đại học Thanh Hoa** :
+
+Trích dẫn
+    
+    
+    @misc{wang2025yoloerealtimeseeing,
+          title={YOLOE: Real-Time Seeing Anything},
+          author={Ao Wang and Lihao Liu and Hui Chen and Zijia Lin and Jungong Han and Guiguang Ding},
+          year={2025},
+          eprint={2503.07465},
+          archivePrefix={arXiv},
+          primaryClass={cs.CV},
+          url={https://arxiv.org/abs/2503.07465},
+    }
+
+Để đọc thêm, bài báo gốc YOLOE có sẵn trên [arXiv](https://arxiv.org/html/2503.07465v1). Mã nguồn của dự án và các tài nguyên bổ sung có thể được truy cập thông qua [kho lưu trữ GitHub](https://github.com/THU-MIG/yoloe) của họ.
+
+## Link to this sectionCâu hỏi thường gặp#
+
+### Link to this sectionYOLOE khác YOLO-World như thế nào?#
+
+Mặc dù cả YOLOE và [YOLO-World](/vi/models/yolo-world) đều cho phép phát hiện open-vocabulary, YOLOE mang lại một số ưu điểm. YOLOE đạt độ chính xác cao hơn +3.5 AP trên LVIS trong khi sử dụng tài nguyên huấn luyện ít hơn 3 lần và chạy nhanh hơn 1.4 lần so với YOLO-Worldv2. YOLOE cũng hỗ trợ ba chế độ gợi ý (văn bản, trực quan và từ vựng nội bộ), trong khi YOLO-World chủ yếu tập trung vào các gợi ý văn bản. Ngoài ra, YOLOE còn bao gồm các khả năng [phân đoạn đối tượng](https://www.ultralytics.com/blog/what-is-instance-segmentation-a-quick-guide) tích hợp sẵn, cung cấp mặt nạ chính xác đến từng pixel cho các đối tượng được phát hiện mà không cần thêm chi phí bổ sung.
+
+### Link to this sectionTôi có thể sử dụng YOLOE như một mô hình YOLO thông thường không?#
+
+Có, YOLOE có thể hoạt động chính xác như một mô hình YOLO tiêu chuẩn mà không bị giảm hiệu suất. Khi được sử dụng ở chế độ đóng (không có gợi ý), các module open-vocabulary của YOLOE được tham số hóa lại vào head phát hiện tiêu chuẩn, dẫn đến tốc độ và độ chính xác giống hệt các mô hình YOLO11 tương đương. Điều này làm cho YOLOE cực kỳ linh hoạt—bạn có thể sử dụng nó như một bộ phát hiện truyền thống để đạt tốc độ tối đa và sau đó chỉ chuyển sang chế độ open-vocabulary khi cần.
+
+### Link to this sectionTôi có thể sử dụng những loại gợi ý nào với YOLOE?#
+
+YOLOE hỗ trợ ba loại gợi ý:
+
+  1. **Gợi ý văn bản** : Chỉ định các lớp đối tượng bằng ngôn ngữ tự nhiên (ví dụ: "người", "đèn giao thông", "xe scooter")
+  2. **Gợi ý trực quan** : Cung cấp hình ảnh tham chiếu của các đối tượng bạn muốn phát hiện
+  3. **Từ vựng nội bộ** : Sử dụng từ vựng tích hợp sẵn của YOLOE gồm 1200+ danh mục mà không cần gợi ý bên ngoài
+
+
+
+Sự linh hoạt này cho phép bạn điều chỉnh YOLOE cho các kịch bản khác nhau mà không cần huấn luyện lại mô hình, làm cho nó đặc biệt hữu ích cho các môi trường động nơi các yêu cầu phát hiện thay đổi thường xuyên.
+
+### Link to this sectionYOLOE xử lý phân đoạn đối tượng như thế nào?#
+
+YOLOE tích hợp instance segmentation trực tiếp vào kiến trúc của nó bằng cách mở rộng detection head với một nhánh dự đoán mask. Phương pháp này tương tự như YOLOv8-Seg nhưng hoạt động với mọi prompted object class. Các segmentation mask được tự động đưa vào kết quả inference và có thể truy cập thông qua `results[0].masks`. Cách tiếp cận thống nhất này loại bỏ nhu cầu về các model detection và segmentation riêng biệt, giúp tối ưu hóa luồng công việc cho các ứng dụng yêu cầu độ chính xác pixel-perfect cho ranh giới vật thể.
+
+### Link to this sectionYOLOE xử lý inference với custom prompt như thế nào?#
+
+Tương tự như [YOLO-World](/vi/models/yolo-world), YOLOE hỗ trợ chiến lược "prompt-then-detect" sử dụng từ vựng ngoại tuyến (offline vocabulary) để nâng cao hiệu suất. Các custom prompt như chú thích hoặc danh mục vật thể cụ thể được mã hóa trước và lưu trữ dưới dạng các embedding từ vựng ngoại tuyến. Cách tiếp cận này giúp tinh giản quy trình detection mà không yêu cầu huấn luyện lại. Bạn có thể thiết lập động các prompt này bên trong model để điều chỉnh cho các tác vụ detection cụ thể:
+    
+    
+    from ultralytics import YOLO
+    
+    # Initialize a YOLOE model
+    model = YOLO("yoloe-26s-seg.pt")
+    
+    # Define custom classes
+    model.set_classes(["person", "bus"])
+    
+    # Execute prediction on an image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/yoloe.md)
+
+[GLglenn-jocher14](https://github.com/glenn-jocher)[RIRizwanMunawar10](https://github.com/RizwanMunawar)[Y-Y-T-G7](https://github.com/Y-T-G)[LALaughing-q5](https://github.com/Laughing-q)[RAraimbekovm3](https://github.com/raimbekovm)[SHShuaiLYU2](https://github.com/ShuaiLYU)[ONonuralpszr2](https://github.com/onuralpszr)RORonald Eddy Jr1[FCfcakyon1](https://github.com/fcakyon)[PDpderrenger1](https://github.com/pderrenger)[PIpicsalex1](https://github.com/picsalex)WIWillie Maddox1[JSJShengP1](https://github.com/JShengP)[LEleonnil1](https://github.com/leonnil)
+
+Đã tạo 19 thg 3, 2025Đã cập nhật 3 ngày trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

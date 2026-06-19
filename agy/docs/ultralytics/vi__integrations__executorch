@@ -1,0 +1,364 @@
+---
+source_url: https://docs.ultralytics.com/vi/integrations/executorch
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/executorch.md)
+
+# Link to this sectionTriển khai YOLO26 trên thiết bị di động và biên (Mobile & Edge) với ExecuTorch#
+
+Việc triển khai các model thị giác máy tính (computer vision) trên các thiết bị biên như điện thoại thông minh, máy tính bảng và hệ thống nhúng đòi hỏi một runtime tối ưu để cân bằng giữa hiệu suất và tài nguyên hạn chế. ExecuTorch, giải pháp của PyTorch cho điện toán biên, cho phép thực hiện inference hiệu quả trên thiết bị cho các model [Ultralytics YOLO](https://github.com/ultralytics/ultralytics).
+
+Hướng dẫn này phác thảo cách xuất các model Ultralytics YOLO sang định dạng ExecuTorch, cho phép bạn triển khai model của mình trên các thiết bị di động và thiết bị biên với hiệu suất đã được tối ưu hóa.
+
+## Link to this sectionTại sao nên xuất sang ExecuTorch?#
+
+![PyTorch ExecuTorch mobile inference framework](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/executorch-pipeline.avif)
+
+[ExecuTorch](https://docs.pytorch.org/executorch/) là giải pháp end-to-end của PyTorch để kích hoạt khả năng thực hiện inference ngay trên thiết bị cho các nền tảng di động và biên. Được xây dựng với mục tiêu linh hoạt và hiệu quả, ExecuTorch có thể được sử dụng để chạy các chương trình PyTorch trên nhiều nền tảng tính toán khác nhau.
+
+## Link to this sectionCác tính năng chính của ExecuTorch#
+
+ExecuTorch cung cấp một số tính năng mạnh mẽ để triển khai các model Ultralytics YOLO trên thiết bị biên:
+
+  * **Định dạng Model di động (Portable Model Format)** : ExecuTorch sử dụng định dạng `.pte` (PyTorch ExecuTorch), được tối ưu hóa về kích thước và tốc độ tải trên các thiết bị có tài nguyên hạn chế.
+
+  * **Backend XNNPACK** : Tích hợp mặc định với XNNPACK giúp cung cấp khả năng thực hiện inference được tối ưu hóa cao trên các CPU di động, mang lại hiệu suất tuyệt vời mà không cần phần cứng chuyên dụng.
+
+  * **Sẵn sàng cho Quantization** : Hệ sinh thái ExecuTorch hỗ trợ các kỹ thuật quantization để giảm kích thước model và cải thiện tốc độ inference; hiện tại Ultralytics xuất các model FP32 thông qua backend XNNPACK.
+
+  * **Hiệu quả bộ nhớ (Memory Efficiency)** : Quản lý bộ nhớ được tối ưu hóa giúp giảm dung lượng bộ nhớ runtime, làm cho nó phù hợp với các thiết bị có RAM hạn chế.
+
+  * **Metadata của Model** : Các model được xuất ra bao gồm metadata (kích thước ảnh, tên lớp, v.v.) trong một tệp YAML riêng biệt để dễ dàng tích hợp.
+
+
+
+
+## Link to this sectionCác tùy chọn triển khai với ExecuTorch#
+
+Các model ExecuTorch có thể được triển khai trên nhiều nền tảng di động và thiết bị biên khác nhau:
+
+  * **Ứng dụng di động** : Triển khai trên các ứng dụng iOS và Android với hiệu suất gốc (native performance), cho phép phát hiện đối tượng thời gian thực trong các ứng dụng di động.
+
+  * **Hệ thống nhúng** : Chạy trên các thiết bị Linux nhúng như Raspberry Pi, NVIDIA Jetson và các hệ thống dựa trên ARM khác với hiệu suất tối ưu.
+
+  * **Thiết bị Edge AI** : Triển khai trên phần cứng Edge AI chuyên dụng với các delegate tùy chỉnh để tăng tốc độ thực hiện inference.
+
+  * **Thiết bị IoT** : Tích hợp vào các thiết bị IoT để thực hiện inference ngay trên thiết bị mà không cần kết nối cloud.
+
+
+
+
+## Link to this sectionXuất các model Ultralytics YOLO26 sang ExecuTorch#
+
+Chuyển đổi các model Ultralytics YOLO26 sang định dạng ExecuTorch cho phép triển khai hiệu quả trên thiết bị di động và thiết bị biên.
+
+### Link to this sectionCài đặt#
+
+Việc xuất ExecuTorch yêu cầu Python 3.10-3.13 và PyTorch >= 2.9.0 cùng với gói `executorch`:
+
+Cài đặt
+    
+    
+    # Install Ultralytics package
+    pip install ultralytics
+
+Để biết hướng dẫn chi tiết và các phương pháp tốt nhất liên quan đến quy trình cài đặt, hãy kiểm tra [Hướng dẫn cài đặt YOLO26](/vi/quickstart) của chúng tôi. Trong quá trình cài đặt các gói cần thiết cho YOLO26, nếu bạn gặp bất kỳ khó khăn nào, hãy tham khảo [Hướng dẫn các vấn đề phổ biến](/vi/guides/yolo-common-issues) để tìm giải pháp và mẹo.
+
+### Link to this sectionCách sử dụng#
+
+Việc xuất các model YOLO26 sang ExecuTorch rất đơn giản:
+
+Định dạng ExecuTorch hỗ trợ các chế độ [Export](/vi/modes/export), [Predict](/vi/modes/predict) và [Validate](/vi/modes/val). Hãy xuất model của bạn, sau đó tải model đã xuất để chạy inference hoặc kiểm tra độ chính xác của nó.
+
+Xuất (Export)
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to ExecuTorch format
+    model.export(format="executorch")  # creates 'yolo26n_executorch_model'
+
+Dự đoán (Predict)
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported ExecuTorch model
+    model = YOLO("yolo26n_executorch_model")
+    
+    # Run inference
+    results = model("https://ultralytics.com/images/bus.jpg")
+
+Xác thực
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported ExecuTorch model
+    model = YOLO("yolo26n_executorch_model")
+    
+    # Validate accuracy on the COCO8 dataset
+    metrics = model.val(data="coco8.yaml")
+
+Các bản xuất ExecuTorch tạo ra một thư mục bao gồm tệp `.pte` và metadata. Sử dụng runtime ExecuTorch trong ứng dụng di động hoặc ứng dụng nhúng của bạn để tải model `.pte` và thực hiện inference.
+
+### Link to this sectionĐối số xuất#
+
+Khi xuất sang định dạng ExecuTorch, bạn có thể chỉ định các đối số sau:
+
+Đối số| Loại| Mặc định| Mô tả  
+---|---|---|---  
+`format`| `str`| `'executorch'`| Định dạng đích cho model được xuất, xác định khả năng tương thích với các môi trường triển khai khác nhau.  
+`imgsz`| `int` hoặc `tuple`| `640`| Desired image size for the model input. Can be an integer for square images or a tuple `(height, width)` for specific dimensions.  
+`batch`| `int`| `1`| Chỉ định kích thước batch inference của model khi xuất hoặc số lượng ảnh tối đa mà model đã xuất sẽ xử lý đồng thời ở chế độ `predict`.  
+`device`| `str`| `None`| Chỉ định thiết bị để xuất: GPU (`device=0`), CPU (`device=cpu`), MPS cho Apple silicon (`device=mps`).  
+  
+### Link to this sectionCấu trúc đầu ra#
+
+Việc xuất ExecuTorch tạo ra một thư mục chứa model và metadata:
+    
+    
+    yolo26n_executorch_model/
+    ├── model.pte               # ExecuTorch model file
+    └── metadata.yaml           # Model metadata (classes, image size, etc.)
+
+## Link to this sectionSử dụng các Model ExecuTorch đã xuất#
+
+Sau khi xuất model, bạn cần tích hợp nó vào ứng dụng đích của mình bằng cách sử dụng runtime ExecuTorch.
+
+### Link to this sectionTích hợp di động#
+
+Đối với ứng dụng di động (iOS/Android), bạn sẽ cần:
+
+  1. **Thêm ExecuTorch Runtime** : Bao gồm thư viện runtime ExecuTorch trong dự án di động của bạn
+  2. **Tải Model** : Tải tệp `.pte` trong ứng dụng của bạn
+  3. **Chạy Inference** : Xử lý ảnh và nhận các dự đoán
+
+
+
+Ví dụ về tích hợp iOS (Objective-C/C++):
+    
+    
+    // iOS uses C++ APIs for model loading and inference
+    // See https://pytorch.org/executorch/stable/using-executorch-ios.html for complete examples
+    
+    #include <executorch/extension/module/module.h>
+    
+    using namespace ::executorch::extension;
+    
+    // Load the model
+    Module module("/path/to/model.pte");
+    
+    // Create input tensor
+    float input[1 * 3 * 640 * 640];
+    auto tensor = from_blob(input, {1, 3, 640, 640});
+    
+    // Run inference
+    const auto result = module.forward(tensor);
+
+Ví dụ về tích hợp Android (Kotlin):
+    
+    
+    import org.pytorch.executorch.EValue
+    import org.pytorch.executorch.Module
+    import org.pytorch.executorch.Tensor
+    
+    // Load the model
+    val module = Module.load("/path/to/model.pte")
+    
+    // Prepare input tensor
+    val inputTensor = Tensor.fromBlob(floatData, longArrayOf(1, 3, 640, 640))
+    val inputEValue = EValue.from(inputTensor)
+    
+    // Run inference
+    val outputs = module.forward(inputEValue)
+    val scores = outputs[0].toTensor().dataAsFloatArray
+
+### Link to this sectionLinux nhúng#
+
+Đối với các hệ thống Linux nhúng, hãy sử dụng API C++ của ExecuTorch:
+    
+    
+    #include <executorch/extension/module/module.h>
+    #include <executorch/extension/tensor/tensor.h>
+    
+    using namespace ::executorch::extension;
+    
+    // Load model
+    Module module("model.pte");
+    
+    // Prepare input
+    std::vector<float> input_data = preprocessImage(image);
+    auto input_tensor = from_blob(input_data.data(), {1, 3, 640, 640});
+    
+    // Run inference
+    const auto outputs = module.forward(input_tensor);
+
+Để biết thêm chi tiết về cách tích hợp ExecuTorch vào ứng dụng của bạn, hãy truy cập [Tài liệu ExecuTorch](https://docs.pytorch.org/executorch/).
+
+## Link to this sectionTối ưu hóa hiệu suất#
+
+### Link to this sectionTối ưu hóa kích thước Model#
+
+Để giảm kích thước model cho việc triển khai:
+
+  * **Sử dụng các model nhỏ hơn** : Bắt đầu với YOLO26n (nano) để có dung lượng nhỏ nhất
+  * **Giảm độ phân giải đầu vào** : Sử dụng kích thước ảnh nhỏ hơn (ví dụ: `imgsz=320` hoặc `imgsz=416`)
+  * **Quantization** : Áp dụng các kỹ thuật quantization (được hỗ trợ trong các phiên bản ExecuTorch tương lai)
+
+
+
+### Link to this sectionTối ưu hóa tốc độ Inference#
+
+Để tăng tốc độ inference:
+
+  * **Backend XNNPACK** : Backend XNNPACK mặc định cung cấp khả năng thực hiện inference tối ưu trên CPU
+  * **Tăng tốc phần cứng** : Sử dụng các delegate cụ thể theo nền tảng (ví dụ: CoreML cho iOS)
+  * **Xử lý Batch** : Xử lý nhiều ảnh cùng lúc khi có thể
+
+
+
+## Link to this sectionĐiểm chuẩn (Benchmarks)#
+
+Nhóm Ultralytics đã đánh giá các model YOLO26, so sánh tốc độ và độ chính xác giữa PyTorch và ExecuTorch.
+
+Hiệu suất
+
+Mô hình| Định dạng| Trạng thái| Kích thước (MB)| metrics/mAP50-95(B)| Thời gian suy luận (ms/im)  
+---|---|---|---|---|---  
+YOLO26n| PyTorch| ✅| 5.3| 0.4790| 314.80  
+YOLO26n| ExecuTorch| ✅| 9.4| 0.4800| 142  
+YOLO26s| PyTorch| ✅| 19.5| 0.5730| 930.90  
+YOLO26s| ExecuTorch| ✅| 36.5| 0.5780| 376.1  
+  
+Lưu ý
+
+Thời gian inference không bao gồm tiền xử lý/hậu xử lý.
+
+## Link to this sectionKhắc phục sự cố#
+
+### Link to this sectionCác Vấn đề Thường gặp#
+
+**Vấn đề** : `Python version error`
+
+**Giải pháp** : ExecuTorch yêu cầu Python 3.10 trở lên. Hãy nâng cấp cài đặt Python của bạn:
+    
+    
+    # Using conda
+    conda create -n executorch python=3.10
+    conda activate executorch
+
+**Vấn đề** : `Export fails during first run`
+
+**Giải pháp** : Đảm bảo bạn đã cài đặt wheel `executorch` được biên dịch sẵn mới nhất:
+    
+    
+    pip install --upgrade executorch
+
+**Vấn đề** : `Import errors for ExecuTorch modules`
+
+**Giải pháp** : Đảm bảo ExecuTorch đã được cài đặt đúng cách:
+    
+    
+    pip install executorch --force-reinstall
+
+Để được trợ giúp khắc phục sự cố thêm, hãy truy cập [Ultralytics GitHub Issues](https://github.com/ultralytics/ultralytics/issues) hoặc [Tài liệu ExecuTorch](https://docs.pytorch.org/executorch/stable/getting-started-setup.html).
+
+## Link to this sectionTóm tắt#
+
+Việc xuất các model YOLO26 sang định dạng ExecuTorch cho phép triển khai hiệu quả trên các thiết bị di động và biên. Với khả năng tích hợp PyTorch gốc, hỗ trợ đa nền tảng và hiệu suất tối ưu, ExecuTorch là lựa chọn tuyệt vời cho các ứng dụng Edge AI.
+
+Điểm chính:
+
+  * ExecuTorch cung cấp khả năng triển khai biên gốc PyTorch với hiệu suất tuyệt vời
+  * Việc xuất rất đơn giản với tham số `format='executorch'`
+  * Các model được tối ưu hóa cho CPU di động thông qua backend XNNPACK
+  * Hỗ trợ iOS, Android và các nền tảng Linux nhúng
+  * Yêu cầu Python 3.10-3.13 và PyTorch >= 2.9.0
+
+
+
+## Link to this sectionCâu hỏi thường gặp#
+
+### Link to this sectionLàm cách nào để xuất model YOLO26 sang định dạng ExecuTorch?#
+
+Xuất model YOLO26 sang ExecuTorch bằng Python hoặc CLI:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    model.export(format="executorch")
+
+hoặc
+    
+    
+    yolo export model=yolo26n.pt format=executorch
+
+### Link to this sectionYêu cầu hệ thống cho việc xuất ExecuTorch là gì?#
+
+Việc xuất ExecuTorch yêu cầu:
+
+  * Python 3.10 trở lên
+  * Gói `executorch` (cài đặt qua `pip install executorch`)
+  * PyTorch (được cài đặt tự động cùng với ultralytics)
+
+
+
+Lưu ý: Gói `executorch` cung cấp các wheel được biên dịch sẵn (với backend XNNPACK), vì vậy không cần bước biên dịch bổ sung nào trong quá trình xuất.
+
+### Link to this sectionTôi có thể chạy inference với các model ExecuTorch trực tiếp trong Python không?#
+
+Các model ExecuTorch có thể được tải trực tiếp bằng `YOLO()` để thực hiện inference và validate trong Python (xem các ví dụ Predict/Validate ở trên), và chúng cũng có thể được triển khai trên các thiết bị di động và thiết bị biên bằng cách sử dụng các thư viện runtime của ExecuTorch.
+
+### Link to this sectionExecuTorch hỗ trợ những nền tảng nào?#
+
+ExecuTorch hỗ trợ:
+
+  * **Mobile** : iOS và Android
+  * **Embedded Linux** : Raspberry Pi, NVIDIA Jetson và các thiết bị ARM khác
+  * **Desktop** : Linux, macOS và Windows (dành cho phát triển)
+
+
+
+### Link to this sectionExecuTorch so với TFLite trong triển khai trên thiết bị di động như thế nào?#
+
+Cả ExecuTorch và TFLite đều là những lựa chọn tuyệt vời cho việc triển khai trên thiết bị di động:
+
+  * **ExecuTorch** : Khả năng tích hợp PyTorch tốt hơn, quy trình làm việc PyTorch nguyên bản, hệ sinh thái đang phát triển
+  * **TFLite** : Trưởng thành hơn, hỗ trợ phần cứng rộng rãi hơn, có nhiều ví dụ triển khai hơn
+
+
+
+Hãy chọn ExecuTorch nếu bạn đang sử dụng PyTorch và muốn có một lộ trình triển khai nguyên bản. Hãy chọn TFLite để có khả năng tương thích tối đa và bộ công cụ hoàn thiện.
+
+### Link to this sectionTôi có thể sử dụng các model ExecuTorch với khả năng tăng tốc GPU không?#
+
+Có! ExecuTorch hỗ trợ tăng tốc phần cứng thông qua các backend khác nhau:
+
+  * **Mobile GPU** : Thông qua các delegate Vulkan, Metal hoặc OpenCL
+  * **NPU/DSP** : Thông qua các delegate dành riêng cho nền tảng
+  * **Default** : XNNPACK để tối ưu hóa suy luận trên CPU
+
+
+
+Tham khảo [Tài liệu ExecuTorch](https://docs.pytorch.org/executorch/stable/compiler-delegate-and-partitioner.html) để thiết lập cho từng backend cụ thể.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/executorch.md)
+
+[GLglenn-jocher8](https://github.com/glenn-jocher)[RAraimbekovm2](https://github.com/raimbekovm)[LAlakshanthad2](https://github.com/lakshanthad)[LALaughing-q1](https://github.com/Laughing-q)[AMambitious-octopus1](https://github.com/ambitious-octopus)
+
+Đã tạo 22 thg 10, 2025Đã cập nhật 2 tuần trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

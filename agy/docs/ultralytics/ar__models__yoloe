@@ -1,0 +1,520 @@
+---
+source_url: https://docs.ultralytics.com/ar/models/yoloe
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/yoloe.md)
+
+# Link to this sectionYOLOE: رؤية أي شيء في الوقت الفعلي#
+
+## Link to this sectionمقدمة#
+
+![خيارات التلقين لـ YOLOE](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yoloe-visualization.avif)
+
+[YOLOE (رؤية أي شيء في الوقت الفعلي)](https://arxiv.org/html/2503.07465v1) هو تطور جديد في نماذج YOLO الموجهة بالتلقين (promptable) ذات التعلم الصفري (zero-shot)، المصممة للكشف والتقطيع بـ **مفردات مفتوحة** (open-vocabulary). على عكس نماذج YOLO السابقة المحدودة بفئات ثابتة، يستخدم YOLOE تلقينات نصية أو صورية أو مفردات داخلية، مما يتيح الكشف في الوقت الفعلي عن أي فئة من الكائنات. تم بناء YOLOE على أساس YOLOv10 ومستوحى من [YOLO-World](/ar/models/yolo-world)، ويحقق **أداءً متطوراً في التعلم الصفري** مع تأثير ضئيل على السرعة والدقة.
+
+  
+
+
+  
+**Watch:** How to use Ultralytics YOLOE-26 (New) | Open Vocabulary & Real-Time Seeing Anything 🚀 
+
+مقارنة بنماذج YOLO السابقة، يعزز YOLOE الكفاءة والدقة بشكل كبير. فهو يحقق تحسناً بمقدار **+3.5 AP** مقارنة بـ YOLO-Worldv2 على LVIS، مع استخدام ثلث موارد التدريب فقط وتحقيق سرعات استدلال أسرع بـ 1.4 مرة. بعد ضبطه الدقيق على COCO، يتفوق YOLOE-v8-large على YOLOv8-L بمقدار **0.1 mAP** ، مع استخدام **وقت تدريب أقل بـ 4 مرات تقريباً**. يوضح هذا التوازن الاستثنائي لـ YOLOE بين الدقة والكفاءة وتعدد الاستخدامات. تستكشف الأقسام أدناه معمارية YOLOE، ومقارنات الأداء المعياري، والتكامل مع إطار عمل [Ultralytics](https://www.ultralytics.com/).
+
+## Link to this sectionنظرة عامة على المعمارية#
+
+![YOLOE Architecture](https://github.com/THU-MIG/yoloe/raw/main/figures/pipeline.svg)
+
+يحتفظ YOLOE بهيكل YOLO القياسي — **عمود فقري** (backbone) تلافيفي (مثل CSP-Darknet) لاستخراج الميزات، و**عنق** (neck) (مثل PAN-FPN) لدمج الميزات متعددة النطاقات، و**رأس** (head) كشف **مستقل وخالٍ من نقاط الارتكاز** (anchor-free) (كما في YOLOv8/YOLO11) يتنبأ بوجود الكائنات، والفئات، والمربعات بشكل منفصل. يقدم YOLOE ثلاث وحدات مبتكرة تتيح الكشف بالمفردات المفتوحة:
+
+  * **محاذاة المنطقة والنص القابلة لإعادة التقييس (RepRTA)** : تدعم **الكشف الموجه بالنص** عبر تحسين [تضمينات](https://www.ultralytics.com/glossary/embeddings) النص (مثل تلك القادمة من CLIP) بواسطة شبكة مساعدة صغيرة. عند الاستدلال، يتم دمج هذه الشبكة في النموذج الرئيسي، مما يضمن عدم وجود عبء إضافي. وبالتالي، يكشف YOLOE عن أي كائنات مصنفة نصياً (مثل "إشارة مرور" غير مرئية سابقاً) دون عقوبات في وقت التشغيل.
+
+  * **مشفر التلقين البصري المنشط دلالياً (SAVPE)** : يتيح **الكشف الموجه بصرياً** عبر فرع تضمين خفيف الوزن. عند تقديم صورة مرجعية، يقوم SAVPE بتشفير الميزات الدلالية والتنشيطية، مما يهيئ النموذج للكشف عن كائنات مشابهة بصرياً — وهي قدرة كشف بلقطة واحدة مفيدة للشعارات أو أجزاء محددة.
+
+  * **تباين المنطقة والتلقين الكسول (LRPC)** : في **وضع بدون تلقين** (prompt-free)، يقوم YOLOE بالتعرف على المجموعات المفتوحة باستخدام تضمينات داخلية مدربة على مفردات واسعة (أكثر من 1200 فئة من LVIS و Objects365). بدون تلقينات أو مشفرات خارجية، يحدد YOLOE الكائنات عبر البحث عن تشابه التضمينات، مما يعالج مساحات تصنيف كبيرة بكفاءة عند الاستدلال.
+
+
+
+
+بالإضافة إلى ذلك، يدمج YOLOE **تقطيع المثيلات** (instance segmentation) في الوقت الفعلي من خلال توسيع رأس الكشف بفرع التنبؤ بالقناع (مشابه لـ YACT أو YOLOv8-Seg)، مع إضافة عبء ضئيل.
+
+الأهم من ذلك، وحدات العالم المفتوح في YOLOE **لا تقدم أي تكلفة استدلال** عند استخدامها كـ YOLO عادي ذي مجموعة مغلقة. بعد التدريب، يمكن إعادة تقييس معلمات YOLOE في رأس YOLO قياسي، مع الحفاظ على نفس قيم FLOPs والسرعة (مثلاً، مطابقة [YOLO11](/ar/models/yolo11) تماماً).
+
+## Link to this sectionالنماذج المتاحة، والمهام المدعومة، وأوضاع التشغيل#
+
+يفصل هذا القسم النماذج المتاحة مع أوزانها المدربة مسبقاً، والمهام التي تدعمها، وتوافقها مع أوضاع التشغيل المختلفة مثل [الاستدلال (Inference)](/ar/modes/predict)، و[التحقق (Validation)](/ar/modes/val)، و[التدريب (Training)](/ar/modes/train)، و[التصدير (Export)](/ar/modes/export)، والتي يرمز لها بـ ✅ للأوضاع المدعومة و❌ للأوضاع غير المدعومة.
+
+### Link to this sectionنماذج التلقين النصي/البصري#
+
+نوع النموذج| الأوزان المدربة مسبقاً| المهام المدعومة| الاستنتاج| التحقق| التدريب| التصدير  
+---|---|---|---|---|---|---  
+YOLOE-11S| [yoloe-11s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11s-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11M| [yoloe-11m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11m-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11L| [yoloe-11l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11l-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8S| [yoloe-v8s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8s-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8M| [yoloe-v8m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8m-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8L| [yoloe-v8l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8l-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26N| [yoloe-26n-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26S| [yoloe-26s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26s-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26M| [yoloe-26m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26m-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26L| [yoloe-26l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26l-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26X| [yoloe-26x-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26x-seg.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+  
+### Link to this sectionنماذج بدون تلقين#
+
+نوع النموذج| الأوزان المدربة مسبقاً| المهام المدعومة| الاستنتاج| التحقق| التدريب| التصدير  
+---|---|---|---|---|---|---  
+YOLOE-11S-PF| [yoloe-11s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11s-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11M-PF| [yoloe-11m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11m-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11L-PF| [yoloe-11l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11l-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8S-PF| [yoloe-v8s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8s-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8M-PF| [yoloe-v8m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8m-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8L-PF| [yoloe-v8l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8l-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26N-PF| [yoloe-26n-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26S-PF| [yoloe-26s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26s-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26M-PF| [yoloe-26m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26m-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26L-PF| [yoloe-26l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26l-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26X-PF| [yoloe-26x-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26x-seg-pf.pt)| [تجزئة المثيلات](/ar/tasks/segment)| ✅| ✅| ✅| ✅  
+  
+أداء YOLOE-26
+
+للحصول على معايير أداء مفصلة لنماذج YOLOE-26، راجع [توثيق YOLO26](/ar/models/yolo26#yoloe-26-open-vocabulary-detection-and-segmentation).
+
+## Link to this sectionأمثلة الاستخدام#
+
+من السهل دمج نماذج YOLOE في تطبيقات Python الخاصة بك. يوفر Ultralytics [واجهة برمجة تطبيقات Python](/ar/usage/python) سهلة الاستخدام و[أوامر CLI](/ar/usage/cli) لتبسيط التطوير.
+
+### Link to this sectionاستخدام التدريب#
+
+#### Link to this sectionالضبط الدقيق على مجموعة بيانات مخصصة#
+
+يمكنك ضبط أي نموذج YOLOE مدرب مسبقاً بدقة على مجموعة بيانات YOLO المخصصة الخاصة بك لكل من مهام الكشف وتقطيع المثيلات.
+
+  
+
+
+  
+**Watch:** How to Train YOLOE on Car Parts Segmentation Dataset | Open-Vocabulary Model, Prediction & Export 🚀 
+
+مثال
+
+**تقطيع المثيلات**
+
+يتبع ضبط نقطة فحص (checkpoint) مدربة مسبقاً لـ YOLOE في الغالب [إجراء تدريب YOLO القياسي](/ar/modes/train). الفرق الرئيسي هو تمرير `YOLOEPESegTrainer` صراحةً كمعلمة `trainer` إلى `model.train()`:
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer
+    
+    model = YOLOE("yoloe-26s-seg.pt")
+    
+    # Fine-tune on your segmentation dataset
+    results = model.train(
+        data="coco128-seg.yaml",  # Segmentation dataset
+        epochs=80,
+        patience=10,
+        trainer=YOLOEPESegTrainer,  # <- Important: use segmentation trainer
+    )
+
+**كشف الكائنات**
+
+تقوم جميع نماذج YOLOE المدربة مسبقاً بإجراء تقطيع المثيلات بشكل افتراضي. لاستخدام نقاط الفحص المدربة مسبقاً هذه لتدريب نموذج كشف، قم بتهيئة نموذج كشف من الصفر باستخدام تكوين YAML، ثم قم بتحميل نقطة فحص التقطيع المدربة مسبقاً بنفس الحجم. لاحظ أننا نستخدم `YOLOEPETrainer` بدلاً من `YOLOEPESegTrainer` لأننا ندرب نموذج كشف:
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOEPETrainer
+    
+    # Initialize a detection model from a config
+    model = YOLOE("yoloe-26s.yaml")
+    
+    # Load weights from a pretrained segmentation checkpoint (same scale)
+    model.load("yoloe-26s-seg.pt")
+    
+    # Fine-tune on your detection dataset
+    results = model.train(
+        data="coco128.yaml",  # Detection dataset
+        epochs=80,
+        patience=10,
+        trainer=YOLOEPETrainer,  # <- Important: use detection trainer
+    )
+
+### Link to this sectionاستخدام التنبؤ (Predict)#
+
+يدعم YOLOE كلاً من التلقين النصي والبصري. استخدام التلقينات مباشر - فقط قم بتمريرها عبر طريقة `predict` كما هو موضح أدناه:
+
+مثال
+
+تسمح لك التلقينات النصية بتحديد الفئات التي ترغب في الكشف عنها من خلال أوصاف نصية. يوضح الكود التالي كيفية استخدام YOLOE للكشف عن الأشخاص والحافلات في صورة:
+    
+    
+    from ultralytics import YOLOE
+    
+    # Initialize a YOLOE model
+    model = YOLOE("yoloe-26l-seg.pt")  # or yoloe-26s/m-seg.pt for different sizes
+    
+    # Set text prompt to detect person and bus. You only need to do this once after you load the model.
+    model.set_classes(["person", "bus"])
+    
+    # Run detection on the given image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+### Link to this sectionاستخدام التحقق (Val)#
+
+يتم تبسيط التحقق من النموذج على مجموعة بيانات كما يلي:
+
+مثال
+    
+    
+    from ultralytics import YOLOE
+    
+    # Create a YOLOE model
+    model = YOLOE("yoloe-26l-seg.pt")  # or yoloe-26s/m-seg.pt for different sizes
+    
+    # Conduct model validation on the COCO128-seg example dataset
+    metrics = model.val(data="coco128-seg.yaml")
+
+### Link to this sectionاستخدام التصدير#
+
+عملية التصدير مشابهة لنماذج YOLO الأخرى، مع مرونة إضافية في التعامل مع التلقينات النصية والبصرية:
+
+النماذج المصدرة ثابتة
+
+الفئات التي تم تكوينها باستخدام `set_classes()` (أو عبر `refer_image` للتلقينات البصرية) يتم دمجها في الأوزان المصدرة. بمجرد التصدير، لم يعد بإمكان النموذج قبول تلقينات جديدة: سيؤدي استدعاء `set_classes()` أو تمرير `visual_prompts=...` إلى `predict()` على ملف مصدر محمل إلى الفشل. لتغيير الفئات المكتشفة، أعد التصدير من نقطة فحص `.pt` الأصلية مع تكوين التلقينات الجديدة. يعمل الملف المصدر مثل كاشف YOLO قياسي ويمكن أيضاً تحميله باستخدام `YOLO()` بدلاً من `YOLOE()`.
+
+مثال
+    
+    
+    from ultralytics import YOLOE
+    
+    # Select yoloe-26s/m-seg.pt for different sizes
+    model = YOLOE("yoloe-26l-seg.pt")
+    
+    # Configure the set_classes() before exporting the model
+    model.set_classes(["person", "bus"])
+    
+    export_model = model.export(format="onnx")
+    model = YOLOE(export_model)
+    
+    # Run detection on the given image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+### Link to this sectionتدريب النماذج الرسمية#
+
+#### Link to this sectionإعداد مجموعات البيانات#
+
+ملاحظة
+
+يتطلب تدريب نماذج YOLOE الرسمية تعليقات توضيحية للتقطيع لبيانات التدريب، وإليك [السكربت المقدم من الفريق الرسمي](https://github.com/THU-MIG/yoloe/blob/main/tools/generate_sam_masks.py) الذي يقوم بتحويل مجموعات البيانات إلى تعليقات توضيحية للتقطيع، مدعومًا بنماذج [SAM2.1](/ar/models/sam-2). أو يمكنك تنزيل `Processed Segment Annotations` (تعليقات التقطيع المعالجة) المقدمة مباشرة في الجدول التالي من قبل الفريق الرسمي.
+
+  * بيانات التدريب
+
+
+
+مجموعة البيانات| النوع| عينات| صناديق (Boxes)| تعليقات توضيحية للكشف الخام| تعليقات توضيحية للتقطيع المعالجة  
+---|---|---|---|---|---  
+[Objects365v1](https://opendatalab.com/OpenDataLab/Objects365_v1)| اكتشاف| 609k| 9621k| [objects365_train.json](https://opendatalab.com/OpenDataLab/Objects365_v1)| [objects365_train_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/objects365_train_segm.json)  
+[GQA](https://cs.stanford.edu/people/dorarad/gqa/about.html)| [تأريض (Grounding)](https://www.ultralytics.com/glossary/grounding)| 621k| 3681k| [final_mixed_train_no_coco.json](https://huggingface.co/GLIPModel/GLIP/resolve/main/mdetr_annotations/final_mixed_train_no_coco.json)| [final_mixed_train_no_coco_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/final_mixed_train_no_coco_segm.json)  
+[Flickr30k](https://shannon.cs.illinois.edu/DenotationGraph/)| التأريض (Grounding)| 149 ألف| 641 ألف| [final_flickr_separateGT_train.json](https://huggingface.co/GLIPModel/GLIP/resolve/main/mdetr_annotations/final_flickr_separateGT_train.json)| [final_flickr_separateGT_train_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/final_flickr_separateGT_train_segm.json)  
+  
+  * بيانات التحقق
+
+
+
+مجموعة البيانات| النوع| ملفات التوضيح  
+---|---|---  
+[LVIS minival](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/lvis.yaml)| اكتشاف| [minival.txt](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/lvis.yaml)  
+  
+#### Link to this sectionبدء التدريب من الصفر#
+
+ملاحظة
+
+يتم ضبط نماذج `Visual Prompt` بدقة بناءً على نماذج `Text Prompt` المدربة جيداً.
+
+مثال
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOESegTrainerFromScratch
+    
+    # Option 1: Use Python dictionary
+    data = dict(
+        train=dict(
+            yolo_data=["Objects365.yaml"],
+            grounding_data=[
+                dict(
+                    img_path="flickr/full_images/",
+                    json_file="flickr/annotations/final_flickr_separateGT_train_segm.json",
+                ),
+                dict(
+                    img_path="mixed_grounding/gqa/images",
+                    json_file="mixed_grounding/annotations/final_mixed_train_no_coco_segm.json",
+                ),
+            ],
+        ),
+        val=dict(yolo_data=["lvis.yaml"]),
+    )
+    
+    # Option 2: Use YAML file (yoloe_data.yaml)
+    # train:
+    #   yolo_data:
+    #     - Objects365.yaml
+    #   grounding_data:
+    #     - img_path: flickr/full_images/
+    #       json_file: flickr/annotations/final_flickr_separateGT_train_segm.json
+    #     - img_path: mixed_grounding/gqa/images
+    #       json_file: mixed_grounding/annotations/final_mixed_train_no_coco_segm.json
+    # val:
+    #   yolo_data:
+    #     - lvis.yaml
+    
+    model = YOLOE("yoloe-26l-seg.yaml")
+    model.train(
+        data=data,  # or data="yoloe_data.yaml" if using YAML file
+        batch=128,
+        epochs=30,
+        close_mosaic=2,
+        optimizer="AdamW",
+        lr0=2e-3,
+        warmup_bias_lr=0.0,
+        weight_decay=0.025,
+        momentum=0.9,
+        workers=4,
+        trainer=YOLOESegTrainerFromScratch,
+        device="0,1,2,3,4,5,6,7",
+    )
+
+## Link to this sectionمقارنة أداء YOLOE#
+
+يطابق YOLOE أو يتجاوز دقة نماذج YOLO ذات المجموعة المغلقة على المقاييس القياسية مثل COCO و LVIS، دون المساس بالسرعة أو حجم النموذج. يقارن الجدول أدناه بين YOLOE-L (المبني على YOLO11) و YOLOE26-L (المبني على [YOLO26](/ar/models/yolo26)) مقابل النماذج المقابلة ذات المجموعة المغلقة:
+
+النموذج| COCO mAP50-95| LVIS mAP50-95| سرعة الاستدلال (T4)| المعاملات| GFLOPs (640px)  
+---|---|---|---|---|---  
+**YOLOv8-L** (مجموعة مغلقة)| 52.9%| -| **9.06 ms** (110 FPS)| 43.7 M| 165.2 B  
+**YOLO11-L** (مجموعة مغلقة)| 53.5%| -| **6.2 ms** (161 FPS)| 26.2 M| 86.9 B  
+**YOLOE-L** (مفردات مفتوحة)| 52.6%| 35.2%| **6.2 ms** (161 FPS)| 26.2 M| 86.9 B†  
+**YOLOE26-L** (مفردات مفتوحة)| -| 36.8%| **6.2 ms** (161 FPS)| 32.3 M| 88.3 B†  
+  
+† _يتشارك YOLOE-L بنية YOLO11-L ويتشارك YOLOE26-L بنية YOLO26-L، مما ينتج عنه سرعة استدلال و GFLOPs مماثلة._
+
+يحقق YOLOE26-L نسبة **36.8% LVIS mAP** مع **32.3M معلمة** و **88.3B FLOPs** ، ويعالج صور 640×640 بسرعة **6.2 ms (161 FPS)** على GPU من نوع T4. هذا تحسين مقارنة بـ **35.2% LVIS mAP** الخاصة بـ YOLOE-L مع الحفاظ على نفس سرعة الاستدلال. والأهم من ذلك، أن وحدات المفردات المفتوحة في YOLOE لا تتطلب **أي تكلفة استدلال** ، مما يدل على تصميم **"مقايضة لا وجود لغداء مجاني"**.
+
+بالنسبة لمهام zero-shot، يتفوق YOLOE26 بشكل ملحوظ على أجهزة الكشف ذات المفردات المفتوحة السابقة: على LVIS، يحقق YOLOE26-S نسبة **29.9% mAP** ، متجاوزاً YOLO-World-S بمقدار **+11.4 AP** ، بينما يحقق YOLOE26-L نسبة **36.8% mAP** ، متجاوزاً YOLO-World-L بمقدار **+10.0 AP**. يحافظ YOLOE26 على استدلال فعال بسرعة **161 FPS** على GPU من نوع T4، وهو مثالي لتطبيقات المفردات المفتوحة في الوقت الفعلي.
+
+ملاحظة
+
+**ظروف القياس:** نتائج YOLOE مأخوذة من نماذج مدربة مسبقاً على Objects365 و GoldG و LVIS، ثم تم ضبطها بدقة أو تقييمها على COCO. تعود ميزة mAP الطفيفة لـ YOLOE على YOLOv8 إلى التدريب المسبق المكثف. بدون هذا التدريب على المفردات المفتوحة، يطابق YOLOE نماذج YOLO ذات الحجم المماثل، مما يؤكد دقته الرائدة SOTA ومرونته في العالم المفتوح دون عقوبات في الأداء.
+
+## Link to this sectionمقارنة مع النماذج السابقة#
+
+يقدم YOLOE تطورات ملحوظة مقارنة بنماذج YOLO السابقة وأجهزة الكشف ذات المفردات المفتوحة:
+
+  * **YOLOE مقابل YOLOv5:** قدم [YOLOv5](/ar/models/yolov5) توازناً جيداً بين السرعة والدقة ولكنه تطلب إعادة تدريب لفئات جديدة واستخدم رؤوساً تعتمد على المراسي (anchor-based). في المقابل، YOLOE **خالٍ من المراسي (anchor-free)** ويكتشف الفئات الجديدة ديناميكياً. يحقق YOLOE، بالبناء على تحسينات YOLOv8، دقة أعلى (52.6% مقابل ~50% mAP لـ YOLOv5 على COCO) ويدمج تجزئة المثال، على عكس YOLOv5.
+
+  * **YOLOE مقابل YOLOv8:** يوسع YOLOE البنية المعاد تصميمها لـ [YOLOv8](/ar/models/yolov8)، محققاً دقة مماثلة أو متفوقة (**52.6% mAP مع ~26M معلمة** مقابل **52.9% مع ~44M معلمة** لـ YOLOv8-L). يقلل بشكل كبير من وقت التدريب بسبب التدريب المسبق الأقوى. التطور الرئيسي هو **قدرة YOLOE على العالم المفتوح** ، حيث يكتشف كائنات غير مرئية (على سبيل المثال، "**سكوتر طائر** " أو "**رمز السلام** ") عبر المطالبات، على عكس تصميم المجموعة المغلقة لـ YOLOv8.
+
+  * **YOLOE مقابل YOLO11:** يعمل [YOLO11](/ar/models/yolo11) على تحسين YOLOv8 بكفاءة معززة وعدد أقل من المعلمات (انخفاض بنسبة ~22%). يرث YOLOE هذه المكاسب مباشرة، مطابقاً سرعة استدلال YOLO11 وعدد المعلمات (~26M معلمة)، مع إضافة **اكتشاف وتجزئة المفردات المفتوحة**. في سيناريوهات المجموعة المغلقة، يعادل YOLOE نموذج YOLO11، ولكنه يضيف بشكل حاسم القدرة على التكيف لاكتشاف فئات غير مرئية، محققاً **YOLO11 + قدرة العالم المفتوح** دون المساس بالسرعة.
+
+  * **YOLOE26 مقابل YOLOE (المعتمد على YOLO11):** يبني YOLOE26 على بنية [YOLO26](/ar/models/yolo26)، ويرث تصميمه من النهاية إلى النهاية الخالي من NMS لاستدلال أسرع. على LVIS، يحقق YOLOE26-L نسبة **36.8% mAP** ، وهو تحسين عن **35.2% mAP** الخاصة بـ YOLOE-L. يوفر YOLOE26 جميع أحجام النماذج الخمسة (N/S/M/L/X) مقارنة بثلاثة أحجام لـ YOLOE (S/M/L)، مما يوفر مرونة أكبر لسيناريوهات النشر المختلفة.
+
+  * **YOLOE26 مقابل أجهزة الكشف السابقة ذات المفردات المفتوحة:** اعتمدت نماذج المفردات المفتوحة المبكرة (GLIP و OWL-ViT و [YOLO-World](/ar/models/yolo-world)) بشكل كبير على [محولات](https://www.ultralytics.com/glossary/transformer) الرؤية واللغة، مما أدى إلى استدلال بطيء. على LVIS، يحقق YOLOE26-S نسبة **29.9% mAP** (**+11.4 AP** مقارنة بـ YOLO-World-S) ويحقق YOLOE26-L نسبة **36.8% mAP** (**+10.0 AP** مقارنة بـ YOLO-World-L)، مع الحفاظ على استدلال في الوقت الفعلي بسرعة **161 FPS** على GPU من نوع T4. مقارنة بالنهج القائمة على المحولات (على سبيل المثال، GLIP)، يوفر YOLOE26 استدلالاً أسرع بأوامر من الحجم، مما يسد فجوة الدقة والكفاءة بفعالية في اكتشاف المجموعة المفتوحة.
+
+
+
+
+باختصار، يحافظ YOLOE و YOLOE26 على سرعة وكفاءة YOLO الشهيرة، ويتفوقان على الأسلاف في الدقة، ويدمجان التجزئة، ويقدمان اكتشافاً قوياً للعالم المفتوح. يعمل YOLOE26 على تطوير البنية بشكل أكبر مع استدلال من النهاية إلى النهاية الخالي من NMS من YOLO26، مما يجعله مثالياً لتطبيقات المفردات المفتوحة في الوقت الفعلي.
+
+## Link to this sectionحالات الاستخدام والتطبيقات#
+
+تمكّن قدرات الاكتشاف والتجزئة ذات المفردات المفتوحة في YOLOE من تطبيقات متنوعة تتجاوز النماذج التقليدية ذات الفئات الثابتة:
+
+  * **اكتشاف الكائنات في العالم المفتوح:** مثالي للسيناريوهات الديناميكية مثل [الروبوتات](https://www.ultralytics.com/blog/understanding-the-integration-of-computer-vision-in-robotics)، حيث تتعرف الروبوتات على كائنات غير مرئية سابقاً باستخدام المطالبات، أو [أنظمة الأمن](https://www.ultralytics.com/blog/computer-vision-for-theft-prevention-enhancing-security) التي تتكيف بسرعة مع التهديدات الجديدة (مثل العناصر الخطرة) دون إعادة تدريب.
+
+  * **الاكتشاف بلقطات قليلة ولقطة واحدة (Few-Shot and One-Shot Detection):** باستخدام المطالبات المرئية (SAVPE)، يتعلم YOLOE بسرعة كائنات جديدة من صور مرجعية فردية—وهو أمر مثالي لـ [الفحص الصناعي](https://www.ultralytics.com/blog/computer-vision-in-manufacturing-improving-production-and-quality) (تحديد الأجزاء أو العيوب فوراً) أو **المراقبة المخصصة** ، مما يتيح عمليات بحث مرئية بأقل قدر من الإعداد.
+
+  * **التعرف على المفردات الكبيرة وذيل طويل:** مجهز بمفردات تضم أكثر من 1000 فئة، يتفوق YOLOE في مهام مثل [مراقبة التنوع البيولوجي](https://www.ultralytics.com/blog/ai-in-wildlife-conservation) (اكتشاف الأنواع النادرة)، **مجموعات المتاحف** ، [مخزون التجزئة](https://www.ultralytics.com/blog/ai-for-smarter-retail-inventory-management)، أو **التجارة الإلكترونية** ، حيث يحدد فئات عديدة بشكل موثوق دون تدريب مكثف لكل فئة.
+
+  * **الاكتشاف والتجزئة التفاعلية:** يدعم YOLOE التطبيقات التفاعلية في الوقت الفعلي مثل **استرجاع الفيديو/الصور القابل للبحث** ، و**الواقع المعزز (AR)** ، و**تحرير الصور** البديهي، مدفوعاً بمدخلات طبيعية (مطالبات نصية أو مرئية). يمكن للمستخدمين عزل الكائنات أو تحديدها أو تحريرها ديناميكياً بدقة باستخدام أقنعة التجزئة.
+
+  * **تسمية البيانات التلقائية والتمهيد:** يسهل YOLOE إنشاء مجموعات البيانات بسرعة من خلال توفير تعليقات توضيحية أولية للمربع المحيط والتجزئة، مما يقلل بشكل كبير من جهود التسمية البشرية. ذو قيمة خاصة في **تحليلات مجموعات الوسائط الكبيرة** ، حيث يمكنه تحديد الكائنات الموجودة تلقائياً، مما يساعد في بناء نماذج متخصصة بشكل أسرع.
+
+  * **التجزئة لأي كائن:** يوسع قدرات التجزئة لتشمل كائنات عشوائية من خلال المطالبات—مفيد بشكل خاص لـ [التصوير الطبي](https://www.ultralytics.com/blog/ai-and-radiology-a-new-era-of-precision-and-efficiency)، و**الفحص المجهري** ، أو [تحليل صور الأقمار الصناعية](https://www.ultralytics.com/blog/using-computer-vision-to-analyze-satellite-imagery)، حيث يحدد الهياكل ويجزئها بدقة تلقائياً دون نماذج مدربة مسبقاً ومتخصصة. على عكس نماذج مثل [SAM](/ar/models/sam)، يتعرف YOLOE في الوقت نفسه على الكائنات ويجزئها تلقائياً، مما يساعد في مهام مثل **إنشاء المحتوى** أو **فهم المشهد**.
+
+
+
+
+عبر كل حالات الاستخدام هذه، تكمن الميزة الأساسية لـ YOLOE في **تعدد الاستخدامات** ، حيث يوفر نموذجاً موحداً للاكتشاف والتعرف والتجزئة عبر السيناريوهات الديناميكية. تضمن كفاءته أداءً في الوقت الفعلي على الأجهزة ذات الموارد المحدودة، وهو مثالي للروبوتات، و[القيادة الذاتية](https://www.ultralytics.com/blog/ai-in-self-driving-cars)، والدفاع، وما هو أبعد من ذلك.
+
+نصيحة
+
+اختر وضع YOLOE بناءً على احتياجاتك:
+
+  * **وضع المجموعة المغلقة (Closed-set mode):** لمهام الفئات الثابتة (أقصى سرعة ودقة).
+  * **وضع المطالبة (Prompted mode):** إضافة كائنات جديدة بسرعة عبر مطالبات نصية أو مرئية.
+  * **وضع المجموعة المفتوحة بدون مطالبة (Prompt-free open-set mode):** اكتشاف عام عبر العديد من الفئات (مثالي للفهرسة والاكتشاف).
+
+
+
+غالباً ما يؤدي الجمع بين الأوضاع—مثل الاكتشاف بدون مطالبة متبوعاً بمطالبات مستهدفة—إلى الاستفادة من إمكانات YOLOE الكاملة.
+
+## Link to this sectionالتدريب والاستدلال#
+
+يتكامل YOLOE بسلاسة مع [واجهة برمجة تطبيقات Ultralytics Python](/ar/usage/python) و [CLI](/ar/usage/cli)، على غرار نماذج YOLO الأخرى (YOLOv8, YOLO-World). إليك كيفية البدء بسرعة:
+
+التدريب والاستدلال مع YOLOE
+    
+    
+    from ultralytics import YOLO
+    
+    # Load pretrained YOLOE model and train on custom data
+    model = YOLO("yoloe-26s-seg.pt")
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+    
+    # Run inference using text prompts ("person", "bus")
+    model.set_classes(["person", "bus"])
+    results = model.predict(source="test_images/street.jpg")
+    results[0].save()  # save annotated output
+
+هنا، يتصرف YOLOE ككاشف قياسي افتراضياً ولكنه يتحول بسهولة إلى الاكتشاف الموجه عن طريق تحديد الفئات (`set_classes`). تحتوي النتائج على مربعات محيطة وأقنعة وتسميات.
+
+### Link to this sectionمهام أخرى مدعومة#
+
+  * **التحقق:** قيّم الدقة بسهولة باستخدام `model.val()` أو `yolo val`.
+  * **التصدير:** تصدير نماذج YOLOE (`model.export()`) إلى ONNX، TensorRT، إلخ، مما يسهل النشر.
+  * **التتبع:** يدعم YOLOE تتبع الكائنات (`yolo track`) عند دمجه، وهو مفيد لتتبع الفئات المطلوبة في مقاطع الفيديو.
+
+
+
+ملاحظة
+
+يتضمن YOLOE تلقائياً **أقنعة التجزئة** في نتائج الاستدلال (`results[0].masks`)، مما يبسط المهام الدقيقة على مستوى البكسل مثل استخراج الكائنات أو القياس دون الحاجة إلى نماذج منفصلة.
+
+## Link to this sectionالبدء#
+
+قم بإعداد YOLOE بسرعة مع Ultralytics باتباع الخطوات التالية:
+
+  1. **التثبيت:** قم بتثبيت أو تحديث حزمة Ultralytics:
+         
+         pip install -U ultralytics
+
+  2. **تنزيل أوزان YOLOE:** تتوفر نماذج YOLOE المدربة مسبقاً (على سبيل المثال، YOLOE-v8-S/L، متغيرات YOLOE-11) من إصدارات YOLOE GitHub. ما عليك سوى تنزيل ملف `.pt` المطلوب لتحميله في فئة Ultralytics YOLO.
+
+  3. **متطلبات الأجهزة:**
+
+     * **الاستدلال:** يوصى بـ GPU (NVIDIA بذاكرة VRAM ≥4-8GB). تعمل النماذج الصغيرة بكفاءة على GPUs الحافة (على سبيل المثال، [Jetson](/ar/guides/nvidia-jetson)) أو CPUs بدقة أقل. للاستدلال عالي الأداء على محطات العمل المدمجة، راجع دليل [NVIDIA DGX Spark](/ar/guides/nvidia-dgx-spark) الخاص بنا.
+     * **التدريب:** يتطلب ضبط YOLOE بدقة على بيانات مخصصة عادةً GPU واحداً فقط. تطلب التدريب المسبق المكثف للمفردات المفتوحة (LVIS/Objects365) الذي استخدمه المؤلفون قوة حوسبة كبيرة (8× RTX 4090 GPUs).
+  4. **التكوين:** تستخدم تكوينات YOLOE ملفات YAML القياسية الخاصة بـ Ultralytics. عادة ما تكون التكوينات الافتراضية (على سبيل المثال، `yoloe-26s-seg.yaml`) كافية، ولكن يمكنك تعديل العمود الفقري أو الفئات أو حجم الصورة حسب الحاجة.
+
+  5. **تشغيل YOLOE:**
+
+     * **استدلال سريع** (بدون مطالبة):
+           
+           yolo predict model=yoloe-26s-seg-pf.pt source="image.jpg"
+
+     * **اكتشاف موجه** (مثال على مطالبة نصية):
+           
+           from ultralytics import YOLO
+           
+           model = YOLO("yoloe-26s-seg.pt")
+           model.set_classes(["bowl", "apple"])
+           results = model.predict("kitchen.jpg")
+           results[0].save()
+
+  6. **نصائح التكامل:**
+
+     * **أسماء الفئات:** تستخدم مخرجات YOLOE الافتراضية فئات LVIS؛ استخدم `set_classes()` لتحديد تسمياتك الخاصة.
+     * **السرعة:** لا يحتوي YOLOE على حمل إضافي إلا عند استخدام المطالبات. للمطالبات النصية تأثير ضئيل؛ المطالبات المرئية أكثر قليلاً.
+     * **سلوك NMS:** يستخدم YOLOE تلقائياً `agnostic_nms=True` أثناء التنبؤ، مما يدمج المربعات المتداخلة عبر الفئات. هذا يمنع الاكتشافات المكررة عندما يطابق نفس الكائن فئات متعددة في مفردات YOLOE الكبيرة (1200+ فئة LVIS). يمكنك تجاوز هذا عن طريق تمرير `agnostic_nms=False` صراحةً.
+     * **استدلال الدفعة (Batch inference):** مدعوم مباشرة (`model.predict([img1, img2])`). بالنسبة للمطالبات الخاصة بالصور، قم بتشغيل الصور بشكل فردي.
+
+
+
+توفر [وثائق Ultralytics](https://docs.ultralytics.com/) موارد إضافية. يتيح لك YOLOE استكشاف قدرات العالم المفتوح القوية بسهولة داخل نظام YOLO البيئي المألوف.
+
+نصيحة
+
+**نصيحة احترافية:** لتحقيق أقصى قدر من دقة Zero-shot لـ YOLOE، قم بالضبط الدقيق من نقاط التحقق المقدمة بدلاً من التدريب من الصفر. استخدم كلمات مطالبة تتوافق مع تسميات التدريب الشائعة (انظر فئات LVIS) لتحسين دقة الاكتشاف.
+
+## Link to this sectionالاقتباسات والشكر#
+
+إذا ساهم YOLOE في بحثك أو مشروعك، فيرجى الاستشهاد بالورقة الأصلية من قبل **Ao Wang و Lihao Liu و Hui Chen و Zijia Lin و Jungong Han و Guiguang Ding** من **جامعة تسينغهوا** :
+
+اقتباس
+    
+    
+    @misc{wang2025yoloerealtimeseeing,
+          title={YOLOE: Real-Time Seeing Anything},
+          author={Ao Wang and Lihao Liu and Hui Chen and Zijia Lin and Jungong Han and Guiguang Ding},
+          year={2025},
+          eprint={2503.07465},
+          archivePrefix={arXiv},
+          primaryClass={cs.CV},
+          url={https://arxiv.org/abs/2503.07465},
+    }
+
+لمزيد من القراءة، ورقة YOLOE الأصلية متاحة على [arXiv](https://arxiv.org/html/2503.07465v1). يمكن الوصول إلى الكود المصدري للمشروع وموارد إضافية عبر [مستودع GitHub](https://github.com/THU-MIG/yoloe) الخاص بهم.
+
+## Link to this sectionالأسئلة الشائعة#
+
+### Link to this sectionكيف يختلف YOLOE عن YOLO-World؟#
+
+بينما يتيح كل من YOLOE و [YOLO-World](/ar/models/yolo-world) الاكتشاف ذو المفردات المفتوحة، يقدم YOLOE العديد من المزايا. يحقق YOLOE دقة أعلى بـ +3.5 AP على LVIS مع استخدام موارد تدريب أقل بـ 3 مرات وتشغيل أسرع بـ 1.4 مرة من YOLO-Worldv2. يدعم YOLOE أيضاً ثلاثة أوضاع للمطالبة (نصية، مرئية، ومفردات داخلية)، بينما يركز YOLO-World بشكل أساسي على المطالبات النصية. بالإضافة إلى ذلك، يتضمن YOLOE قدرات [تجزئة المثال](https://www.ultralytics.com/blog/what-is-instance-segmentation-a-quick-guide) المدمجة، مما يوفر أقنعة دقيقة على مستوى البكسل للكائنات المكتشفة دون حمل إضافي.
+
+### Link to this sectionهل يمكنني استخدام YOLOE كنموذج YOLO عادي؟#
+
+نعم، يمكن لـ YOLOE العمل تماماً مثل نموذج YOLO القياسي دون أي عقوبة في الأداء. عند استخدامه في وضع المجموعة المغلقة (بدون مطالبات)، تتم إعادة معلمات وحدات المفردات المفتوحة في YOLOE إلى رأس الاكتشاف القياسي، مما ينتج عنه سرعة ودقة متطابقتين لنماذج YOLO11 المكافئة. هذا يجعل YOLOE متعدد الاستخدامات للغاية—يمكنك استخدامه ككاشف تقليدي لتحقيق أقصى سرعة ثم التبديل إلى وضع المفردات المفتوحة فقط عند الحاجة.
+
+### Link to this sectionما أنواع المطالبات التي يمكنني استخدامها مع YOLOE؟#
+
+يدعم YOLOE ثلاثة أنواع من المطالبات:
+
+  1. **مطالبات نصية:** حدد فئات الكائنات باستخدام اللغة الطبيعية (على سبيل المثال، "شخص"، "إشارة مرور"، "سكوتر طائر")
+  2. **مطالبات مرئية:** قدم صوراً مرجعية للكائنات التي تريد اكتشافها
+  3. **مفردات داخلية:** استخدم مفردات YOLOE المدمجة التي تضم 1200+ فئة دون مطالبات خارجية
+
+
+
+تسمح هذه المرونة بتكييف YOLOE مع سيناريوهات مختلفة دون إعادة تدريب النموذج، مما يجعله مفيداً بشكل خاص للبيئات الديناميكية حيث تتغير متطلبات الاكتشاف بشكل متكرر.
+
+### Link to this sectionكيف يتعامل YOLOE مع تجزئة المثال؟#
+
+يدمج YOLOE تجزئة المثيلات مباشرة في بنيته من خلال توسيع رأس الكشف بفرع لتوقع القناع. هذا النهج مشابه لـ YOLOv8-Seg ولكنه يعمل مع أي فئة كائنات موجهة. يتم تضمين أقنعة التجزئة تلقائياً في نتائج الاستدلال ويمكن الوصول إليها عبر `results[0].masks`. هذا النهج الموحد يلغي الحاجة إلى نماذج كشف وتجزئة منفصلة، مما يبسط سير العمل للتطبيقات التي تتطلب حدود كائنات دقيقة على مستوى البكسل.
+
+### Link to this sectionكيف يتعامل YOLOE مع الاستدلال باستخدام مطالبات مخصصة؟#
+
+على غرار [YOLO-World](/ar/models/yolo-world)، يدعم YOLOE استراتيجية "المطالبة ثم الكشف" التي تستخدم مفردات غير متصلة بالإنترنت لتعزيز الكفاءة. يتم ترميز المطالبات المخصصة مثل التسميات التوضيحية أو فئات كائنات محددة مسبقاً وتخزينها كمضمنات مفردات غير متصلة بالإنترنت. يبسط هذا النهج عملية الكشف دون الحاجة إلى إعادة تدريب. يمكنك ضبط هذه المطالبات ديناميكياً داخل النموذج لتكييفه مع مهام كشف محددة:
+    
+    
+    from ultralytics import YOLO
+    
+    # Initialize a YOLOE model
+    model = YOLO("yoloe-26s-seg.pt")
+    
+    # Define custom classes
+    model.set_classes(["person", "bus"])
+    
+    # Execute prediction on an image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+المساهمون
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/yoloe.md)
+
+[GLglenn-jocher14](https://github.com/glenn-jocher)[RIRizwanMunawar10](https://github.com/RizwanMunawar)[Y-Y-T-G7](https://github.com/Y-T-G)[LALaughing-q5](https://github.com/Laughing-q)[RAraimbekovm3](https://github.com/raimbekovm)[SHShuaiLYU2](https://github.com/ShuaiLYU)[ONonuralpszr2](https://github.com/onuralpszr)RORonald Eddy Jr1[FCfcakyon1](https://github.com/fcakyon)[PDpderrenger1](https://github.com/pderrenger)[PIpicsalex1](https://github.com/picsalex)WIWillie Maddox1[JSJShengP1](https://github.com/JShengP)[LEleonnil1](https://github.com/leonnil)
+
+تم الإنشاء 19 مارس 2025تم التحديث قبل 3 أيام
+
+## التعليقات
+
+في هذه الصفحة
+
+استكشف باستخدام الذكاء الاصطناعي

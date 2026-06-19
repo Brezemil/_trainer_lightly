@@ -1,0 +1,218 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/yolo-thread-safe-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+# Link to this section使用 YOLO 模型进行线程安全推理#
+
+在多线程环境中运行 YOLO 模型需要仔细考虑，以确保线程安全。Python 的 `threading` 模块允许你同时运行多个线程，但在跨这些线程使用 YOLO 模型时，有一些重要的安全问题需要注意。本页面将指导你如何创建线程安全的 YOLO 模型推理。
+
+  
+
+
+  
+**Watch:** How to Perform Thread Safe Inference with Ultralytics YOLO Models in Python | Multi-Threading 🚀 
+
+## Link to this section了解 Python 多线程#
+
+Python 线程是一种并行形式，允许你的程序同时运行多个操作。然而，Python 的全局解释器锁 (GIL) 意味着在任何时候只能有一个线程执行 Python 字节码。
+
+![Single-thread vs multi-thread inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/single-vs-multi-thread-examples.avif)
+
+虽然这听起来像是一个限制，但线程仍然可以提供并发性，特别是在处理 I/O 密集型操作时，或者在使用释放 GIL 的操作（如 YOLO 底层 C 库执行的操作）时。
+
+## Link to this section共享模型实例的危险性#
+
+在线程外部实例化 YOLO 模型并在多个线程之间共享该实例，可能会导致竞态条件，即模型的内部状态由于并发访问而被不一致地修改。当模型或其组件持有的状态未被设计为线程安全时，这一点尤为突出。
+
+### Link to this section非线程安全示例：单模型实例#
+
+在 Python 中使用线程时，识别可能导致并发问题的模式非常重要。这是你应该避免的做法：在多个线程之间共享单个 YOLO 模型实例。
+    
+    
+    # Unsafe: Sharing a single model instance across threads
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate the model outside the thread
+    shared_model = YOLO("yolo26n.pt")
+    
+    def predict(image_path):
+        """Predicts objects in an image using a preloaded YOLO model, take path string to image as argument."""
+        results = shared_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that share the same model instance
+    Thread(target=predict, args=("image1.jpg",)).start()
+    Thread(target=predict, args=("image2.jpg",)).start()
+
+在上面的示例中，`shared_model` 被多个线程使用，这可能导致不可预知的结果，因为 `predict` 可能会被多个线程同时执行。
+
+### Link to this section非线程安全示例：多模型实例#
+
+同样，这是一个不安全的模式，使用了多个 YOLO 模型实例：
+    
+    
+    # Unsafe: Sharing multiple model instances across threads can still lead to issues
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate multiple models outside the thread
+    shared_model_1 = YOLO("yolo26n_1.pt")
+    shared_model_2 = YOLO("yolo26n_2.pt")
+    
+    def predict(model, image_path):
+        """Runs prediction on an image using a specified YOLO model, returning the results."""
+        results = model.predict(image_path)
+        # Process results
+    
+    # Starting threads with individual model instances
+    Thread(target=predict, args=(shared_model_1, "image1.jpg")).start()
+    Thread(target=predict, args=(shared_model_2, "image2.jpg")).start()
+
+即使有两个独立的模型实例，并发问题的风险依然存在。如果 `YOLO` 的内部实现不是线程安全的，使用单独的实例可能无法防止竞态条件，特别是如果这些实例共享了任何非线程局部的底层资源或状态。
+
+## Link to this section线程安全推理#
+
+要执行线程安全推理，你应该在每个线程内实例化一个单独的 YOLO 模型。这确保了每个线程都有自己独立的模型实例，从而消除了竞态条件的风险。
+
+### Link to this section线程安全示例#
+
+以下是如何在每个线程内实例化 YOLO 模型以进行安全并行推理的方法：
+    
+    
+    # Safe: Instantiating a single model inside each thread
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image using a new YOLO model instance in a thread-safe manner; takes image path as input."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that each have their own model instance
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+在这个示例中，每个线程都会创建自己的 `YOLO` 实例。这防止了任何线程干扰另一个线程的模型状态，从而确保每个线程都能安全地进行推理，且不会与其他线程产生意外交互。
+
+## Link to this section使用 ThreadingLocked 装饰器#
+
+Ultralytics 提供了一个 `ThreadingLocked` 装饰器，可用于确保函数的线程安全执行。该装饰器使用锁来确保一次只有一个线程能执行被修饰的函数。
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.utils import ThreadingLocked
+    
+    # Create a model instance
+    model = YOLO("yolo26n.pt")
+    
+    # Decorate the predict method to make it thread-safe
+    @ThreadingLocked()
+    def thread_safe_predict(image_path):
+        """Thread-safe prediction using a shared model instance."""
+        results = model.predict(image_path)
+        return results
+    
+    # Now you can safely call this function from multiple threads
+
+当需要在线程间共享模型实例但又想确保一次只有一个线程可以访问它时，`ThreadingLocked` 装饰器特别有用。与为每个线程创建新模型实例相比，这种方法可以节省内存，但可能会降低并发性，因为线程需要等待锁被释放。
+
+## Link to this section结论#
+
+在使用 YOLO 模型与 Python 的 `threading` 时，请务必在你将要使用模型的线程内进行实例化，以确保线程安全。这种做法可以避免竞态条件，并确保你的推理任务可靠地运行。
+
+对于更高级的场景，以及为了进一步优化你的多线程推理性能，请考虑使用基于进程的并行化（[multiprocessing](https://docs.python.org/3/library/multiprocessing.html)）或利用带有专用工作进程的任务队列。
+
+## Link to this section常见问题解答#
+
+### Link to this section在使用多线程 Python 环境运行 YOLO 模型时，我该如何避免竞态条件？#
+
+为了在使用 Ultralytics YOLO 模型的多线程 Python 环境中防止竞态条件，请在每个线程内实例化一个单独的 YOLO 模型。这确保了每个线程都有自己独立的模型实例，避免了模型状态的并发修改。
+
+示例：
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image in a thread-safe manner."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+有关确保线程安全的更多信息，请访问 使用 YOLO 模型进行线程安全推理。
+
+### Link to this section在 Python 中运行多线程 YOLO 模型推理的最佳实践是什么？#
+
+要在 Python 中安全地运行多线程 YOLO 模型推理，请遵循以下最佳实践：
+
+  1. 在每个线程内实例化 YOLO 模型，而不是在线程间共享单个模型实例。
+  2. 使用 Python 的 `multiprocessing` 模块进行并行处理，以避免与全局解释器锁 (GIL) 相关的问题。
+  3. 通过使用 YOLO 底层 C 库执行的操作来释放 GIL。
+  4. 当内存受限时，可以考虑对共享模型实例使用 `ThreadingLocked` 装饰器。
+
+
+
+线程安全模型实例化的示例：
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Runs inference in a thread-safe manner with a new YOLO model instance."""
+        model = YOLO("yolo26n.pt")
+        results = model.predict(image_path)
+        # Process results
+    
+    # Initiate multiple threads
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+如需更多背景信息，请参阅 线程安全推理 部分。
+
+### Link to this section为什么每个线程都应该拥有自己的 YOLO 模型实例？#
+
+每个线程都应该拥有自己的 YOLO 模型实例，以防止竞态条件。当单个模型实例在多个线程之间共享时，并发访问可能导致不可预知的行为以及模型内部状态的修改。通过使用单独的实例，你可以确保线程隔离，从而使你的多线程任务可靠且安全。
+
+如需详细指南，请查看 非线程安全示例：单模型实例 和 线程安全示例 部分。
+
+### Link to this sectionPython 的全局解释器锁 (GIL) 如何影响 YOLO 模型推理？#
+
+Python 的全局解释器锁 (GIL) 允许在同一时间只有一个线程执行 Python 字节码，这可能会限制 CPU 密集型多线程任务的性能。然而，对于 I/O 密集型操作，或者使用释放 GIL 的库（如 YOLO 的底层 C 库）的进程，你仍然可以实现并发。为了提高性能，请考虑使用 Python `multiprocessing` 模块进行基于进程的并行化。
+
+有关 Python 多线程的更多信息，请参阅 了解 Python 多线程 部分。
+
+### Link to this section对于 YOLO 模型推理，使用基于进程的并行化比线程更安全吗？#
+
+是的，使用 Python 的 `multiprocessing` 模块在并行运行 YOLO 模型推理时更安全，通常也更高效。基于进程的并行化创建了独立的内存空间，避免了全局解释器锁 (GIL)，并降低了并发问题的风险。每个进程将独立运行，拥有自己的 YOLO 模型实例。
+
+有关 YOLO 模型基于进程并行化的更多详细信息，请参考 线程安全推理 页面。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+[GLglenn-jocher10](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+已创建 2023年11月12日已更新 2周前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

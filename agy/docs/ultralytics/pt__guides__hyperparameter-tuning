@@ -1,0 +1,420 @@
+---
+source_url: https://docs.ultralytics.com/pt/guides/hyperparameter-tuning
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/hyperparameter-tuning.md)
+
+# Link to this sectionGuia de [Ajuste de Hiperparâmetros](https://www.ultralytics.com/glossary/hyperparameter-tuning) do Ultralytics YOLO#
+
+## Link to this sectionIntrodução#
+
+O ajuste de hiperparâmetros não é apenas uma configuração única, mas um processo iterativo destinado a otimizar as métricas de desempenho do modelo de [aprendizado de máquina](https://www.ultralytics.com/glossary/machine-learning-ml), como acurácia, precisão e recall. No contexto do Ultralytics YOLO, esses hiperparâmetros podem variar desde a taxa de aprendizado até detalhes arquiteturais, como o número de camadas ou tipos de funções de ativação utilizadas. A [Plataforma Ultralytics](https://platform.ultralytics.com) também suporta [treinamento na nuvem](/pt/platform/train/cloud-training) com hiperparâmetros configuráveis e rastreamento de métricas em tempo real.
+
+  
+
+
+  
+**Watch:** How to Tune Hyperparameters for Better Model Performance 🚀 
+
+### Link to this sectionO que são Hiperparâmetros?#
+
+Hiperparâmetros são configurações estruturais de alto nível para o algoritmo. Eles são definidos antes da fase de treinamento e permanecem constantes durante ela. Aqui estão alguns hiperparâmetros comumente ajustados no Ultralytics YOLO:
+
+  * **Taxa de Aprendizado** `lr0`: Determina o tamanho do passo em cada iteração enquanto se move em direção a um mínimo na [função de perda](https://www.ultralytics.com/glossary/loss-function).
+  * **[Tamanho do Lote](https://www.ultralytics.com/glossary/batch-size)** `batch`: Número de imagens processadas simultaneamente em uma passagem direta.
+  * **Número de[Épocas](https://www.ultralytics.com/glossary/epoch)** `epochs`: Uma época é uma passagem completa de ida e volta de todos os exemplos de treinamento.
+  * **Especificidades da Arquitetura** : Como contagens de canais, número de camadas, tipos de funções de ativação, etc.
+
+
+
+![Hyperparameter optimization search space visualization](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/hyperparameter-tuning-visual.avif)
+
+Para uma lista completa de hiperparâmetros de aumento usados no YOLO26, consulte a [página de configurações](/pt/usage/cfg#augmentation-settings).
+
+### Link to this sectionEvolução Genética e Mutação#
+
+O Ultralytics YOLO usa [algoritmos genéticos](https://en.wikipedia.org/wiki/Genetic_algorithm) para otimizar hiperparâmetros. Algoritmos genéticos são inspirados no mecanismo de seleção natural e genética.
+
+  * **Cruzamento (Crossover)** : Cada iteração combina genes de até nove das configurações de maior aptidão vistas até agora, usando o cruzamento BLX-α com seleção de pais ponderada pela aptidão.
+  * **Mutação** : O candidato recombinado é então perturbado por um fator multiplicativo log-normal aplicado a cada hiperparâmetro (com probabilidade de 0,5 por parâmetro). A força da mutação sigma decai linearmente de 0,2 para 0,1 ao longo das primeiras 300 iterações, de modo que o algoritmo explore amplamente no início e refine conforme converge. A iteração 1 não tem pais para cruzamento e usa os hiperparâmetros de treinamento padrão como base.
+
+
+
+## Link to this sectionPreparação para o Ajuste de Hiperparâmetros#
+
+Antes de iniciar o processo de ajuste, é importante:
+
+  1. **Identificar as Métricas** : Determine as métricas que você usará para avaliar o desempenho do modelo. Isso pode ser AP50, F1-score ou outras.
+  2. **Definir o Orçamento de Ajuste** : Defina quantos recursos computacionais você está disposto a alocar. O ajuste de hiperparâmetros pode ser computacionalmente intensivo.
+
+
+
+## Link to this sectionEtapas Envolvidas#
+
+### Link to this sectionInicializar Hiperparâmetros#
+
+Comece com um conjunto razoável de hiperparâmetros iniciais. Isso pode ser os hiperparâmetros padrão definidos pelo Ultralytics YOLO ou algo baseado no seu conhecimento de domínio ou experimentos anteriores.
+
+### Link to this sectionMutar Hiperparâmetros#
+
+Use o método `_mutate` para produzir um novo conjunto de hiperparâmetros com base no conjunto existente. A [classe Tuner](https://docs.ultralytics.com/reference/engine/tuner) gerencia esse processo automaticamente.
+
+### Link to this sectionTreinar Modelo#
+
+O treinamento é realizado usando o conjunto mutado de hiperparâmetros. O desempenho do treinamento é então avaliado usando suas métricas escolhidas.
+
+### Link to this sectionAvaliar Modelo#
+
+Use métricas como AP50, F1-score ou métricas personalizadas para avaliar o desempenho do modelo. O [processo de avaliação](https://docs.ultralytics.com/modes/val) ajuda a determinar se os hiperparâmetros atuais são melhores que os anteriores.
+
+### Link to this sectionRegistrar Resultados#
+
+É crucial registrar tanto as métricas de desempenho quanto os hiperparâmetros correspondentes para referência futura. O Ultralytics YOLO salva automaticamente esses resultados no formato NDJSON.
+
+### Link to this sectionRepetir#
+
+O processo é repetido até que o número definido de iterações seja atingido ou a métrica de desempenho seja satisfatória. Cada iteração baseia-se no conhecimento adquirido em execuções anteriores.
+
+### Link to this sectionIterações e Tamanho da População#
+
+Com o sintonizador integrado (`use_ray=False`), `iterations` controla o número total de tentativas sequenciais. Cada tentativa treina um modelo com uma configuração de hiperparâmetro — por exemplo, `iterations=40` com `epochs=50` agenda 40 execuções de treinamento independentes de 50 épocas, não uma execução de 50 épocas com uma população separada de 40 candidatos.
+
+O algoritmo genético integrado não possui um parâmetro de tamanho de população explícito. Uma vez que existam tentativas anteriores, ele seleciona até nove das configurações de maior aptidão como pais, aplica o cruzamento BLX-α e mutação, e produz um candidato por iteração.
+
+Para tentativas paralelas ou estratégias de busca mais avançadas, defina `use_ray=True` para usar o Ray Tune, que recebe `iterations` como `num_samples`. Veja o [guia de integração do Ray Tune](/pt/integrations/ray-tune) para detalhes.
+
+## Link to this sectionDescrição do Espaço de Busca Padrão#
+
+A tabela a seguir lista os parâmetros do espaço de busca padrão para ajuste de hiperparâmetros no YOLO26. Cada parâmetro tem um intervalo de valor específico definido por uma tupla `(min, max)`.
+
+Parâmetro| Tipo| Intervalo de Valores| Descrição  
+---|---|---|---  
+`lr0`| `float`| `(1e-5, 1e-2)`| Taxa de aprendizado inicial no início do treinamento. Valores menores proporcionam um treinamento mais estável, mas uma convergência mais lenta  
+`lrf`| `float`| `(0.01, 1.0)`| Fator de taxa de aprendizado final como uma fração de lr0. Controla quanto a taxa de aprendizado diminui durante o treinamento  
+`momentum`| `float`| `(0.7, 0.98)`| Fator de momentum do SGD. Valores mais altos ajudam a manter uma direção de gradiente consistente e podem acelerar a convergência  
+`weight_decay`| `float`| `(0.0, 0.001)`| Fator de regularização L2 para evitar overfitting. Valores maiores impõem uma regularização mais forte  
+`warmup_epochs`| `float`| `(0.0, 5.0)`| Número de épocas para aquecimento linear da taxa de aprendizado. Ajuda a prevenir instabilidade no início do treinamento  
+`warmup_momentum`| `float`| `(0.0, 0.95)`| Momentum inicial durante a fase de aquecimento. Aumenta gradualmente para o valor final de momentum  
+`box`| `float`| `(1.0, 20.0)`| Peso da perda da caixa delimitadora na função de perda total. Equilibra a regressão da caixa versus classificação  
+`cls`| `float`| `(0.1, 4.0)`| Peso da perda de classificação na função de perda total. Valores mais altos enfatizam a previsão correta da classe  
+`cls_pw`| `float`| `(0.0, 1.0)`| Poder de ponderação de classe para lidar com desequilíbrio de classes. Valores mais altos aumentam o peso em classes raras  
+`dfl`| `float`| `(0.4, 12.0)`| Peso DFL (Distribution Focal Loss) na função de perda total. Valores mais altos enfatizam a localização precisa da caixa delimitadora  
+`hsv_h`| `float`| `(0.0, 0.1)`| Intervalo de aumento de matiz aleatório no espaço de cor HSV. Ajuda o modelo a generalizar através de variações de cor  
+`hsv_s`| `float`| `(0.0, 0.9)`| Intervalo de aumento de saturação aleatório no espaço HSV. Simula diferentes condições de iluminação  
+`hsv_v`| `float`| `(0.0, 0.9)`| Intervalo de aumento de valor (brilho) aleatório. Ajuda o modelo a lidar com diferentes níveis de exposição  
+`degrees`| `float`| `(0.0, 45.0)`| Aumento máximo de rotação em graus. Ajuda o modelo a tornar-se invariante à orientação do objeto  
+`translate`| `float`| `(0.0, 0.9)`| Aumento máximo de translação como fração do tamanho da imagem. Melhora a robustez à posição do objeto  
+`scale`| `float`| `(0.0, 0.95)`| Intervalo de aumento de escala aleatório. Ajuda o modelo a detectar objetos em tamanhos diferentes  
+`shear`| `float`| `(0.0, 10.0)`| Aumento máximo de cisalhamento em graus. Adiciona distorções semelhantes à perspectiva às imagens de treinamento  
+`perspective`| `float`| `(0.0, 0.001)`| Intervalo de aumento de perspectiva aleatório. Simula diferentes ângulos de visão  
+`flipud`| `float`| `(0.0, 1.0)`| Probabilidade de inversão vertical da imagem durante o treinamento. Útil para imagens aéreas  
+`fliplr`| `float`| `(0.0, 1.0)`| Probabilidade de inversão horizontal da imagem. Ajuda o modelo a tornar-se invariante à direção do objeto  
+`bgr`| `float`| `(0.0, 1.0)`| Probabilidade de usar aumento BGR, que troca os canais de cor. Pode ajudar com a invariância de cor  
+`mosaic`| `float`| `(0.0, 1.0)`| Probabilidade de usar aumento de mosaico, que combina 4 imagens. Especialmente útil para detecção de objetos pequenos  
+`mixup`| `float`| `(0.0, 1.0)`| Probabilidade de usar aumento de mixup, que mistura duas imagens. Pode melhorar a robustez do modelo  
+`cutmix`| `float`| `(0.0, 1.0)`| Probabilidade de usar aumento de cutmix. Combina regiões da imagem enquanto mantém recursos locais  
+`copy_paste`| `float`| `(0.0, 1.0)`| Probabilidade de usar aumento de copy-paste. Ajuda a melhorar o desempenho da segmentação de instâncias  
+`close_mosaic`| `float`| `(0.0, 10.0)`| Desativa o mosaico nas últimas N épocas para estabilizar o treinamento antes da conclusão  
+  
+## Link to this sectionExemplo de Espaço de Busca Personalizado#
+
+Veja como definir um espaço de busca e usar o método `model.tune()` para utilizar a classe `Tuner` para o ajuste de hiperparâmetros do YOLO26n no COCO8 por 30 épocas com um otimizador AdamW, pulando plotagem, salvamento de checkpoints e validação, exceto na última época, para um ajuste mais rápido.
+
+Aviso
+
+Este exemplo é apenas para **demonstração**. Hiperparâmetros derivados de execuções de ajuste curtas ou em pequena escala raramente são ideais para treinamento no mundo real. Na prática, o ajuste deve ser realizado sob configurações semelhantes ao treinamento completo — incluindo conjuntos de dados, épocas e aumentos comparáveis — para garantir resultados confiáveis e transferíveis. O ajuste rápido pode enviesar os parâmetros em direção a uma convergência mais rápida ou ganhos de validação de curto prazo que não se generalizam.
+
+Exemplo
+    
+    
+    from ultralytics import YOLO
+    
+    # Initialize the YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Define search space
+    search_space = {
+        "lr0": (1e-5, 1e-2),
+        "degrees": (0.0, 45.0),
+    }
+    
+    # Tune hyperparameters on COCO8 for 30 epochs
+    model.tune(
+        data="coco8.yaml",
+        epochs=30,
+        iterations=300,
+        optimizer="AdamW",
+        space=search_space,
+        plots=False,
+        save=False,
+        val=False,
+    )
+
+## Link to this sectionRetomando uma Sessão de Ajuste de Hiperparâmetros Interrompida#
+
+Você pode retomar uma sessão de ajuste de hiperparâmetros interrompida passando `resume=True`. Opcionalmente, você pode passar o `name` do diretório usado em `runs/{task}` para retomar. Caso contrário, ele retomará a última sessão interrompida. Você também precisa fornecer todos os argumentos de treinamento anteriores, incluindo `data`, `epochs`, `iterations` e `space`.
+
+Usando `resume=True` com `model.tune()`
+    
+    
+    from ultralytics import YOLO
+    
+    # Define a YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Define search space
+    search_space = {
+        "lr0": (1e-5, 1e-2),
+        "degrees": (0.0, 45.0),
+    }
+    
+    # Resume previous run
+    results = model.tune(data="coco8.yaml", epochs=50, iterations=300, space=search_space, resume=True)
+    
+    # Resume tuning run with name 'tune_exp'
+    results = model.tune(data="coco8.yaml", epochs=50, iterations=300, space=search_space, name="tune_exp", resume=True)
+
+## Link to this sectionResultados#
+
+Após concluir com sucesso o processo de ajuste de hiperparâmetros, você obterá vários arquivos e diretórios que encapsulam os resultados do ajuste. O seguinte descreve cada um:
+
+### Link to this sectionEstrutura de Arquivos#
+
+Veja como ficará a estrutura de diretórios dos resultados. Diretórios de treinamento como `train1/` contêm iterações de ajuste individuais, isto é, um modelo treinado com um conjunto de hiperparâmetros. O diretório `tune/` contém resultados de ajuste de todos os treinamentos de modelo individuais:
+    
+    
+    runs/
+    └── detect/
+        ├── train1/
+        ├── train2/
+        ├── ...
+        └── tune/
+            ├── best_hyperparameters.yaml
+            ├── tune_fitness.png
+            ├── tune_results.ndjson
+            ├── tune_scatter_plots.png
+            └── weights/
+                ├── last.pt
+                └── best.pt
+
+### Link to this sectionDescrições de Arquivos#
+
+#### Link to this sectionbest_hyperparameters.yaml#
+
+Este arquivo YAML contém os hiperparâmetros de melhor desempenho encontrados durante o processo de ajuste. Você pode usar este arquivo para inicializar futuros treinamentos com essas configurações otimizadas.
+
+  * **Formato** : YAML
+
+  * **Uso** : Resultados de hiperparâmetros
+
+  * **Exemplo** :
+        
+        # 558/900 iterations complete ✅ (45536.81s)
+        # Results saved to /usr/src/ultralytics/runs/detect/tune
+        # Best fitness=0.64297 observed at iteration 498
+        # Best fitness metrics are {'metrics/precision(B)': 0.87247, 'metrics/recall(B)': 0.71387, 'metrics/mAP50(B)': 0.79106, 'metrics/mAP50-95(B)': 0.62651, 'val/box_loss': 2.79884, 'val/cls_loss': 2.72386, 'val/dfl_loss': 0.68503, 'fitness': 0.64297}
+        # Best fitness model is /usr/src/ultralytics/runs/detect/train498
+        # Best fitness hyperparameters are printed below.
+        
+        lr0: 0.00269
+        lrf: 0.00288
+        momentum: 0.73375
+        weight_decay: 0.00015
+        warmup_epochs: 1.22935
+        warmup_momentum: 0.1525
+        box: 18.27875
+        cls: 1.32899
+        dfl: 0.56016
+        hsv_h: 0.01148
+        hsv_s: 0.53554
+        hsv_v: 0.13636
+        degrees: 0.0
+        translate: 0.12431
+        scale: 0.07643
+        shear: 0.0
+        perspective: 0.0
+        flipud: 0.0
+        fliplr: 0.08631
+        mosaic: 0.42551
+        mixup: 0.0
+        copy_paste: 0.0
+
+
+
+
+#### Link to this sectiontune_fitness.png#
+
+Este é um gráfico que exibe a aptidão em relação ao número de iterações. Ele ajuda você a visualizar como o algoritmo genético funcionou ao longo do tempo.
+
+  * **Formato** : PNG
+  * **Uso** : Visualização de desempenho
+
+
+
+![Hyperparameter Tuning Fitness vs Iteration](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/best-fitness.avif)
+
+O gráfico contém:
+
+  * **Um marcador por iteração por conjunto de dados** , então uma execução de conjunto de dados único mostra um ponto por iteração, e uma execução de múltiplos conjuntos de dados mostra um ponto por conjunto de dados por iteração.
+  * **Uma linha pontilhada de "média suavizada"** calculada como uma suavização gaussiana (`sigma=3`) sobre os valores de aptidão de nível superior por iteração.
+
+
+
+#### Link to this sectiontune_results.ndjson#
+
+Um arquivo NDJSON contendo resultados detalhados de cada iteração de ajuste. Cada linha é um objeto JSON com a aptidão agregada, hiperparâmetros ajustados e métricas por conjunto de dados. O ajuste de conjunto de dados único e de múltiplos conjuntos de dados usa o mesmo formato de arquivo.
+
+  * **Formato** : NDJSON
+  * **Uso** : Rastreamento de resultados por iteração.
+  * **Exemplo** :
+
+
+
+Um exemplo formatado é mostrado abaixo para legibilidade. No arquivo `.ndjson` real, cada objeto é armazenado em uma única linha.
+    
+    
+    {
+        "iteration": 1,
+        "fitness": 0.48628,
+        "hyperparameters": {
+            "lr0": 0.01,
+            "lrf": 0.01,
+            "momentum": 0.937,
+            "weight_decay": 0.0005
+        },
+        "datasets": {
+            "coco8": {
+                "metrics/precision(B)": 0.65666,
+                "metrics/recall(B)": 0.85,
+                "metrics/mAP50(B)": 0.85086,
+                "metrics/mAP50-95(B)": 0.64104,
+                "val/box_loss": 1.57958,
+                "val/cls_loss": 1.04986,
+                "val/dfl_loss": 1.32641,
+                "fitness": 0.64104
+            },
+            "coco8-grayscale": {
+                "metrics/precision(B)": 0.6582,
+                "metrics/recall(B)": 0.51667,
+                "metrics/mAP50(B)": 0.59106,
+                "metrics/mAP50-95(B)": 0.33152,
+                "val/box_loss": 1.95424,
+                "val/cls_loss": 1.64059,
+                "val/dfl_loss": 1.70226,
+                "fitness": 0.33152
+            }
+        },
+        "save_dirs": {
+            "coco8": "runs/detect/coco8",
+            "coco8-grayscale": "runs/detect/coco8-grayscale"
+        }
+    }
+
+A `fitness` de nível superior é a média aritmética dos valores de `fitness` por conjunto de dados. Para ajuste de conjunto de dados único, o dicionário `datasets` possui uma entrada cuja `fitness` é igual à `fitness` de nível superior. Um objeto JSON é registrado por iteração concluída. Os caminhos `save_dirs` reais são absolutos; eles estão abreviados acima por legibilidade.
+
+#### Link to this sectiontune_scatter_plots.png#
+
+Este arquivo contém gráficos de dispersão gerados a partir de `tune_results.ndjson`, ajudando você a visualizar as relações entre diferentes hiperparâmetros e métricas de desempenho. Hiperparâmetros cujo valor padrão é 0 (por exemplo, `degrees` e `shear` abaixo) podem evoluir apenas lentamente a partir de sua semente inicial, porque o fator de mutação multiplicativo tem muito pouco para expandir a partir de um valor próximo de zero.
+
+  * **Formato** : PNG
+  * **Uso** : Análise exploratória de dados
+
+
+
+![Hyperparameter tuning results scatter plot analysis](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/tune-scatter-plots.avif)
+
+#### Link to this sectionweights/#
+
+Este diretório contém os modelos [PyTorch](https://www.ultralytics.com/glossary/pytorch) salvos para a última iteração e para a melhor iteração durante o processo de ajuste de hiperparâmetros.
+
+  * **`last.pt`** : O last.pt contém os pesos da última época de treinamento.
+  * **`best.pt`** : Os pesos best.pt para a iteração que alcançou a melhor pontuação de aptidão.
+
+
+
+Usando esses resultados, você pode tomar decisões mais informadas para seus futuros treinamentos e análises de modelo. Sinta-se à vontade para consultar esses artefatos para entender quão bem seu modelo performou e como você pode melhorá-lo ainda mais.
+
+## Link to this sectionConclusão#
+
+O processo de ajuste de hiperparâmetros no Ultralytics YOLO é simplificado, porém poderoso, graças à sua abordagem baseada em algoritmos genéticos que combina cruzamento BLX-α com mutação log-normal. Seguir os passos delineados neste guia o ajudará a ajustar sistematicamente seu modelo para obter um melhor desempenho.
+
+### Link to this sectionLeitura adicional#
+
+  1. [Otimização de Hiperparâmetros na Wikipedia](https://en.wikipedia.org/wiki/Hyperparameter_optimization)
+  2. [Guia de Evolução de Hiperparâmetros do YOLOv5](/pt/yolov5/tutorials/hyperparameter-evolution)
+  3. [Ajuste Eficiente de Hiperparâmetros com Ray Tune e YOLO26](/pt/integrations/ray-tune)
+
+
+
+Para insights mais profundos, você pode explorar o código-fonte da [`Tuner` class](https://docs.ultralytics.com/reference/engine/tuner) e a documentação que a acompanha. Se você tiver alguma dúvida, solicitação de recurso ou precisar de mais assistência, sinta-se à vontade para entrar em contato conosco no [GitHub](https://github.com/ultralytics/ultralytics/issues/new/choose) ou no [Discord](https://discord.com/invite/ultralytics).
+
+## Link to this sectionFAQ#
+
+### Link to this sectionComo otimizo a [taxa de aprendizado](https://www.ultralytics.com/glossary/learning-rate) para o Ultralytics YOLO durante o ajuste de hiperparâmetros?#
+
+Para otimizar a taxa de aprendizado para o Ultralytics YOLO, comece definindo uma taxa de aprendizado inicial usando o parâmetro `lr0`. Valores comuns variam de `0.001` a `0.01`. Durante o processo de ajuste de hiperparâmetros, esse valor será mutado para encontrar a configuração ideal. Você pode utilizar o método `model.tune()` para automatizar esse processo. Por exemplo:
+
+Exemplo
+    
+    
+    from ultralytics import YOLO
+    
+    # Initialize the YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Tune hyperparameters on COCO8 for 30 epochs
+    model.tune(data="coco8.yaml", epochs=30, iterations=300, optimizer="AdamW", plots=False, save=False, val=False)
+
+Para mais detalhes, verifique a [página de configuração do Ultralytics YOLO](/pt/usage/cfg#augmentation-settings).
+
+### Link to this sectionQuais são os benefícios de usar algoritmos genéticos para ajuste de hiperparâmetros no YOLO26?#
+
+Algoritmos genéticos no Ultralytics YOLO26 fornecem um método robusto para explorar o espaço de hiperparâmetros, levando a um desempenho de modelo altamente otimizado. Os principais benefícios incluem:
+
+  * **Busca Eficiente** : O cruzamento BLX-α combina genes dos pais com maior aptidão, enquanto a mutação log-normal perturba o resultado para descobrir novos candidatos.
+  * **Evitando Mínimos Locais** : Ao introduzir aleatoriedade, eles ajudam a evitar mínimos locais, garantindo uma melhor otimização global.
+  * **Métricas de Desempenho** : Eles se adaptam com base em uma pontuação de aptidão específica da tarefa (mAP50-95 para detecção).
+
+
+
+Para ver como os algoritmos genéticos podem otimizar hiperparâmetros, confere o [guia de evolução de hiperparâmetros](/pt/yolov5/tutorials/hyperparameter-evolution).
+
+### Link to this sectionQuanto tempo leva o processo de ajuste de hiperparâmetros para o Ultralytics YOLO?#
+
+O tempo necessário para o ajuste de hiperparâmetros com o Ultralytics YOLO depende muito de vários fatores, como o tamanho do conjunto de dados, a complexidade da arquitetura do modelo, o número de iterações e os recursos computacionais disponíveis. Por exemplo, ajustar o YOLO26n em um conjunto de dados como o COCO8 por 30 épocas pode levar de várias horas a dias, dependendo do hardware.
+
+Para gerenciar efetivamente o tempo de ajuste, defina um orçamento de ajuste claro antecipadamente (link da seção interna). Isso ajuda a equilibrar a alocação de recursos e as metas de otimização.
+
+### Link to this sectionQuais métricas devo usar para avaliar o desempenho do modelo durante o ajuste de hiperparâmetros no YOLO?#
+
+Ao avaliar o desempenho do modelo durante o ajuste de hiperparâmetros no YOLO, você pode usar várias métricas principais:
+
+  * **AP50** : A precisão média em um limiar de IoU de 0.50.
+  * **F1-Score** : A média harmônica de precisão e recall.
+  * **Precisão e Recall** : Métricas individuais que indicam a [precisão](https://www.ultralytics.com/glossary/accuracy) do modelo em identificar verdadeiros positivos versus falsos positivos e falsos negativos.
+
+
+
+Essas métricas ajudam você a entender diferentes aspectos do desempenho do seu modelo. Consulte o guia de [métricas de desempenho do Ultralytics YOLO](/pt/guides/yolo-performance-metrics) para uma visão geral abrangente.
+
+### Link to this sectionPosso usar o Ray Tune para otimização avançada de hiperparâmetros com o YOLO26?#
+
+Sim, o Ultralytics YOLO26 integra-se ao [Ray Tune](https://docs.ray.io/en/latest/tune/index.html) para otimização avançada de hiperparâmetros. O Ray Tune oferece algoritmos de busca sofisticados como Otimização Bayesiana e Hyperband, juntamente com capacidades de execução paralela para acelerar o processo de ajuste.
+
+Para usar o Ray Tune com o YOLO26, basta definir o parâmetro `use_ray=True` na chamada do seu método `model.tune()`. Para mais detalhes e exemplos, confira o [guia de integração do Ray Tune](/pt/integrations/ray-tune).
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/hyperparameter-tuning.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[RAraimbekovm4](https://github.com/raimbekovm)[Y-Y-T-G2](https://github.com/Y-T-G)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[XIxiazl19931](https://github.com/xiazl1993)[LALaughing-q1](https://github.com/Laughing-q)AHAhmet Faruk GÜMÜŞTAŞ1[PDpderrenger1](https://github.com/pderrenger)[AMamm11111](https://github.com/amm1111)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+Criado 12 de nov. de 2023Atualizado há 3 dias
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

@@ -1,0 +1,233 @@
+---
+source_url: https://docs.ultralytics.com/ar/guides/end2end-detection
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/end2end-detection.md)
+
+# Link to this sectionفهم الكشف الشامل (End-to-End Detection) في Ultralytics YOLO26#
+
+## Link to this sectionمقدمة#
+
+إذا كنت تقوم بالترقية إلى [YOLO26](/ar/models/yolo26) من نموذج سابق مثل [YOLOv8](/ar/models/yolov8) أو [YOLO11](/ar/models/yolo11)، فإن أحد أكبر التغييرات التي ستلاحظها هو إزالة [كبت غير الأعظم](https://www.ultralytics.com/glossary/non-maximum-suppression-nms) (NMS). تنتج نماذج YOLO التقليدية آلاف التوقعات المتداخلة التي تحتاج إلى خطوة معالجة لاحقة منفصلة بواسطة NMS لتصفيتها وصولاً إلى الكشف النهائي. هذا يضيف زمن انتقال، ويعقد رسوم التصدير البيانية، ويمكن أن يتصرف بشكل غير متسق عبر منصات الأجهزة المختلفة.
+
+يتبنى YOLO26 نهجاً مختلفاً. فهو يخرج الكشوفات النهائية مباشرة من النموذج، دون الحاجة إلى تصفية خارجية. يُعرف هذا بـ **[كشف الكائنات](https://www.ultralytics.com/glossary/object-detection) الشامل**، وهو مفعل افتراضياً في جميع نماذج YOLO26. النتيجة هي خط إعداد للنشر أبسط، وزمن انتقال أقل، وسرعة استنتاج تصل إلى **43% أسرع على وحدات المعالجة المركزية (CPUs)**.
+
+يوضح لك هذا الدليل ما الذي تغير، وهل تحتاج إلى تحديث كودك، وتنسيقات التصدير التي تدعم الاستنتاج الشامل، وكيفية الانتقال بسلاسة من نماذج YOLO القديمة.
+
+للحصول على نظرة أعمق حول الدافع وراء هذا التحول المعماري، راجع [مدونة Ultralytics حول سبب إزالة YOLO26 لـ NMS وكيف يغير ذلك النشر](https://www.ultralytics.com/blog/why-ultralytics-yolo26-removes-nms-and-how-that-changes-deployment).
+
+ملخص سريع
+
+  * **هل تستخدم Ultralytics API أو CLI؟** لا حاجة لإجراء أي تغييرات، فقط استبدل اسم النموذج بـ `yolo26n.pt`.
+  * **هل تستخدم كود استنتاج مخصص (ONNX Runtime, TensorRT، إلخ)؟** قم بتحديث المعالجة اللاحقة لديك؛ أصبح مخرج الكشف الآن `(N, 300, 6)` بتنسيق `xyxy`، ولا يلزم استخدام NMS. المهام الأخرى تضيف بيانات إضافية (معاملات القناع، النقاط الرئيسية، أو الزاوية).
+  * **هل تقوم بالتصدير؟** تدعم معظم التنسيقات المخرج الشامل أصلاً. ومع ذلك، فإن عدداً قليلاً من التنسيقات (NCNN, RKNN, PaddlePaddle, ExecuTorch, IMX, Edge TPU، و QNN) تعود تلقائياً إلى المخرج التقليدي بسبب قيود المؤثرات غير المدعومة (مثل `torch.topk`). يتم تجميع سير عمل Hailo HEF من ONNX باستخدام نصوص برمجية خاصة بـ Hailo، لذا تحقق من رأس الكشف وتكوين NMS لنموذجك.
+
+
+
+## Link to this sectionكيف يعمل الكشف الشامل#
+
+يستخدم YOLO26 **معمارية ثنائية الرأس** أثناء [التدريب](/ar/modes/train). يتشارك كلا الرأسين في نفس العمود الفقري (backbone) والعنق (neck)، لكنهما ينتجان المخرجات بطرق مختلفة:
+
+الرأس| الغرض| مخرج الكشف| المعالجة اللاحقة  
+---|---|---|---  
+**واحد لواحد** (افتراضي)| استنتاج شامل| `(N, 300, 6)`| عتبة الثقة فقط  
+**واحد لكثير**|  مخرج YOLO التقليدي| `(N, nc + 4, 8400)`| يتطلب NMS  
+  
+الأشكال أعلاه مخصصة لـ [الكشف](/ar/tasks/detect). المهام الأخرى توسع مخرج الواحد لواحد ببيانات إضافية لكل كشف:
+
+المهمة| مخرج شامل| بيانات إضافية  
+---|---|---  
+[الكشف](/ar/tasks/detect)| `(N, 300, 6)`| —  
+[تجزئة المثيلات](/ar/tasks/segment)| `(N, 300, 6 + nm)` \+ proto `(N, nm, H, W)`| `nm` معاملات القناع (الافتراضي 32)  
+[الوضعية](/ar/tasks/pose)| `(N, 300, 57)`| 17 نقطة رئيسية × 3 (x, y, الرؤية)  
+[OBB](/ar/tasks/obb)| `(N, 300, 7)`| زاوية الدوران  
+  
+أثناء التدريب، يعمل كلا الرأسين في وقت واحد؛ يوفر رأس الواحد لكثير إشارة تعلم أغنى، بينما يتعلم رأس الواحد لواحد إنتاج توقعات نظيفة وغير متداخلة. أثناء [الاستنتاج](/ar/modes/predict) و[التصدير](/ar/modes/export)، يكون **رأس الواحد لواحد** فقط هو النشط افتراضياً، حيث ينتج ما يصل إلى 300 كشف لكل صورة بالتنسيق `[x1, y1, x2, y2, confidence, class_id]`.
+
+عندما تستدعي `model.fuse()`، فإنه يقوم بدمج طبقات Conv + BatchNorm لاستنتاج أسرع، وفي نماذج الكشف الشامل، يقوم أيضاً بإزالة رأس الواحد لكثير، مما يقلل من حجم النموذج و FLOPs. لمزيد من التفاصيل حول المعمارية ثنائية الرأس، راجع [صفحة نموذج YOLO26](/ar/models/yolo26).
+
+## Link to this sectionهل أحتاج إلى تغيير الكود الخاص بي؟#
+
+### Link to this sectionاستخدام Ultralytics Python API أو CLI#
+
+**لا حاجة لأي تغييرات.** إذا كنت تستخدم [Ultralytics Python API](/ar/usage/python) القياسي أو [CLI](/ar/usage/cli)، فإن كل شيء يعمل تلقائياً؛ فـ [التنبؤ](/ar/modes/predict)، و[التحقق](/ar/modes/val)، و[التصدير](/ar/modes/export) كلها تتعامل مع النماذج الشاملة مباشرةً.
+
+لا تغييرات مطلوبة في الكود مع Ultralytics API
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Predict — no NMS step, no code changes
+    results = model.predict("image.jpg")
+
+### Link to this sectionاستخدام كود استنتاج مخصص#
+
+**نعم، تنسيق المخرج مختلف.** إذا قمت بكتابة منطق معالجة لاحقة مخصص لـ [YOLOv8](/ar/models/yolov8) أو [YOLO11](/ar/models/yolo11) (على سبيل المثال، عند إجراء الاستنتاج باستخدام [ONNX Runtime](/ar/integrations/onnx) أو [TensorRT](/ar/integrations/tensorrt))، ستحتاج إلى تحديثه للتعامل مع شكل المخرج الجديد:
+
+| YOLOv8 / YOLO11| YOLO26 (شامل)  
+---|---|---  
+**مخرج الكشف**| `(N, nc + 4, 8400)`| `(N, 300, 6)`  
+**تنسيق الصندوق (BBox)**| `xywh` (مركز x، مركز y، العرض، الارتفاع)| `xyxy` (أعلى يسار x، أعلى يسار y، أسفل يمين x، أسفل يمين y)  
+**التخطيط**|  إحداثيات الصندوق + درجات الفئات لكل مرساة (anchor)| `[x1, y1, x2, y2, conf, class_id]`  
+**يتطلب NMS**|  نعم| لا  
+**المعالجة اللاحقة**|  NMS + تصفية الثقة| تصفية الثقة فقط  
+  
+بالنسبة لمهام [التجزئة](/ar/tasks/segment)، و[الوضعية](/ar/tasks/pose)، و[OBB](/ar/tasks/obb)، يضيف YOLO26 بيانات خاصة بالمهمة إلى كل كشف؛ راجع جدول أشكال المخرجات أعلاه.
+
+حيث `N` هو [حجم الدفعة](https://www.ultralytics.com/glossary/batch-size) و `nc` هو عدد الفئات (على سبيل المثال، 80 لـ [COCO](/ar/datasets/detect/coco)).
+
+مع النماذج الشاملة، تصبح المعالجة اللاحقة أبسط بكثير؛ على سبيل المثال، عند استخدام [ONNX Runtime](/ar/integrations/onnx):
+    
+    
+    import onnxruntime as ort
+    
+    # Load and run the exported end-to-end model
+    session = ort.InferenceSession("yolo26n.onnx")
+    output = session.run(None, {session.get_inputs()[0].name: input_tensor})
+    
+    # End-to-end output: (batch, 300, 6) → [x1, y1, x2, y2, confidence, class_id]
+    detections = output[0][0]  # first image in batch
+    detections = detections[detections[:, 4] > conf_threshold]  # confidence filter — that's it!
+
+### Link to this sectionالتبديل إلى رأس الواحد لكثير#
+
+إذا كنت بحاجة إلى تنسيق مخرج YOLO التقليدي (على سبيل المثال، لإعادة استخدام كود المعالجة اللاحقة القائم على NMS)، يمكنك التبديل إلى رأس الواحد لكثير في أي وقت عن طريق ضبط `end2end=False`:
+
+استخدام رأس الواحد لكثير للحصول على مخرج تقليدي قائم على NMS
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Prediction with NMS (traditional behavior)
+    results = model.predict("image.jpg", end2end=False)
+    
+    # Validation with NMS
+    metrics = model.val(data="coco.yaml", end2end=False)
+    
+    # Export without end-to-end
+    model.export(format="onnx", end2end=False)
+
+## Link to this sectionتوافق تنسيق التصدير#
+
+تدعم معظم [تنسيقات التصدير](/ar/modes/export#export-formats) الاستنتاج الشامل مباشرة، بما في ذلك [ONNX](/ar/integrations/onnx)، و[TensorRT](/ar/integrations/tensorrt)، و[CoreML](/ar/integrations/coreml)، و[OpenVINO](/ar/integrations/openvino)، و[TFLite](/ar/integrations/tflite)، و[TF.js](/ar/integrations/tfjs)، و[MNN](/ar/integrations/mnn).
+
+التنسيقات التالية **لا** تدعم الشمولية وتعود تلقائياً إلى رأس الواحد لكثير: [NCNN](/ar/integrations/ncnn)، و[RKNN](/ar/integrations/rockchip-rknn)، و[PaddlePaddle](/ar/integrations/paddlepaddle)، و[ExecuTorch](/ar/integrations/executorch)، و[IMX](/ar/integrations/sony-imx500)، و[Edge TPU](/ar/integrations/edge-tpu)، و[Qualcomm QNN](/ar/integrations/qnn).
+
+ماذا يحدث عندما لا يتم دعم الشمولية
+
+عند التصدير إلى أحد هذه التنسيقات، تتحول Ultralytics تلقائياً إلى رأس الواحد لكثير وتسجل تحذيراً؛ لا حاجة لتدخل يدوي. هذا يعني **أنك ستحتاج إلى NMS في خط استنتاجك** لهذه التنسيقات، تماماً كما في [YOLOv8](/ar/models/yolov8) أو [YOLO11](/ar/models/yolo11).
+
+بالنسبة لـ [Hailo HEF](/ar/integrations/hailo)، تحدث خطوة التجميع خارج `model.export(format=...)` بعد تصدير ONNX. استخدم سجلات Hailo DFC، والنص البرمجي للنموذج `.alls`، و JSON الخاص بـ NMS التي تتطابق تماماً مع نموذج الكشف الخاص بك؛ إذا لم يكن رسم YOLO26 البياني الشامل مدعوماً بواسطة سلسلة أدوات Hailo الخاصة بك، قم بتصدير نموذج ONNX مع `end2end=False` وقم بتجميع رأس الكشف التقليدي.
+
+TensorRT + INT8
+
+يدعم [TensorRT](/ar/integrations/tensorrt) الشمولية، ولكن يتم **تعطيلها تلقائياً** عند التصدير باستخدام `int8=True` على TensorRT 10.3.0 في JetPack 6.
+
+## Link to this sectionمقايضات الدقة والسرعة#
+
+يوفر الكشف الشامل فوائد نشر كبيرة مع الحد الأدنى من التأثير على [الدقة](https://www.ultralytics.com/glossary/accuracy):
+
+المقياس| شامل (افتراضي)| واحد لكثير + NMS (`end2end=False`)  
+---|---|---  
+**سرعة استنتاج وحدة المعالجة المركزية (CPU)**|  أسرع بنسبة تصل إلى **43%**|  الأساس  
+**تأثير mAP**|  ~0.5 mAP أقل| يطابق أو يتجاوز YOLO11  
+**المعالجة اللاحقة**|  تصفية الثقة فقط| خط NMS كامل  
+**تعقيد النشر**|  بسيط| يتطلب تنفيذ NMS  
+  
+بالنسبة لمعظم التطبيقات الواقعية، فإن فارق ~0.5 [mAP](https://www.ultralytics.com/glossary/mean-average-precision-map) لا يذكر، خاصة عند الأخذ في الاعتبار مكاسب السرعة والبساطة. إذا كانت الدقة القصوى هي أولويتك القصوى، يمكنك دائماً العودة إلى رأس الواحد لكثير باستخدام `end2end=False`.
+
+راجع [مقاييس أداء YOLO26](/ar/models/yolo26#performance-metrics) للحصول على معايير مفصلة عبر جميع أحجام النماذج (n, s, m, l, x).
+
+## Link to this sectionالانتقال من YOLOv8 أو YOLO11#
+
+إذا كنت تقوم بترقية مشروع موجود إلى YOLO26، فإليك قائمة تحقق سريعة لضمان انتقال سلس:
+
+  * **مستخدمو Ultralytics API / CLI:** لا حاجة لإجراء أي تغييرات، فقط قم بتحديث اسم النموذج إلى `yolo26n.pt` (أو `yolo26n-seg.pt`، أو `yolo26n-pose.pt`، أو `yolo26n-obb.pt`)
+  * **كود المعالجة اللاحقة المخصص:** قم بالتحديث للتعامل مع أشكال المخرجات الجديدة؛ `(N, 300, 6)` للكشف، بالإضافة إلى البيانات الخاصة بالمهمة لـ [التجزئة](/ar/tasks/segment)، و[الوضعية](/ar/tasks/pose)، و[OBB](/ar/tasks/obb). لاحظ أيضاً تغيير تنسيق الصندوق من `xywh` إلى `xyxy`
+  * **خطوط التصدير:** تحقق من قسم توافق التنسيق أعلاه للحصول على التنسيق المستهدف
+  * **TensorRT + INT8:** في JetPack 6، يقوم TensorRT 10.3.0 بتعطيل الشمولية تلقائياً مع `int8=True`؛ استخدم إصدار TensorRT مختلف للحفاظ على الشمولية
+  * **تصدير FP16:** إذا كنت بحاجة إلى جميع المخرجات بتنسيق FP16، قم بالتصدير باستخدام `end2end=False`؛ راجع [لماذا يبقى output0 بتنسيق FP32](/ar/modes/export#why-is-output0-fp32-when-exporting-with-halftrue-and-end2endtrue)
+  * **iOS / CoreML:** الشمولية مدعومة بالكامل. إذا كنت بحاجة إلى دعم معاينة Xcode، استخدم `end2end=False` مع `nms=True`
+  * **أجهزة الحافة (NCNN, RKNN):** تعود هذه التنسيقات تلقائياً إلى الواحد لكثير، لذا قم بتضمين NMS في خط المعالجة على الجهاز
+
+
+
+## Link to this sectionالأسئلة الشائعة#
+
+### Link to this sectionهل يمكنني استخدام end2end=True و nms=True معاً؟#
+
+لا. هذه الخيارات متبادلة الاستبعاد. إذا قمت بضبط `nms=True` على نموذج شامل أثناء [التصدير](/ar/modes/export)، فسيتم إجباره تلقائياً على `nms=False` مع ظهور تحذير. يتعامل رأس الشمولية بالفعل مع تصفية التكرارات داخلياً، لذا فإن NMS الخارجية غير ضرورية.
+
+ومع ذلك، فإن `end2end=False` مقترناً بـ `nms=True` هو تكوين صالح؛ فهو يدمج NMS التقليدية في رسم التصدير البياني. يمكن أن يكون هذا مفيداً لتصديرات [CoreML](/ar/integrations/coreml) لأنه يتيح لك استخدام وظيفة المعاينة في Xcode مع نموذج الكشف مباشرةً.
+
+### Link to this sectionما الذي يتحكم فيه المعامل max_det في النماذج الشاملة (end-to-end)؟#
+
+يحدد المعامل `max_det` (القيمة الافتراضية: 300) الحد الأقصى لعدد الاكتشافات التي يمكن لرأس النموذج من نوع واحد لواحد (one-to-one) إخراجها لكل صورة. يمكنك تعديله في وقت الاستدلال أو وقت التصدير:
+    
+    
+    model.predict("image.jpg", max_det=100)  # fewer detections, slightly faster
+    model.export(format="onnx", max_det=500)  # more detections for dense scenes
+
+لاحظ أن نقاط فحص YOLO26 الافتراضية تم تدريبها باستخدام `max_det=300`. على الرغم من إمكانية زيادة هذه القيمة، إلا أن رأس النموذج من نوع واحد لواحد تم تحسينه أثناء التدريب لإنتاج ما يصل إلى 300 اكتشاف دقيق، لذا فإن الاكتشافات التي تتجاوز هذا الحد قد تكون أقل جودة. إذا كنت بحاجة إلى أكثر من 300 اكتشاف لكل صورة، ففكر في إعادة التدريب باستخدام قيمة `max_det` أعلى.
+
+### Link to this sectionنموذج ONNX المصدّر الخاص بي يخرج (1, 300, 6) — هل هذا صحيح؟#
+
+نعم، هذا هو تنسيق الإخراج المتوقع والشامل للاكتشاف: [حجم الدفعة](https://www.ultralytics.com/glossary/batch-size) يساوي 1، مع ما يصل إلى 300 اكتشاف، يحتوي كل منها على 6 قيم `[x1, y1, x2, y2, confidence, class_id]`. ببساطة قم بالتصفية حسب عتبة الثقة (confidence threshold) وستنتهي المهمة — لا حاجة لاستخدام NMS.
+
+بالنسبة للمهام الأخرى، يختلف شكل الإخراج:
+
+المهمة| شكل الإخراج| الوصف  
+---|---|---  
+اكتشاف| `(1, 300, 6)`| `[x1, y1, x2, y2, conf, class_id]`  
+تجزئة النطاق (Segmentation)| `(1, 300, 38)` \+ `(1, 32, 160, 160)`| 6 قيم للصندوق + 32 معامل قناع، بالإضافة إلى موتر قناع أولي  
+وضعية| `(1, 300, 57)`| 6 قيم للصندوق + 17 نقطة رئيسية × 3 (x, y, الرؤية)  
+OBB| `(1, 300, 7)`| 6 قيم للصندوق + زاوية دوران واحدة  
+  
+### Link to this sectionكيف أتحقق مما إذا كان النموذج المصدّر الخاص بي شاملاً (end-to-end)؟#
+
+يمكنك التحقق باستخدام واجهة برمجة تطبيقات Python الخاصة بـ Ultralytics أو عن طريق فحص بيانات تعريف نموذج ONNX المصدّر مباشرةً:
+
+تحقق مما إذا كان النموذج شاملاً
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.onnx")
+    model.predict(verbose=False)  # run predict to setup predictor first
+    print(model.predictor.model.end2end)  # True if end-to-end is enabled
+
+بدلاً من ذلك، تحقق من شكل الإخراج — نماذج الاكتشاف الشاملة تخرج `(1, 300, 6)`، بينما تخرج النماذج التقليدية `(1, nc + 4, 8400)`. لأشكال المهام الأخرى، راجع الأسئلة الشائعة حول أشكال الإخراج.
+
+### Link to this sectionهل يتم دعم النظام الشامل لتجزئة النطاق، والوضع، ومهام OBB؟#
+
+نعم. متغيرات المهام بنمط الاكتشاف في YOLO26 — [الاكتشاف](/ar/tasks/detect)، و[تجزئة النطاق](/ar/tasks/segment)، و[تقدير الوضع](/ar/tasks/pose)، و[الاكتشاف الموجه للكائنات (OBB)](/ar/tasks/obb) — تدعم الاستدلال الشامل افتراضياً. يتوفر أيضاً خيار `end2end=False` كخيار احتياطي عبر هذه المهام.
+
+توسع كل مهمة مخرجات الاكتشاف الأساسية ببيانات خاصة بالمهمة:
+
+المهمة| النموذج| مخرج شامل  
+---|---|---  
+اكتشاف| `yolo26n.pt`| `(N, 300, 6)`  
+تجزئة النطاق (Instance Segmentation)| `yolo26n-seg.pt`| `(N, 300, 38)` \+ proto `(N, 32, 160, 160)`  
+وضعية| `yolo26n-pose.pt`| `(N, 300, 57)`  
+OBB| `yolo26n-obb.pt`| `(N, 300, 7)`  
+  
+المساهمون
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/end2end-detection.md)
+
+[GLglenn-jocher5](https://github.com/glenn-jocher)[AMambitious-octopus1](https://github.com/ambitious-octopus)[RAraimbekovm1](https://github.com/raimbekovm)
+
+تم الإنشاء قبل 3 أشهرتم التحديث الأسبوع الماضي
+
+## التعليقات
+
+في هذه الصفحة
+
+استكشف باستخدام الذكاء الاصطناعي

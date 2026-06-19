@@ -1,0 +1,322 @@
+---
+source_url: https://docs.ultralytics.com/pt/guides/export-non-yolo-models
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/export-non-yolo-models.md)
+
+# Link to this sectionComo exportar modelos PyTorch não-YOLO com Ultralytics#
+
+Implantar modelos PyTorch em produção geralmente significa lidar com um exportador diferente para cada destino: `torch.onnx.export` para ONNX, `coremltools` para dispositivos Apple, `onnx2tf` para TensorFlow, `pnnx` para NCNN, e assim por diante. Cada ferramenta possui sua própria API, peculiaridades de dependência e convenções de saída.
+
+A Ultralytics disponibiliza utilitários de exportação independentes que encapsulam múltiplos backends sob uma interface consistente. Você pode exportar qualquer `torch.nn.Module`, incluindo modelos de imagem [timm](https://github.com/huggingface/pytorch-image-models), classificadores e detectores do [torchvision](https://docs.pytorch.org/vision/), ou suas próprias arquiteturas personalizadas, para [ONNX](/pt/integrations/onnx), [TorchScript](/pt/integrations/torchscript), [OpenVINO](/pt/integrations/openvino), [CoreML](/pt/integrations/coreml), [NCNN](/pt/integrations/ncnn), [PaddlePaddle](/pt/integrations/paddlepaddle), [MNN](/pt/integrations/mnn), [ExecuTorch](/pt/integrations/executorch) e [TensorFlow SavedModel](/pt/integrations/tf-savedmodel) sem precisar aprender cada backend separadamente.
+
+## Link to this sectionPor que usar a Ultralytics para exportação não-YOLO?#
+
+  * **Uma única API para 10 formatos:** aprenda uma única convenção de chamada em vez de uma dúzia.
+  * **Interface de utilitário compartilhada:** os auxiliares de exportação ficam em `ultralytics.utils.export`, portanto, assim que os pacotes de backend estiverem instalados, você pode manter o mesmo padrão de chamada em todos os formatos.
+  * **Mesmo caminho de código das exportações YOLO:** os mesmos auxiliares impulsionam todas as exportações Ultralytics YOLO.
+  * **Quantização FP16 e INT8** integrada para formatos que a suportam (OpenVINO, CoreML, MNN, NCNN).
+  * **Funciona na CPU:** nenhuma GPU é necessária para a etapa de exportação em si, então você pode executá-la localmente em qualquer laptop.
+
+
+
+## Link to this sectionInício Rápido#
+
+O caminho mais rápido é uma exportação de duas linhas para [ONNX](/pt/integrations/onnx) sem código YOLO e sem configuração adicional além de `pip install ultralytics onnx timm`:
+    
+    
+    import timm
+    import torch
+    
+    from ultralytics.utils.export import torch2onnx
+    
+    model = timm.create_model("resnet18", pretrained=True).eval()
+    torch2onnx(model, torch.randn(1, 3, 224, 224), output_file="resnet18.onnx")
+
+## Link to this sectionFormatos de Exportação Suportados#
+
+As funções `torch2*` aceitam um `torch.nn.Module` padrão e um tensor de entrada de exemplo. MNN, TF SavedModel e TF Frozen Graph passam por um artefato intermediário ONNX ou Keras. Nenhum atributo específico de YOLO é necessário em qualquer um dos casos.
+
+Formato| Função| Instalar| Saída  
+---|---|---|---  
+ONNX| `torch2onnx()`| `pip install onnx`| arquivo `.onnx`  
+TorchScript| `torch2torchscript()`| incluído com PyTorch| arquivo `.torchscript`  
+OpenVINO| `torch2openvino()`| `pip install openvino`| diretório `_openvino_model/`  
+CoreML| `torch2coreml()`| `pip install coremltools`| `.mlpackage`  
+TF SavedModel| `onnx2saved_model()`| veja os requisitos detalhados abaixo| diretório `_saved_model/`  
+TF Frozen Graph| `keras2pb()`| veja os requisitos detalhados abaixo| arquivo `.pb`  
+NCNN| `torch2ncnn()`| `pip install ncnn pnnx`| diretório `_ncnn_model/`  
+MNN| `onnx2mnn()`| `pip install MNN`| arquivo `.mnn`  
+PaddlePaddle| `torch2paddle()`| `pip install paddlepaddle x2paddle`| diretório `_paddle_model/`  
+ExecuTorch| `torch2executorch()`| `pip install executorch`| diretório `_executorch_model/`  
+  
+ONNX como formato intermediário
+
+As exportações de [MNN](/pt/integrations/mnn), [TF SavedModel](/pt/integrations/tf-savedmodel) e TF Frozen Graph passam pelo ONNX como um passo intermediário. Exporte para ONNX primeiro e, em seguida, converta.
+
+Incorporação de metadados
+
+Várias funções de exportação aceitam um dicionário `metadata` opcional (por exemplo, `torch2torchscript(..., metadata={"author": "me"})`) que incorpora pares chave-valor personalizados no artefato exportado onde o formato suporta isso.
+
+## Link to this sectionExemplos passo a passo#
+
+Cada exemplo abaixo usa a mesma configuração, uma ResNet-18 pré-treinada do timm em modo de avaliação:
+    
+    
+    import timm
+    import torch
+    
+    model = timm.create_model("resnet18", pretrained=True).eval()
+    im = torch.randn(1, 3, 224, 224)
+
+Sempre chame `model.eval()` antes de exportar
+
+Dropout, [batch normalization](https://www.ultralytics.com/glossary/batch-normalization) e outras camadas exclusivas de treinamento se comportam de forma diferente durante a inferência. Pular `.eval()` produz exportações com saídas incorretas.
+
+### Link to this sectionExportar para ONNX#
+    
+    
+    from ultralytics.utils.export import torch2onnx
+    
+    torch2onnx(model, im, output_file="resnet18.onnx")
+
+Para tamanho de lote dinâmico, passe um dicionário `dynamic`:
+    
+    
+    torch2onnx(model, im, output_file="resnet18_dyn.onnx", dynamic={"images": {0: "batch_size"}})
+
+O opset padrão é `14` e o nome de entrada padrão é `"images"`. Substitua usando os argumentos `opset`, `input_names` ou `output_names`.
+
+### Link to this sectionExportar para TorchScript#
+
+Não são necessárias dependências extras. Usa `torch.jit.trace` internamente.
+    
+    
+    from ultralytics.utils.export import torch2torchscript
+    
+    torch2torchscript(model, im, output_file="resnet18.torchscript")
+
+### Link to this sectionExportar para OpenVINO#
+    
+    
+    from ultralytics.utils.export import torch2openvino
+    
+    ov_model = torch2openvino(model, im, output_dir="resnet18_openvino_model")
+
+O diretório contém um par de arquivos de nome fixo `model.xml` e `model.bin`:
+    
+    
+    resnet18_openvino_model/
+    ├── model.xml
+    └── model.bin
+
+Passe `dynamic=True` para formas de entrada dinâmicas, `half=True` para FP16 ou `int8=True` para quantização INT8. INT8 requer adicionalmente um argumento `calibration_dataset`.
+
+Requer `openvino>=2024.0.0` (ou `>=2025.2.0` no macOS 15.4+) e `torch>=2.1`.
+
+### Link to this sectionExportar para CoreML#
+    
+    
+    import coremltools as ct
+    
+    from ultralytics.utils.export import torch2coreml
+    
+    inputs = [ct.TensorType("input", shape=(1, 3, 224, 224))]
+    ct_model = torch2coreml(model, inputs, im, classifier_names=None, output_file="resnet18.mlpackage")
+
+Para modelos de [classificação](https://www.ultralytics.com/glossary/image-classification), passe uma lista de nomes de classes para `classifier_names` para adicionar um cabeçote de classificação ao modelo CoreML.
+
+Requer `coremltools>=9.0`, `torch>=1.11` e `numpy<=2.3.5`. Não suportado no Windows.
+
+Erro `BlobWriter not loaded`
+
+`coremltools>=9.0` fornece wheels para Python 3.10–3.13 no macOS e Linux. Em versões mais recentes do Python, a extensão C nativa falha ao carregar. Use Python 3.10–3.13 para exportação CoreML.
+
+### Link to this sectionExportar para TensorFlow SavedModel#
+
+A exportação para TF SavedModel passa pelo ONNX como um passo intermediário:
+    
+    
+    from ultralytics.utils.export import onnx2saved_model, torch2onnx
+    
+    torch2onnx(model, im, output_file="resnet18.onnx")
+    keras_model = onnx2saved_model("resnet18.onnx", output_dir="resnet18_saved_model")
+
+A função retorna um modelo Keras e também gera arquivos TFLite (`.tflite`) dentro do diretório de saída:
+    
+    
+    resnet18_saved_model/
+    ├── saved_model.pb
+    ├── variables/
+    ├── resnet18_float32.tflite
+    ├── resnet18_float16.tflite
+    └── resnet18_int8.tflite
+
+Requisitos:
+
+  * `tensorflow>=2.0.0,<=2.19.0`
+  * `onnx2tf>=1.26.3,<1.29.0`
+  * `tf_keras<=2.19.0`
+  * `sng4onnx>=1.0.1`
+  * `onnx_graphsurgeon>=0.3.26` (instale com `--extra-index-url https://pypi.ngc.nvidia.com`)
+  * `ai-edge-litert>=1.2.0,<1.4.0` no macOS (`ai-edge-litert>=1.2.0` em outras plataformas)
+  * `onnxslim>=0.1.71`
+  * `onnx>=1.12.0,<2.0.0`
+  * `protobuf>=5`
+
+
+
+### Link to this sectionExportar para TensorFlow Frozen Graph#
+
+Continuando a partir da exportação do SavedModel acima, converta o modelo Keras retornado para um grafo `.pb` congelado:
+    
+    
+    from pathlib import Path
+    
+    from ultralytics.utils.export import keras2pb
+    
+    keras2pb(keras_model, output_file=Path("resnet18_saved_model/resnet18.pb"))
+
+### Link to this sectionExportar para NCNN#
+    
+    
+    from ultralytics.utils.export import torch2ncnn
+    
+    torch2ncnn(model, im, output_dir="resnet18_ncnn_model")
+
+O diretório contém arquivos param e bin de nome fixo, juntamente com um wrapper em Python:
+    
+    
+    resnet18_ncnn_model/
+    ├── model.ncnn.param
+    ├── model.ncnn.bin
+    └── model_ncnn.py
+
+`torch2ncnn()` verifica se `ncnn` e `pnnx` estão presentes no primeiro uso.
+
+### Link to this sectionExportar para MNN#
+
+A exportação MNN requer um arquivo ONNX como entrada. Exporte para ONNX primeiro e, em seguida, converta:
+    
+    
+    from ultralytics.utils.export import onnx2mnn, torch2onnx
+    
+    torch2onnx(model, im, output_file="resnet18.onnx")
+    onnx2mnn("resnet18.onnx", output_file="resnet18.mnn")
+
+Suporta `half=True` para FP16 e `int8=True` para quantização INT8. Requer `MNN>=2.9.6` e `torch>=1.10`.
+
+### Link to this sectionExportar para PaddlePaddle#
+    
+    
+    from ultralytics.utils.export import torch2paddle
+    
+    torch2paddle(model, im, output_dir="resnet18_paddle_model")
+
+O diretório contém o modelo PaddlePaddle e os arquivos de parâmetros:
+    
+    
+    resnet18_paddle_model/
+    ├── model.pdmodel
+    └── model.pdiparams
+
+Requer `x2paddle` e a distribuição correta do PaddlePaddle para sua plataforma:
+
+  * `paddlepaddle-gpu>=3.0.0,<3.3.0` em CUDA
+  * `paddlepaddle==3.0.0` em CPU ARM64
+  * `paddlepaddle>=3.0.0,<3.3.0` em outros CPUs
+
+
+
+Não suportado em NVIDIA Jetson.
+
+### Link to this sectionExportar para ExecuTorch#
+    
+    
+    from ultralytics.utils.export import torch2executorch
+    
+    torch2executorch(model, im, output_dir="resnet18_executorch_model")
+
+O arquivo `.pte` exportado é salvo dentro do diretório de saída:
+    
+    
+    resnet18_executorch_model/
+    └── model.pte
+
+Requer `torch>=2.9.0` e um runtime ExecuTorch compatível (`pip install executorch`). Para uso do runtime, consulte a [integração com ExecuTorch](/pt/integrations/executorch).
+
+## Link to this sectionVerifique seu modelo exportado#
+
+Após a exportação, verifique a paridade numérica com o modelo PyTorch original antes de fazer o deploy. Um teste rápido de fumaça com `ONNXBackend` de `ultralytics.nn.backends` compara as saídas e sinaliza erros de rastreamento ou quantização precocemente:
+    
+    
+    import numpy as np
+    import timm
+    import torch
+    
+    from ultralytics.nn.backends import ONNXBackend
+    
+    model = timm.create_model("resnet18", pretrained=True).eval()
+    im = torch.randn(1, 3, 224, 224)
+    with torch.no_grad():
+        pytorch_output = model(im).numpy()
+    
+    onnx_model = ONNXBackend("resnet18.onnx", device=torch.device("cpu"))
+    onnx_output = onnx_model(im)[0]
+    
+    diff = np.abs(pytorch_output - onnx_output).max()
+    print(f"Max difference: {diff:.6f}")  # should be < 1e-5
+
+Diferença esperada
+
+Para exportações FP32, a diferença absoluta máxima deve estar abaixo de `1e-5`. Diferenças maiores apontam para operações não suportadas, formato de entrada incorreto ou um modelo que não está em modo de avaliação (eval mode). Exportações FP16 e INT8 possuem tolerâncias mais flexíveis. Valide com dados reais em vez de tensores aleatórios.
+
+Para outros runtimes, o nome do tensor de entrada pode diferir. O OpenVINO, por exemplo, usa o nome do argumento forward do modelo (tipicamente `x` para modelos genéricos), enquanto o `torch2onnx` assume por padrão `"images"`.
+
+## Link to this sectionLimitações conhecidas#
+
+  * **Suporte a múltiplas entradas é desigual** : `torch2onnx` e `torch2openvino` aceitam uma tupla ou lista de exemplos de tensores para modelos com múltiplas entradas. `torch2torchscript`, `torch2coreml`, `torch2ncnn`, `torch2paddle` e `torch2executorch` assumem um único tensor de entrada.
+  * **ExecuTorch precisa do`flatc`**: O runtime ExecuTorch requer o compilador FlatBuffers. Instale com `brew install flatbuffers` no macOS ou `apt install flatbuffers-compiler` no Ubuntu.
+  * **Sem inferência via Ultralytics** : Modelos não-YOLO exportados não podem ser carregados de volta através de `YOLO()` para inferência. Use o runtime nativo para cada formato ([ONNX Runtime](/pt/integrations/onnx), [OpenVINO Runtime](/pt/integrations/openvino), etc.).
+  * **Formatos exclusivos para YOLO** : As exportações para [Axelera](/pt/integrations/axelera) e [Sony IMX500](/pt/integrations/sony-imx500) requerem atributos de modelo específicos do YOLO e não estão disponíveis para modelos genéricos.
+  * **Formatos específicos de plataforma** : [TensorRT](/pt/integrations/tensorrt) requer uma GPU NVIDIA. [RKNN](/pt/integrations/rockchip-rknn) requer o SDK `rknn-toolkit2` (somente Linux). [Edge TPU](/pt/integrations/edge-tpu) requer o binário `edgetpu_compiler` (somente Linux).
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionQuais modelos posso exportar com a Ultralytics?#
+
+Qualquer `torch.nn.Module`. Isso inclui modelos de timm, torchvision ou qualquer modelo PyTorch customizado. O modelo deve estar em modo de avaliação (`model.eval()`) antes da exportação. ONNX e OpenVINO aceitam adicionalmente uma tupla de tensores de exemplo para modelos com múltiplas entradas.
+
+### Link to this sectionQuais formatos de exportação funcionam sem uma GPU?#
+
+Todos os formatos suportados (TorchScript, ONNX, OpenVINO, CoreML, TF SavedModel, TF Frozen Graph, NCNN, PaddlePaddle, MNN, ExecuTorch) podem ser exportados via CPU. Nenhuma GPU é necessária para o processo de exportação em si. TensorRT é o único formato que requer uma GPU NVIDIA.
+
+### Link to this sectionQual versão da Ultralytics eu preciso?#
+
+Use Ultralytics `>=8.4.38`, que inclui o módulo `ultralytics.utils.export` e os argumentos padronizados `output_file`/`output_dir`.
+
+### Link to this sectionPosso exportar um modelo torchvision para CoreML para deploy no iOS?#
+
+Sim. Classificadores, detectores e modelos de segmentação torchvision exportam para `.mlpackage` via `torch2coreml`. Para modelos de classificação de imagem, passe uma lista de nomes de classes para `classifier_names` para incluir um cabeçalho de classificação. Execute a exportação no macOS ou Linux. CoreML não é suportado no Windows. Veja a [integração com CoreML](/pt/integrations/coreml) para detalhes de deploy no iOS.
+
+### Link to this sectionPosso quantizar meu modelo exportado para INT8 ou FP16?#
+
+Sim, para vários formatos. Passe `half=True` para FP16 ou `int8=True` para INT8 ao exportar para OpenVINO, CoreML, MNN ou NCNN. O INT8 no OpenVINO requer adicionalmente um argumento `calibration_dataset` para [quantização pós-treinamento](https://www.ultralytics.com/glossary/model-quantization). Consulte a página de integração de cada formato para entender as compensações da quantização.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/export-non-yolo-models.md)
+
+[GLglenn-jocher3](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)[RAraimbekovm1](https://github.com/raimbekovm)
+
+Criado mês passadoAtualizado há 2 semanas
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

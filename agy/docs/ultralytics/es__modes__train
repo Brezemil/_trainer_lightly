@@ -1,0 +1,491 @@
+---
+source_url: https://docs.ultralytics.com/es/modes/train
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/train.md)
+
+# Link to this sectionEntrenamiento de modelos con Ultralytics YOLO#
+
+![Ultralytics YOLO ecosystem and integrations](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/ultralytics-yolov8-ecosystem-integrations.avif)
+
+## Link to this sectionIntroducción#
+
+Entrenar un modelo de [deep learning](https://www.ultralytics.com/glossary/deep-learning-dl) implica suministrarle datos y ajustar sus parámetros para que pueda realizar predicciones precisas. El modo de entrenamiento en Ultralytics YOLO26 está diseñado para un entrenamiento eficaz y eficiente de modelos de detección de objetos, aprovechando al máximo las capacidades del hardware moderno. Esta guía tiene como objetivo cubrir todos los detalles que necesitas para empezar a entrenar tus propios modelos utilizando el robusto conjunto de funciones de YOLO26.
+
+  
+
+
+  
+**Watch:** How to Train a YOLO model on Your Custom Dataset in Google Colab. 
+
+## Link to this section¿Por qué elegir Ultralytics YOLO para el entrenamiento?#
+
+Aquí tienes algunas razones convincentes para elegir el modo de entrenamiento de YOLO26:
+
+  * **Eficiencia:** Aprovecha al máximo tu hardware, tanto si estás en una configuración de una sola GPU como si escalas entre varias GPU.
+  * **Versatilidad:** Entrena con conjuntos de datos personalizados además de los disponibles como COCO, VOC e ImageNet.
+  * **Fácil de usar:** Interfaces CLI y Python sencillas pero potentes para una experiencia de entrenamiento directa.
+  * **Flexibilidad de hiperparámetros:** Una amplia gama de hiperparámetros personalizables para ajustar el rendimiento del modelo. Para un mayor control, puedes [personalizar el propio entrenador](/es/guides/custom-trainer).
+  * **Entrenamiento en la nube:** Entrena en GPU en la nube a través de [Ultralytics Platform](https://platform.ultralytics.com) con métricas en tiempo real y puntos de control automáticos.
+
+
+
+### Link to this sectionCaracterísticas clave del modo de entrenamiento#
+
+Las siguientes son algunas características notables del modo de entrenamiento de YOLO26:
+
+  * **Descarga automática de conjuntos de datos:** Los conjuntos de datos estándar como COCO, VOC e ImageNet se descargan automáticamente en el primer uso.
+  * **Soporte Multi-GPU:** Escala tus esfuerzos de entrenamiento sin problemas a través de varias GPU para acelerar el proceso.
+  * **Configuración de hiperparámetros:** La opción de modificar hiperparámetros a través de archivos de configuración YAML o argumentos de CLI.
+  * **Visualización y supervisión:** Seguimiento en tiempo real de las métricas de entrenamiento y visualización del proceso de aprendizaje para obtener mejores resultados.
+
+
+
+Consejo
+
+  * Los conjuntos de datos de YOLO26 como COCO, VOC, ImageNet y muchos otros se descargan automáticamente en el primer uso, p. ej., `yolo train data=coco.yaml`
+
+
+
+## Link to this sectionEjemplos de uso#
+
+Entrena YOLO26n en el conjunto de datos COCO8 durante 100 [epochs](https://www.ultralytics.com/glossary/epoch) con un tamaño de imagen de 640. El dispositivo de entrenamiento puede especificarse utilizando el argumento `device`. Si no se pasa ningún argumento, se utilizará la GPU `device=0` cuando esté disponible; de lo contrario, se utilizará `device='cpu'`. Consulta la sección de Argumentos a continuación para obtener una lista completa de los argumentos de entrenamiento.
+
+Error de multiprocesamiento en Windows
+
+En Windows, es posible que recibas un `RuntimeError` al ejecutar el entrenamiento como script. Añade un bloque `if __name__ == "__main__":` antes de tu código de entrenamiento para resolverlo.
+
+Ejemplo de entrenamiento con una sola GPU y CPU
+
+El dispositivo se determina automáticamente. Si hay una GPU disponible, se utilizará (dispositivo CUDA predeterminado 0); de lo contrario, el entrenamiento comenzará en la CPU.
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.yaml")  # build a new model from YAML
+    model = YOLO("yolo26n.pt")  # load a pretrained model (recommended for training)
+    model = YOLO("yolo26n.yaml").load("yolo26n.pt")  # build from YAML and transfer weights
+    
+    # Train the model
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640)
+
+### Link to this sectionEntrenamiento Multi-GPU#
+
+El entrenamiento Multi-GPU permite un uso más eficiente de los recursos de hardware disponibles al distribuir la carga de entrenamiento entre varias GPU. Esta característica está disponible a través de la API de Python y la interfaz de línea de comandos. Para habilitar el entrenamiento Multi-GPU, especifica los ID de dispositivo de GPU que deseas utilizar.
+
+Ejemplo de entrenamiento Multi-GPU
+
+Para entrenar con 2 GPU, los dispositivos CUDA 0 y 1 utilizan los siguientes comandos. Amplía a GPU adicionales según sea necesario.
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")  # load a pretrained model (recommended for training)
+    
+    # Train the model with 2 GPUs
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device=[0, 1])
+    
+    # Train the model with the two most idle GPUs
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device=[-1, -1])
+
+Entrenamiento Multi-GPU con código personalizado
+
+Cuando especificas varios dispositivos (p. ej., `device=[0, 1]`), Ultralytics inicia internamente una nueva instancia de entrenamiento y ejecuta `torch.distributed.run` en segundo plano. Esto funciona perfectamente para el uso estándar de CLI y scripts de Python sin modificar.
+
+Sin embargo, si tu script contiene componentes personalizados, como un entrenador, validador, conjunto de datos o canalización de aumento de datos personalizados, estos objetos no pueden serializarse ni transferirse automáticamente a los subprocesos DDP. En este caso, debes iniciar tu script directamente con `torch.distributed.run`:
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 your_training_script.py
+
+### Link to this sectionEntrenamiento con GPU inactivas#
+
+El entrenamiento con GPU inactivas permite la selección automática de las GPU menos utilizadas en sistemas Multi-GPU, optimizando el uso de recursos sin una selección manual de la GPU. Esta característica identifica las GPU disponibles basándose en métricas de utilización y disponibilidad de VRAM.
+
+Ejemplo de entrenamiento con GPU inactivas
+
+Para seleccionar y utilizar automáticamente la(s) GPU(s) más inactiva(s) para el entrenamiento, utiliza el parámetro de dispositivo `-1`. Esto es especialmente útil en entornos informáticos compartidos o servidores con varios usuarios.
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")  # load a pretrained model (recommended for training)
+    
+    # Train using the single most idle GPU
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device=-1)
+    
+    # Train using the two most idle GPUs
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device=[-1, -1])
+
+El algoritmo de selección automática prioriza las GPU con:
+
+  1. Menor porcentaje de utilización actual
+  2. Mayor memoria disponible (VRAM libre)
+  3. Menor temperatura y consumo de energía
+
+
+
+Esta función es especialmente valiosa en entornos informáticos compartidos o cuando se ejecutan múltiples trabajos de entrenamiento en diferentes modelos. Se adapta automáticamente a las condiciones cambiantes del sistema, garantizando una asignación óptima de recursos sin intervención manual.
+
+### Link to this sectionEntrenamiento con Apple Silicon MPS#
+
+Con el soporte para chips de Apple silicon integrado en los modelos Ultralytics YOLO, ahora es posible entrenar tus modelos en dispositivos que utilizan el potente marco Metal Performance Shaders (MPS). El MPS ofrece una forma de alto rendimiento de ejecutar tareas de computación y procesamiento de imágenes en el silicio personalizado de Apple.
+
+Para habilitar el entrenamiento en chips de Apple silicon, debes especificar 'mps' como tu dispositivo al iniciar el proceso de entrenamiento. A continuación, tienes un ejemplo de cómo podrías hacerlo en Python y a través de la línea de comandos:
+
+Ejemplo de entrenamiento MPS
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")  # load a pretrained model (recommended for training)
+    
+    # Train the model with MPS
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device="mps")
+
+Al aprovechar la potencia computacional de los chips de Apple silicon, esto permite un procesamiento más eficiente de las tareas de entrenamiento. Para obtener una guía más detallada y opciones de configuración avanzadas, consulta la [documentación de PyTorch MPS](https://docs.pytorch.org/docs/stable/notes/mps.html).
+
+### Link to this sectionReanudación de entrenamientos interrumpidos#
+
+Reanudar el entrenamiento desde un estado guardado previamente es una característica crucial al trabajar con modelos de deep learning. Esto puede ser útil en varias situaciones, como cuando el proceso de entrenamiento se ha interrumpido inesperadamente, o cuando deseas continuar entrenando un modelo con nuevos datos o durante más epochs.
+
+Cuando se reanuda el entrenamiento, Ultralytics YOLO carga los pesos del último modelo guardado y también restaura el estado del optimizador, el planificador de [learning rate](https://www.ultralytics.com/glossary/learning-rate) y el número de epoch. Esto te permite continuar el proceso de entrenamiento sin problemas desde donde se quedó.
+
+Puedes reanudar fácilmente el entrenamiento en Ultralytics YOLO estableciendo el argumento `resume` en `True` al llamar al método `train`, y especificando la ruta al archivo `.pt` que contiene los pesos del modelo parcialmente entrenado.
+
+A continuación se muestra un ejemplo de cómo reanudar un entrenamiento interrumpido usando Python y a través de la línea de comandos:
+
+Ejemplo de reanudación de entrenamiento
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/last.pt")  # load a partially trained model
+    
+    # Resume training
+    results = model.train(resume=True)
+
+Al establecer `resume=True`, la función `train` continuará el entrenamiento desde donde se quedó, utilizando el estado almacenado en el archivo 'path/to/last.pt'. Si se omite el argumento `resume` o se establece en `False`, la función `train` iniciará una nueva sesión de entrenamiento.
+
+Recuerda que los puntos de control se guardan al final de cada epoch de forma predeterminada, o a intervalos fijos utilizando el argumento `save_period`, por lo que debes completar al menos 1 epoch para reanudar una ejecución de entrenamiento.
+
+## Link to this sectionConfiguración de entrenamiento#
+
+Los ajustes de entrenamiento para los modelos YOLO abarcan diversos hiperparámetros y configuraciones utilizados durante el proceso de entrenamiento. Estos ajustes influyen en el rendimiento, la velocidad y la [accuracy](https://www.ultralytics.com/glossary/accuracy) del modelo. Los ajustes de entrenamiento clave incluyen el tamaño del lote, la tasa de aprendizaje, el momento y la caída de peso. Además, la elección del optimizador, la [loss function](https://www.ultralytics.com/glossary/loss-function) y la composición del conjunto de datos de entrenamiento pueden afectar al proceso de entrenamiento. El ajuste cuidadoso y la experimentación con estos parámetros son cruciales para optimizar el rendimiento.
+
+### Link to this sectionOptimizador MuSGD#
+
+En YOLO26, **MuSGD** es un optimizador híbrido que combina actualizaciones estándar de **SGD** con **actualizaciones ortogonalizadas al estilo Muon**.
+
+Se **recomienda para ejecuciones de entrenamiento de YOLO26 más largas y conjuntos de datos más grandes** , donde las actualizaciones ortogonalizadas de Muon pueden ayudar a estabilizar la optimización.
+
+Solo los parámetros con `param.ndim >= 2` (como los pesos convolucionales) reciben la actualización al estilo Muon junto con SGD, mientras que los parámetros de menor dimensión, como las capas de normalización de lotes y los términos de sesgo, permanecen en SGD estándar.
+
+Cuando se utiliza `optimizer=auto`, Ultralytics selecciona automáticamente **MuSGD** para ejecuciones de entrenamiento más largas (normalmente cuando las iteraciones > 10000). Para ejecuciones más cortas, el entrenador vuelve a **AdamW**.
+
+Ejemplo de uso:
+    
+    
+    yolo train model=yolo26n.pt data=coco8.yaml optimizer=MuSGD
+
+Consulta la implementación en `ultralytics/optim/muon.py` y la lógica de selección automática del optimizador en `BaseTrainer.build_optimizer`.
+
+Argumento| Tipo| Predeterminado| Descripción  
+---|---|---|---  
+`model`| `str`| `None`| Especifica el archivo del modelo para el entrenamiento. Acepta una ruta a un modelo preentrenado `.pt` o a un archivo de configuración `.yaml`. Esencial para definir la estructura del modelo o inicializar pesos.  
+`data`| `str`| `None`| Ruta al archivo de configuración del conjunto de datos (p. ej., `coco8.yaml`). Este archivo contiene parámetros específicos del conjunto de datos, incluidas rutas a los datos de entrenamiento y [validation data](https://www.ultralytics.com/glossary/validation-data), nombres de clases y número de clases.  
+`epochs`| `int`| `100`| Número total de epochs de entrenamiento. Cada [epoch](https://www.ultralytics.com/glossary/epoch) representa una pasada completa por todo el conjunto de datos. Ajustar este valor puede afectar a la duración del entrenamiento y al rendimiento del modelo.  
+`time`| `float`| `None`| Tiempo máximo de entrenamiento en horas. Si se establece, esto sobrescribe el argumento `epochs`, permitiendo que el entrenamiento se detenga automáticamente después de la duración especificada. Útil para escenarios de entrenamiento con limitaciones de tiempo.  
+`patience`| `int`| `100`| Número de epochs a esperar sin mejora en las métricas de validación antes de detener prematuramente el entrenamiento. Ayuda a prevenir el [overfitting](https://www.ultralytics.com/glossary/overfitting) deteniendo el entrenamiento cuando el rendimiento se estanca.  
+`batch`| `int` o `float`| `16`| [Batch size](https://www.ultralytics.com/glossary/batch-size), con tres modos: establecido como un número entero (p. ej., `batch=16`), modo automático para una utilización de la memoria de la GPU del 60% (`batch=-1`), o modo automático con una fracción de utilización especificada (`batch=0.70`).  
+`imgsz`| `int`| `640`| Tamaño de imagen objetivo para el entrenamiento. Las imágenes se redimensionan a cuadrados con lados iguales al valor especificado (si `rect=False`), conservando la relación de aspecto para los modelos YOLO pero no para RT-DETR. Afecta a la [accuracy](https://www.ultralytics.com/glossary/accuracy) del modelo y a la complejidad computacional.  
+`save`| `bool`| `True`| Habilita el guardado de puntos de control de entrenamiento y los pesos finales del modelo. Útil para reanudar el entrenamiento o para el [model deployment](https://www.ultralytics.com/glossary/model-deployment).  
+`save_period`| `int`| `-1`| Frecuencia de guardado de puntos de control del modelo, especificada en epochs. Un valor de -1 deshabilita esta función. Útil para guardar modelos intermedios durante sesiones de entrenamiento largas.  
+`cache`| `bool`| `False`| Habilita el almacenamiento en caché de imágenes del conjunto de datos en memoria (`True`/`ram`), en disco (`disk`), o lo deshabilita (`False`). Mejora la velocidad de entrenamiento al reducir la E/S de disco a costa de un mayor uso de memoria.  
+`device`| `int` o `str` o `list`| `None`| Especifica el/los dispositivo(s) computacional(es) para el entrenamiento: una sola GPU (`device=0`), múltiples GPU (`device=[0,1]`), CPU (`device=cpu`), MPS para Apple silicon (`device=mps`), Huawei Ascend NPU (`device=npu` o `device=npu:0`), o selección automática de la GPU más inactiva (`device=-1`) o múltiples GPU inactivas (`device=[-1,-1]`).  
+`workers`| `int`| `8`| Número de hilos de trabajo para la carga de datos (por `RANK` si el entrenamiento es Multi-GPU). Influye en la velocidad del preprocesamiento de datos y en la alimentación del modelo, especialmente útil en configuraciones Multi-GPU.  
+`project`| `str`| `None`| Nombre del directorio del proyecto donde se guardan los resultados del entrenamiento. Permite el almacenamiento organizado de diferentes experimentos.  
+`name`| `str`| `None`| Nombre de la ejecución de entrenamiento. Se utiliza para crear un subdirectorio dentro de la carpeta del proyecto, donde se almacenan los registros y los resultados del entrenamiento.  
+`exist_ok`| `bool`| `False`| Si es True, permite sobrescribir un directorio de proyecto/nombre existente. Útil para la experimentación iterativa sin necesidad de borrar manualmente los resultados anteriores.  
+`save_dir`| `str`| `None`| Especifica el directorio exacto donde se guardan los resultados de las ejecuciones, anulando la combinación `project`/`name`. La ruta se utiliza tal cual sin autoincremento, por lo que las ejecuciones consecutivas reutilizan el mismo directorio.  
+`pretrained`| `bool` o `str`| `True`| Determina si se debe comenzar el entrenamiento desde pesos preentrenados. Puede ser un valor booleano o una ruta de cadena a los pesos que se van a cargar. `pretrained=False` entrena a partir de pesos inicializados aleatoriamente manteniendo la arquitectura del modelo.  
+`optimizer`| `str`| `'auto'`| Elección del optimizador para el entrenamiento. Las opciones incluyen `SGD`, `MuSGD`, `Adam`, `Adamax`, `AdamW`, `NAdam`, `RAdam`, `RMSProp` o `auto` para la selección automática basada en la configuración del modelo. Afecta a la velocidad de convergencia y a la estabilidad.  
+`seed`| `int`| `0`| Establece la semilla aleatoria para el entrenamiento, asegurando la reproducibilidad de los resultados entre ejecuciones con las mismas configuraciones.  
+`deterministic`| `bool`| `True`| Fuerza el uso de algoritmos deterministas, asegurando la reproducibilidad pero pudiendo afectar al rendimiento y la velocidad debido a la restricción de algoritmos no deterministas.  
+`verbose`| `bool`| `True`| Habilita la salida detallada durante el entrenamiento, mostrando barras de progreso, métricas por época e información adicional de entrenamiento en la consola.  
+`single_cls`| `bool`| `False`| Trata todas las clases en conjuntos de datos multiclase como una sola clase durante el entrenamiento. Útil para tareas de clasificación binaria o cuando te enfocas en la presencia de objetos en lugar de en su clasificación.  
+`classes`| `list[int]`| `None`| Especifica una lista de IDs de clase para entrenar. Útil para filtrar y enfocarte solo en ciertas clases durante el entrenamiento.  
+`rect`| `bool`| `False`| Habilita la estrategia de relleno mínimo: las imágenes en un lote se rellenan mínimamente para alcanzar un tamaño común, con el lado más largo igual a `imgsz`. Puede mejorar la eficiencia y la velocidad, pero puede afectar la precisión del modelo.  
+`multi_scale`| `float`| `0.0`| Varía aleatoriamente `imgsz` en cada lote por +/- `multi_scale` (p. ej., `0.25` -> `0.75x` a `1.25x`), redondeando a múltiplos del paso del modelo; `0.0` desactiva el entrenamiento a múltiples escalas.  
+`cos_lr`| `bool`| `False`| Utiliza un planificador de [tasa de aprendizaje](https://www.ultralytics.com/glossary/learning-rate) de coseno, ajustando la tasa de aprendizaje siguiendo una curva de coseno a lo largo de las épocas. Ayuda a gestionar la tasa de aprendizaje para una mejor convergencia.  
+`close_mosaic`| `int`| `10`| Desactiva la [aumentación de datos](https://www.ultralytics.com/glossary/data-augmentation) de mosaico en las últimas N épocas para estabilizar el entrenamiento antes de finalizar. Establecerlo en 0 desactiva esta función.  
+`resume`| `bool`| `False`| Reanuda el entrenamiento desde el último punto de control guardado. Carga automáticamente los pesos del modelo, el estado del optimizador y el conteo de épocas, continuando el entrenamiento sin problemas.  
+`amp`| `bool`| `True`| Habilita el entrenamiento con [Precisión Mixta](https://www.ultralytics.com/glossary/mixed-precision) (AMP) automática, reduciendo el uso de memoria y posiblemente acelerando el entrenamiento con un impacto mínimo en la precisión.  
+`fraction`| `float`| `1.0`| Especifica la fracción del conjunto de datos a usar para el entrenamiento. Permite entrenar con un subconjunto del conjunto de datos completo, útil para experimentos o cuando los recursos son limitados.  
+`profile`| `bool`| `False`| Habilita la creación de perfiles de velocidades de ONNX y TensorRT durante el entrenamiento, útil para optimizar el despliegue del modelo.  
+`freeze`| `int` o `list`| `None`| Congela las primeras N capas del modelo o las capas especificadas por índice, reduciendo el número de parámetros entrenables. Útil para el ajuste fino o [aprendizaje por transferencia](https://www.ultralytics.com/glossary/transfer-learning).  
+`lr0`| `float`| `0.01`| Tasa de aprendizaje inicial (p. ej., `SGD=1E-2`, `Adam=1E-3`). Ajustar este valor es crucial para el proceso de optimización, ya que influye en la rapidez con la que se actualizan los pesos del modelo.  
+`lrf`| `float`| `0.01`| Tasa de aprendizaje final como una fracción de la tasa inicial = (`lr0 * lrf`), utilizada junto con planificadores para ajustar la tasa de aprendizaje con el tiempo.  
+`momentum`| `float`| `0.937`| Factor de momento para SGD o beta1 para [optimizadores Adam](https://www.ultralytics.com/glossary/adam-optimizer), que influye en la incorporación de gradientes pasados en la actualización actual.  
+`weight_decay`| `float`| `0.0005`| Término de [regularización](https://www.ultralytics.com/glossary/regularization) L2, que penaliza pesos grandes para evitar el sobreajuste.  
+`warmup_epochs`| `float`| `3.0`| Número de épocas para el calentamiento de la tasa de aprendizaje, aumentando gradualmente la tasa de aprendizaje desde un valor bajo hasta la tasa inicial para estabilizar el entrenamiento desde el principio.  
+`warmup_momentum`| `float`| `0.8`| Momento inicial para la fase de calentamiento, ajustándose gradualmente al momento establecido durante el periodo de calentamiento.  
+`warmup_bias_lr`| `float`| `0.1`| Tasa de aprendizaje para los parámetros de sesgo durante la fase de calentamiento, ayudando a estabilizar el entrenamiento del modelo en las épocas iniciales.  
+`box`| `float`| `7.5`| Peso del componente de pérdida de caja en la [función de pérdida](https://www.ultralytics.com/glossary/loss-function), que influye en cuánto énfasis se pone en predecir con precisión las coordenadas de la [caja delimitadora](https://www.ultralytics.com/glossary/bounding-box).  
+`cls`| `float`| `0.5`| Peso de la pérdida de clasificación en la función de pérdida total, afectando la importancia de una predicción de clase correcta en relación con otros componentes.  
+`cls_pw`| `float`| `0.0`| Potencia para la ponderación de clases con el fin de manejar el desequilibrio de clases utilizando la frecuencia inversa de clase. `0.0` desactiva la ponderación de clases, `1.0` aplica una ponderación de frecuencia inversa completa. Los valores entre 0 y 1 proporcionan una ponderación parcial.  
+`dfl`| `float`| `1.5`| Peso de la pérdida focal de distribución, utilizada en ciertas versiones de YOLO para la clasificación de grano fino.  
+`pose`| `float`| `12.0`| Peso de la pérdida de pose en modelos entrenados para la estimación de pose, influyendo en el énfasis en la predicción precisa de los puntos clave de pose.  
+`kobj`| `float`| `1.0`| Peso de la pérdida de objetividad de puntos clave en modelos de estimación de pose, equilibrando la confianza de detección con la precisión de la pose.  
+`rle`| `float`| `1.0`| Peso de la pérdida de estimación de log-verosimilitud residual en modelos de estimación de pose, que afecta la precisión de la localización de los puntos clave.  
+`angle`| `float`| `1.0`| Peso de la pérdida de ángulo en modelos obb, que afecta la precisión de las predicciones de ángulo de la caja delimitadora orientada.  
+`nbs`| `int`| `64`| Tamaño de lote nominal para la normalización de la pérdida.  
+`overlap_mask`| `bool`| `True`| Determina si las máscaras de objetos deben fusionarse en una sola máscara para el entrenamiento o mantenerse separadas para cada objeto. En caso de superposición, la máscara más pequeña se superpone a la máscara más grande durante la fusión.  
+`mask_ratio`| `int`| `4`| Tasa de submuestreo para máscaras de segmentación, que afecta la resolución de las máscaras utilizadas durante el entrenamiento.  
+`dropout`| `float`| `0.0`| Tasa de dropout para regularización en tareas de clasificación, evitando el sobreajuste al omitir aleatoriamente unidades durante el entrenamiento.  
+`val`| `bool`| `True`| Habilita la validación durante el entrenamiento, permitiendo la evaluación periódica del rendimiento del modelo en un conjunto de datos separado.  
+`plots`| `bool`| `True`| Genera y guarda gráficos de métricas de entrenamiento y validación, así como ejemplos de predicción, proporcionando información visual sobre el rendimiento del modelo y la progresión del aprendizaje.  
+`compile`| `bool` o `str`| `False`| Habilita la compilación de grafos `torch.compile` de PyTorch 2.x con `backend='inductor'`. Acepta `True` → `"default"`, `False` → desactiva, o un modo de cadena como `"default"`, `"reduce-overhead"`, `"max-autotune-no-cudagraphs"`. Vuelve al modo entusiasta con una advertencia si no es compatible.  
+`max_det`| `int`| `300`| Especifica el número máximo de objetos retenidos durante la fase de validación del entrenamiento.  
+  
+Nota sobre la configuración del tamaño de lote
+
+El argumento `batch` se puede configurar de tres maneras:
+
+  * **[Tamaño de lote](https://www.ultralytics.com/glossary/batch-size) fijo**: establece un valor entero (p. ej., `batch=16`), especificando directamente el número de imágenes por lote.
+  * **Modo automático (60% de memoria de GPU)** : utiliza `batch=-1` para ajustar automáticamente el tamaño del lote para aproximadamente el 60% de utilización de memoria CUDA.
+  * **Modo automático con fracción de utilización** : establece un valor de fracción (p. ej., `batch=0.70`) para ajustar el tamaño del lote según la fracción especificada de uso de memoria de la GPU.
+  * **Reintento automático por OOM** : si ocurre un error de falta de memoria CUDA durante la primera época, el entrenador reduce automáticamente a la mitad el tamaño del lote y vuelve a intentar (hasta 3 veces). Esto solo se aplica al entrenamiento con una sola GPU; el entrenamiento multi-GPU (DDP) generará el error inmediatamente.
+
+
+
+## Link to this sectionConfiguración de aumentación e hiperparámetros#
+
+Las técnicas de aumentación son esenciales para mejorar la robustez y el rendimiento de los modelos YOLO al introducir variabilidad en los [datos de entrenamiento](https://www.ultralytics.com/glossary/training-data), ayudando al modelo a generalizar mejor a datos no vistos. La siguiente tabla describe el propósito y efecto de cada argumento de aumentación:
+
+Argumento| Tipo| Predeterminado| Tareas compatibles| Rango| Descripción  
+---|---|---|---|---|---  
+[`hsv_h`](/es/guides/yolo-data-augmentation#hue-adjustment-hsv_h)| `float`| `0.015`| `detect`, `segment`, `pose`, `obb`, `classify`| `0.0 - 1.0`| Ajusta el tono de la imagen mediante una fracción de la rueda de colores, introduciendo variabilidad de color. Ayuda al modelo a generalizar bajo diferentes condiciones de iluminación.  
+[`hsv_s`](/es/guides/yolo-data-augmentation#saturation-adjustment-hsv_s)| `float`| `0.7`| `detect`, `segment`, `pose`, `obb`, `classify`| `0.0 - 1.0`| Altera la saturación de la imagen mediante una fracción, afectando la intensidad de los colores. Útil para simular diferentes condiciones ambientales.  
+[`hsv_v`](/es/guides/yolo-data-augmentation#brightness-adjustment-hsv_v)| `float`| `0.4`| `detect`, `segment`, `pose`, `obb`, `classify`| `0.0 - 1.0`| Modifica el valor (brillo) de la imagen mediante una fracción, ayudando al modelo a funcionar bien bajo diversas condiciones de iluminación.  
+[`degrees`](/es/guides/yolo-data-augmentation#rotation-degrees)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `0.0 - 180`| Rota la imagen aleatoriamente dentro del rango de grados especificado, lo que mejora la capacidad del modelo para reconocer objetos en diversas orientaciones.  
+[`translate`](/es/guides/yolo-data-augmentation#translation-translate)| `float`| `0.1`| `detect`, `segment`, `pose`, `obb`| `0.0 - 1.0`| Traslada la imagen horizontal y verticalmente en una fracción del tamaño de la imagen, lo que ayuda a aprender a detectar objetos parcialmente visibles.  
+[`scale`](/es/guides/yolo-data-augmentation#scale-scale)| `float`| `0.5`| `detect`, `segment`, `pose`, `obb`, `classify`| `0 - 1`| Escala la imagen mediante un factor de ganancia, simulando objetos a diferentes distancias de la cámara.  
+[`shear`](/es/guides/yolo-data-augmentation#shear-shear)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `-180 - +180`| Inclina (cizalla) la imagen en un grado especificado, imitando el efecto de ver objetos desde diferentes ángulos.  
+[`perspective`](/es/guides/yolo-data-augmentation#perspective-perspective)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `0.0 - 0.001`| Aplica una transformación de perspectiva aleatoria a la imagen, mejorando la capacidad del modelo para entender objetos en el espacio 3D.  
+[`flipud`](/es/guides/yolo-data-augmentation#flip-up-down-flipud)| `float`| `0`| `detect`, `segment`, `pose`, `obb`, `classify`| `0.0 - 1.0`| Voltea la imagen verticalmente (arriba/abajo) con la probabilidad especificada, aumentando la variabilidad de los datos sin afectar a las características del objeto.  
+[`fliplr`](/es/guides/yolo-data-augmentation#flip-left-right-fliplr)| `float`| `0.5`| `detect`, `segment`, `pose`, `obb`, `classify`| `0.0 - 1.0`| Voltea la imagen horizontalmente (izquierda/derecha) con la probabilidad especificada, útil para aprender objetos simétricos y aumentar la diversidad del conjunto de datos.  
+[`bgr`](/es/guides/yolo-data-augmentation#bgr-channel-swap-bgr)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `0.0 - 1.0`| Intercambia los canales de la imagen de RGB a BGR con la probabilidad especificada, útil para aumentar la robustez ante un orden de canales incorrecto.  
+[`mosaic`](/es/guides/yolo-data-augmentation#mosaic-mosaic)| `float`| `1`| `detect`, `segment`, `pose`, `obb`| `0.0 - 1.0`| Combina cuatro imágenes de entrenamiento en una, simulando diferentes composiciones de escenas e interacciones entre objetos. Es altamente eficaz para la comprensión de escenas complejas.  
+[`mixup`](/es/guides/yolo-data-augmentation#mixup-mixup)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `0.0 - 1.0`| Fusiona dos imágenes y sus etiquetas, creando una imagen compuesta. Mejora la capacidad de generalización del modelo introduciendo ruido en las etiquetas y variabilidad visual.  
+[`cutmix`](/es/guides/yolo-data-augmentation#cutmix-cutmix)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `0.0 - 1.0`| Combina porciones de dos imágenes, creando una fusión parcial mientras mantiene regiones distintas. Aumenta la robustez del modelo al crear escenarios de oclusión.  
+[`copy_paste`](/es/guides/yolo-data-augmentation#copy-paste-copy_paste)| `float`| `0`| `segment`| `0.0 - 1.0`| Copia y pega objetos entre imágenes para aumentar el número de instancias de objetos.  
+[`copy_paste_mode`](/es/guides/yolo-data-augmentation#copy-paste-mode-copy_paste_mode)| `str`| `flip`| `segment`| -| Especifica la estrategia de `copy-paste` a utilizar. Las opciones incluyen `'flip'` y `'mixup'`.  
+[`auto_augment`](/es/guides/yolo-data-augmentation#auto-augment-auto_augment)| `str`| `randaugment`| `classify`| -| Aplica una política de aumento predefinida (`'randaugment'`, `'autoaugment'` o `'augmix'`) para mejorar el rendimiento del modelo mediante la diversidad visual.  
+[`erasing`](/es/guides/yolo-data-augmentation#random-erasing-erasing)| `float`| `0.4`| `classify`| `0.0 - 1.0`| Elimina regiones de la imagen aleatoriamente durante el entrenamiento para animar al modelo a centrarse en características menos obvias.  
+[`augmentations`](/es/guides/yolo-data-augmentation#custom-albumentations-transforms-augmentations)| `list`| ``| `detect`, `segment`, `pose`, `obb`| -| Transformaciones personalizadas de Albumentations para un aumento de datos avanzado (solo para la API de Python). Acepta una lista de objetos de transformación para necesidades de aumento especializadas.  
+  
+Estos ajustes pueden modificarse para satisfacer los requisitos específicos del conjunto de datos y la tarea en cuestión. Experimentar con diferentes valores puede ayudarte a encontrar la estrategia de aumento óptima que conduzca al mejor rendimiento del modelo.
+
+Información
+
+Para obtener más información sobre las operaciones de aumento durante el entrenamiento, consulta la [sección de referencia](/reference/data/augment).
+
+## Link to this sectionRegistro (Logging)#
+
+Al entrenar un modelo YOLO26, puede resultar valioso realizar un seguimiento del rendimiento del modelo a lo largo del tiempo. Aquí es donde entra en juego el registro. Ultralytics YOLO ofrece soporte para tres tipos de registradores: [Comet](/es/integrations/comet), [ClearML](/es/integrations/clearml) y [TensorBoard](/es/integrations/tensorboard).
+
+Para usar un registrador, selecciónalo en el menú desplegable del fragmento de código anterior y ejecútalo. El registrador elegido se instalará e inicializará.
+
+### Link to this sectionComet#
+
+[Comet](/es/integrations/comet) es una plataforma que permite a los científicos de datos y desarrolladores realizar un seguimiento, comparar, explicar y optimizar experimentos y modelos. Proporciona funcionalidades como métricas en tiempo real, diferencias de código y seguimiento de hiperparámetros.
+
+Para usar Comet:
+
+Ejemplo
+    
+    
+    # pip install comet_ml
+    import comet_ml
+    
+    comet_ml.init()
+
+Recuerda iniciar sesión en tu cuenta de Comet en su sitio web y obtener tu clave API. Deberás añadirla a tus variables de entorno o a tu script para registrar tus experimentos.
+
+### Link to this sectionClearML#
+
+[ClearML](https://clear.ml/) es una plataforma de código abierto que automatiza el seguimiento de experimentos y ayuda a compartir recursos de forma eficiente. Está diseñada para ayudar a los equipos a gestionar, ejecutar y reproducir su trabajo de ML de manera más eficiente.
+
+Para usar ClearML:
+
+Ejemplo
+    
+    
+    # pip install clearml
+    import clearml
+    
+    clearml.browser_login()
+
+Después de ejecutar este script, deberás iniciar sesión en tu cuenta de ClearML en el navegador y autenticar tu sesión.
+
+### Link to this sectionTensorBoard#
+
+[TensorBoard](https://www.tensorflow.org/tensorboard) es un kit de herramientas de visualización para [TensorFlow](https://www.ultralytics.com/glossary/tensorflow). Te permite visualizar tu grafo de TensorFlow, trazar métricas cuantitativas sobre la ejecución de tu grafo y mostrar datos adicionales como imágenes que pasan a través de él.
+
+Para usar TensorBoard en [Google Colab](https://colab.research.google.com/github/ultralytics/ultralytics/blob/main/examples/tutorial.ipynb):
+
+Ejemplo
+    
+    
+    load_ext tensorboard
+    tensorboard --logdir ultralytics/runs # replace with 'runs' directory
+
+Para usar TensorBoard localmente, ejecuta el siguiente comando y visualiza los resultados en `localhost:6006`.
+
+Ejemplo
+    
+    
+    tensorboard --logdir ultralytics/runs # replace with 'runs' directory
+
+Esto cargará TensorBoard y lo dirigirá al directorio donde se guardan tus registros de entrenamiento.
+
+Una vez configurado tu registrador, podrás proceder con el entrenamiento de tu modelo. Todas las métricas de entrenamiento se registrarán automáticamente en la plataforma elegida, y podrás acceder a estos registros para controlar el rendimiento de tu modelo a lo largo del tiempo, comparar diferentes modelos e identificar áreas de mejora.
+
+## Link to this sectionFAQ#
+
+### Link to this section¿Puedo entrenar sin una GPU local?#
+
+Sí. [Ultralytics Platform](https://platform.ultralytics.com) admite el entrenamiento en la nube con créditos gratuitos para empezar. Sube tu conjunto de datos, selecciona un modelo y una GPU, y entrena directamente desde el navegador. Consulta la [guía de entrenamiento en la nube](/es/platform/train/cloud-training) para obtener más detalles.
+
+### Link to this section¿Cómo entreno un modelo de [detección de objetos](https://www.ultralytics.com/glossary/object-detection) usando Ultralytics YOLO26?#
+
+Para entrenar un modelo de detección de objetos usando Ultralytics YOLO26, puedes utilizar la API de Python o la CLI. A continuación, se muestra un ejemplo para ambos:
+
+Ejemplo de entrenamiento con una sola GPU y CPU
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")  # load a pretrained model (recommended for training)
+    
+    # Train the model
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640)
+
+Para obtener más detalles, consulta la sección Ajustes de entrenamiento.
+
+### Link to this section¿Cuáles son las características clave del modo Entrenamiento de Ultralytics YOLO26?#
+
+Las características clave del modo Entrenamiento de Ultralytics YOLO26 incluyen:
+
+  * **Descarga automática de conjuntos de datos:** Descarga automáticamente conjuntos de datos estándar como COCO, VOC e ImageNet.
+  * **Soporte Multi-GPU:** Escala el entrenamiento a través de múltiples GPUs para un procesamiento más rápido.
+  * **Configuración de hiperparámetros:** Personaliza los hiperparámetros mediante archivos YAML o argumentos de CLI.
+  * **Visualización y monitoreo:** Seguimiento en tiempo real de las métricas de entrenamiento para obtener mejores perspectivas.
+
+
+
+Estas características hacen que el entrenamiento sea eficiente y personalizable según tus necesidades. Para obtener más detalles, consulta la sección Características clave del modo Entrenamiento.
+
+### Link to this section¿Cómo retomo el entrenamiento desde una sesión interrumpida en Ultralytics YOLO26?#
+
+Para retomar el entrenamiento desde una sesión interrumpida, establece el argumento `resume` como `True` y especifica la ruta al último punto de control (checkpoint) guardado.
+
+Ejemplo de reanudación de entrenamiento
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the partially trained model
+    model = YOLO("path/to/last.pt")
+    
+    # Resume training
+    results = model.train(resume=True)
+
+Consulta la sección sobre Cómo retomar entrenamientos interrumpidos para obtener más información.
+
+### Link to this section¿Cómo entreno un modelo con un conjunto de datos desequilibrado?#
+
+El desequilibrio de clases ocurre cuando algunas clases tienen significativamente menos ejemplos que otras en tus datos de entrenamiento. Esto puede provocar que el modelo tenga un bajo rendimiento en las clases raras. Ultralytics YOLO admite la ponderación de clases mediante el argumento `cls_pw` para solucionar este problema.
+
+El argumento `cls_pw` controla la potencia de ponderación de clases basada en la frecuencia inversa de clase:
+
+  * `cls_pw=0.0` (predeterminado): Desactiva la ponderación de clases
+  * `cls_pw=1.0`: Aplica la ponderación completa por frecuencia inversa
+  * Valores entre `0.0` y `1.0`: Proporcionan una ponderación parcial para un desequilibrio moderado
+
+
+
+Los pesos de clase se calculan como `(1.0 / class_counts) ^ cls_pw` y se normalizan para que su media sea igual a 1.0.
+
+Entrenamiento con un conjunto de datos desequilibrado
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained model
+    model = YOLO("yolo26n.pt")
+    
+    # Train with full class weighting for severely imbalanced data
+    results = model.train(data="custom.yaml", epochs=100, imgsz=640, cls_pw=1.0)
+    
+    # Or use partial weighting (0.25) for moderate imbalance
+    results = model.train(data="custom.yaml", epochs=100, imgsz=640, cls_pw=0.25)
+
+Consejo
+
+Empieza con `cls_pw=0.25` para conjuntos de datos moderadamente desequilibrados y aumenta a `1.0` si las clases raras siguen teniendo un bajo rendimiento. Puedes comprobar los pesos de clase calculados en los registros de entrenamiento para verificar la distribución de los pesos.
+
+### Link to this section¿Puedo entrenar modelos YOLO26 en chips de silicio de Apple?#
+
+Sí, Ultralytics YOLO26 admite el entrenamiento en chips de silicio de Apple utilizando el marco de trabajo Metal Performance Shaders (MPS). Especifica 'mps' como tu dispositivo de entrenamiento.
+
+Ejemplo de entrenamiento MPS
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained model
+    model = YOLO("yolo26n.pt")
+    
+    # Train the model on Apple silicon chip (M1/M2/M3/M4)
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device="mps")
+
+Para obtener más detalles, consulta la sección Entrenamiento en Apple Silicon MPS.
+
+### Link to this section¿Cuáles son los ajustes de entrenamiento comunes y cómo los configuro?#
+
+Ultralytics YOLO26 te permite configurar una variedad de ajustes de entrenamiento, como el tamaño de lote, la tasa de aprendizaje, las épocas y más, a través de argumentos. Aquí tienes un breve resumen:
+
+Argumento| Predeterminado| Descripción  
+---|---|---  
+`model`| `None`| Ruta al archivo del modelo para el entrenamiento.  
+`data`| `None`| Ruta al archivo de configuración del conjunto de datos (por ejemplo, `coco8.yaml`).  
+`epochs`| `100`| Número total de épocas de entrenamiento.  
+`batch`| `16`| Tamaño de lote, ajustable como número entero o modo automático.  
+`imgsz`| `640`| Tamaño de imagen objetivo para el entrenamiento.  
+`device`| `None`| Dispositivo(s) computacional(es) para el entrenamiento como `cpu`, `0`, `0,1` o `mps`.  
+`save`| `True`| Habilita el guardado de puntos de control de entrenamiento y los pesos finales del modelo.  
+  
+Para obtener una guía detallada sobre los ajustes de entrenamiento, consulta la sección Ajustes de entrenamiento.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/train.md)
+
+[GLglenn-jocher27](https://github.com/glenn-jocher)[RAraimbekovm3](https://github.com/raimbekovm)[LALaughing-q3](https://github.com/Laughing-q)[Y-Y-T-G2](https://github.com/Y-T-G)[MAMatthewNoyce2](https://github.com/MatthewNoyce)AHAhmet Faruk GÜMÜŞTAŞ1[ONonuralpszr1](https://github.com/onuralpszr)[DEderiiinjv1](https://github.com/deriiinjv)[PDpderrenger1](https://github.com/pderrenger)[JAJairajJangle1](https://github.com/JairajJangle)[JKjk4e1](https://github.com/jk4e)[RIRizwanMunawar1](https://github.com/RizwanMunawar)[FCfcakyon1](https://github.com/fcakyon)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+Creado 12 nov 2023Actualizado hace 5 días
+
+## Comentarios
+
+En esta página
+
+Explora con IA

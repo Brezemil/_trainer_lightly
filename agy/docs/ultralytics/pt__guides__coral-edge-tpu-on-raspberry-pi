@@ -1,0 +1,248 @@
+---
+source_url: https://docs.ultralytics.com/pt/guides/coral-edge-tpu-on-raspberry-pi
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coral-edge-tpu-on-raspberry-pi.md)
+
+# Link to this sectionComo executar o Ultralytics YOLO26 num Raspberry Pi com um Coral Edge TPU#
+
+![Raspberry Pi with Edge TPU accelerator](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/edge-tpu-usb-accelerator-and-pi.avif)
+
+Um [Raspberry Pi](/pt/guides/raspberry-pi) é uma plataforma eficiente e acessível para executar visão computacional na borda, mas a inferência no dispositivo é lenta, mesmo com formatos otimizados como [ONNX](/pt/integrations/onnx) ou [OpenVINO](/pt/integrations/openvino). Combinar o Pi com um coprocessador Coral Edge TPU transfere a inferência para hardware dedicado e acelera-a drasticamente. Este guia mostra como instalar o runtime, exportar um modelo Ultralytics YOLO26 para o formato Edge TPU e executar inferência acelerada.
+
+  
+
+
+  
+**Watch:** How to Run Inference on Raspberry Pi using Google Coral Edge TPU 
+
+## Link to this sectionPor que usar um Coral Edge TPU?#
+
+O Coral Edge TPU é um dispositivo compacto que adiciona um coprocessador Edge TPU ao teu sistema, permitindo inferência de ML de alto desempenho e baixo consumo para modelos TensorFlow Lite. É uma ótima opção para implementações embarcadas e móveis onde um CPU sozinho não consegue acompanhar:
+
+  * **Inferência mais rápida** — o Edge TPU acelera modelos quantizados muito além do que o CPU do Raspberry Pi alcança por conta própria.
+  * **Baixo consumo de energia** — oferece alto rendimento por watt, ideal para implementações movidas a bateria ou energia solar.
+  * **Plug-and-play** — o [USB Accelerator](https://developers.google.com/coral) conecta-se via USB 3.0, portanto, não é necessária integração de hardware extra.
+
+
+
+Runtime atualizado para o TensorFlow Lite atual
+
+O [guia oficial da Coral](https://gweb-coral-full.uc.r.appspot.com/docs/accelerator/get-started/) está desatualizado: as compilações originais do runtime da Coral já não funcionam com as versões atuais do runtime do TensorFlow Lite, e o projeto não recebeu atualizações entre 2021 e 2025. Este guia utiliza um runtime Edge TPU mantido ativamente e o `tflite-runtime` mais recente para que o acelerador funcione numa instalação atual do Raspberry Pi OS.
+
+## Link to this sectionPré-requisitos#
+
+  * [Raspberry Pi 4B](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/) (2GB ou mais recomendado) ou [Raspberry Pi 5](https://www.raspberrypi.com/products/raspberry-pi-5/) (Recomendado)
+  * [Raspberry Pi OS](https://www.raspberrypi.com/software/) Bullseye/Bookworm (64 bits) com ambiente desktop (Recomendado)
+  * [Coral USB Accelerator](https://developers.google.com/coral)
+  * Uma plataforma não ARM (Google Colab, uma máquina Linux x86_64 ou o [container Docker da Ultralytics](/pt/guides/docker-quickstart)) para exportar o modelo, uma vez que o compilador Edge TPU não está disponível em ARM
+
+
+
+Este guia pressupõe que já tens uma instalação funcional do Raspberry Pi OS com o `ultralytics` e as suas dependências instaladas. Caso contrário, segue primeiro o [guia de início rápido](/pt/quickstart).
+
+Com os pré-requisitos prontos, o fluxo de trabalho tem três etapas: instalar o runtime do Edge TPU no Pi, exportar o teu modelo numa máquina não ARM e executar a inferência de volta no Pi.
+
+## Link to this sectionInstalar o Runtime do Edge TPU#
+
+O runtime é disponibilizado em várias compilações, por isso escolhe a que corresponde ao teu sistema operativo. A compilação de alta frequência executa o Edge TPU a uma velocidade de clock superior para melhor desempenho, mas pode causar thermal throttling — usa algum tipo de refrigeração se a escolheres.
+
+Raspberry Pi OS| Modo de alta frequência| Versão para download  
+---|---|---  
+Bullseye 32 bits| Não| `libedgetpu1-std_ ... .bullseye_armhf.deb`  
+Bullseye 64 bits| Não| `libedgetpu1-std_ ... .bullseye_arm64.deb`  
+Bullseye 32 bits| Sim| `libedgetpu1-max_ ... .bullseye_armhf.deb`  
+Bullseye 64 bits| Sim| `libedgetpu1-max_ ... .bullseye_arm64.deb`  
+Bookworm 32 bits| Não| `libedgetpu1-std_ ... .bookworm_armhf.deb`  
+Bookworm 64 bits| Não| `libedgetpu1-std_ ... .bookworm_arm64.deb`  
+Bookworm 32 bits| Sim| `libedgetpu1-max_ ... .bookworm_armhf.deb`  
+Bookworm 64 bits| Sim| `libedgetpu1-max_ ... .bookworm_arm64.deb`  
+  
+[Descarrega a versão mais recente aqui](https://github.com/feranick/libedgetpu/releases), e depois instala o pacote `.deb`:
+    
+    
+    sudo dpkg -i path/to/package.deb
+
+Após instalar o runtime, liga o teu Coral Edge TPU a uma porta USB 3.0 no Raspberry Pi para que a nova regra `udev` possa entrar em vigor.
+
+Remove primeiro qualquer runtime existente
+
+Se já tiveres o runtime do Coral Edge TPU instalado, desinstala-o antes de instalar uma nova compilação.
+    
+    
+    # If you installed the standard version
+    sudo apt remove libedgetpu1-std
+    
+    # If you installed the high-frequency version
+    sudo apt remove libedgetpu1-max
+
+## Link to this sectionExportar o teu modelo para o formato Edge TPU#
+
+Para usar o Edge TPU, converte o teu modelo para um formato compatível. Executa a exportação numa plataforma não ARM — Google Colab, uma máquina Linux x86_64, o [container Docker oficial da Ultralytics](/pt/guides/docker-quickstart) ou a [Plataforma Ultralytics](/pt/platform/quickstart) — uma vez que o compilador Edge TPU não está disponível em ARM. Vê o [modo de exportação](/pt/modes/export) para os argumentos disponíveis.
+
+Exportar o modelo
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/model.pt")  # Load an official model or custom model
+    
+    # Export the model
+    model.export(format="edgetpu")
+
+O modelo exportado é guardado na pasta `<model_name>_saved_model/` como `<model_name>_full_integer_quant_edgetpu.tflite`.
+
+Mantém o sufixo `_edgetpu.tflite`
+
+O nome do ficheiro deve terminar com `_edgetpu.tflite`. Se o renomeares para qualquer outra coisa, o Ultralytics carregá-lo-á como um modelo TensorFlow Lite simples em vez de detetar o Edge TPU, e o acelerador não será usado.
+
+## Link to this sectionExecutar inferência no Edge TPU#
+
+Antes de executar o modelo, instala as bibliotecas corretas no Raspberry Pi. Se o TensorFlow já estiver instalado, desinstala-o primeiro:
+    
+    
+    pip uninstall tensorflow tensorflow-aarch64
+
+Depois, instala ou atualiza o `tflite-runtime`:
+    
+    
+    pip install -U tflite-runtime
+
+Agora podes executar a inferência:
+
+Executar o modelo
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/<model_name>_full_integer_quant_edgetpu.tflite")  # Load an official model or custom model
+    
+    # Run Prediction
+    model.predict("path/to/source.png")
+
+Encontra detalhes completos sobre o modo de previsão na página [Predict](/pt/modes/predict).
+
+Inferência com múltiplos Edge TPUs
+
+Se tiveres múltiplos Edge TPUs, podes selecionar um específico com o argumento `device`.
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/<model_name>_full_integer_quant_edgetpu.tflite")  # Load an official model or custom model
+    
+    # Run Prediction
+    model.predict("path/to/source.png")  # Inference defaults to the first TPU
+    
+    model.predict("path/to/source.png", device="tpu:0")  # Select the first TPU
+    
+    model.predict("path/to/source.png", device="tpu:1")  # Select the second TPU
+
+## Link to this sectionBenchmarks#
+
+Os números abaixo foram medidos com Raspberry Pi OS Bookworm de 64 bits e um USB Coral Edge TPU. Eles mostram apenas o tempo de inferência (pré/pós-processamento excluído) e servem como referência relativa para a aceleração que o Edge TPU proporciona entre modelos e modos do Pi.
+
+Sobre estes números
+
+Estes benchmarks foram registados com modelos YOLOv8. Os tempos de inferência absolutos variam de acordo com a versão do modelo e o tamanho da imagem, mas os ganhos de velocidade relativos entre os modelos Pi e os modos de clock permanecem consistentes.
+
+Tamanho da Imagem| Modelo| Tempo de Inferência Padrão (ms)| Tempo de Inferência de Alta Frequência (ms)  
+---|---|---|---  
+320| YOLOv8n| 32.2| 26.7  
+320| YOLOv8s| 47.1| 39.8  
+512| YOLOv8n| 73.5| 60.7  
+512| YOLOv8s| 149.6| 125.3  
+  
+Em média:
+
+  * O Raspberry Pi 5 é 22% mais rápido com o modo padrão do que o Raspberry Pi 4B.
+  * O Raspberry Pi 5 é 30,2% mais rápido com o modo de alta frequência do que o Raspberry Pi 4B.
+  * O modo de alta frequência é 28,4% mais rápido do que o modo padrão.
+
+
+
+## Link to this sectionConclusão#
+
+Um Coral Edge TPU transforma um Raspberry Pi num dispositivo de inferência capaz e de baixo consumo para o Ultralytics YOLO26. Exporta o teu modelo numa máquina não ARM, mantém o sufixo `_edgetpu.tflite` e executa-o com `tflite-runtime` no Pi para obter inferência de borda acelerada. Para mais opções de implementação, vê o guia de [Raspberry Pi](/pt/guides/raspberry-pi).
+
+## Link to this sectionFAQ#
+
+### Link to this sectionO que é um Coral Edge TPU e como é que ele melhora o desempenho do Raspberry Pi com o Ultralytics YOLO26?#
+
+O Coral Edge TPU é um dispositivo compacto que adiciona um coprocessador Edge TPU ao teu sistema. Este coprocessador permite uma inferência de ML de alto desempenho e baixo consumo, particularmente otimizada para modelos TensorFlow Lite. Num Raspberry Pi, acelera a inferência muito além do que o CPU alcança sozinho, o que impulsiona significativamente o desempenho para modelos Ultralytics YOLO26.
+
+### Link to this sectionComo instalo o runtime do Coral Edge TPU num Raspberry Pi?#
+
+Descarrega o pacote `.deb` apropriado para a tua versão do Raspberry Pi OS a partir de [esta ligação](https://github.com/feranick/libedgetpu/releases), e depois instala-o:
+    
+    
+    sudo dpkg -i path/to/package.deb
+
+Certifica-te de desinstalar quaisquer versões anteriores do runtime do Coral Edge TPU seguindo os passos na secção Instalar o Runtime do Edge TPU.
+
+### Link to this sectionPosso exportar o meu modelo Ultralytics YOLO26 para ser compatível com o Coral Edge TPU?#
+
+Sim. Executa a exportação no Google Colab, numa máquina Linux x86_64 ou no [container Docker da Ultralytics](/pt/guides/docker-quickstart); também podes usar a [Plataforma Ultralytics](/pt/platform/quickstart). Eis como exportar com Python e CLI:
+
+Exportar o modelo
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/model.pt")  # Load an official model or custom model
+    
+    # Export the model
+    model.export(format="edgetpu")
+
+Para mais informações, consulta a documentação do [modo de Exportação](/pt/modes/export).
+
+### Link to this sectionO que devo fazer se o TensorFlow já estiver instalado no meu Raspberry Pi, mas eu quiser usar o tflite-runtime em vez disso?#
+
+Se tiveres o TensorFlow instalado e precisares de mudar para o `tflite-runtime`, desinstala primeiro o TensorFlow:
+    
+    
+    pip uninstall tensorflow tensorflow-aarch64
+
+Depois, instala ou atualiza o `tflite-runtime`:
+    
+    
+    pip install -U tflite-runtime
+
+Para instruções detalhadas, consulta a secção Executar Inferência no Edge TPU.
+
+### Link to this sectionComo executo inferência com um modelo YOLO26 exportado num Raspberry Pi usando o Coral Edge TPU?#
+
+Após exportar o teu modelo YOLO26 para um formato compatível com Edge TPU, executa a inferência com os seguintes snippets. O ficheiro do modelo deve manter o sufixo `_edgetpu.tflite` para que o Ultralytics o carregue no Edge TPU:
+
+Executar o modelo
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/<model_name>_full_integer_quant_edgetpu.tflite")  # Load an official model or custom model
+    
+    # Run Prediction
+    model.predict("path/to/source.png")
+
+Detalhes abrangentes sobre o modo de predição estão na página [Predict](/pt/modes/predict).
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coral-edge-tpu-on-raspberry-pi.md)
+
+[GLglenn-jocher19](https://github.com/glenn-jocher)[RIRizwanMunawar3](https://github.com/RizwanMunawar)[SKSkillnoob2](https://github.com/Skillnoob)[RAraimbekovm1](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)[LAlalayants1](https://github.com/lalayants)[JKjk4e1](https://github.com/jk4e)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+Criado 12 de fev. de 2024Atualizado semana passada
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

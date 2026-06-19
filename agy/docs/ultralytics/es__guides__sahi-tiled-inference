@@ -1,0 +1,305 @@
+---
+source_url: https://docs.ultralytics.com/es/guides/sahi-tiled-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+# Link to this sectionDocumentación de Ultralytics: Cómo usar YOLO26 con SAHI para inferencia segmentada#
+
+[![Abrir SAHI para inferencia segmentada en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/notebooks/blob/main/notebooks/how-to-use-ultralytics-yolo-with-sahi.ipynb)
+
+Bienvenido a la documentación de Ultralytics sobre cómo usar YOLO26 con [SAHI](https://github.com/obss/sahi) (Slicing Aided Hyper Inference). Esta guía completa pretende proporcionarte todos los conocimientos esenciales que necesitarás para implementar SAHI junto con YOLO26. Analizaremos en profundidad qué es SAHI, por qué la inferencia segmentada es crítica para aplicaciones a gran escala y cómo integrar estas funcionalidades con YOLO26 para mejorar el rendimiento de la [detección de objetos](https://www.ultralytics.com/glossary/object-detection).
+
+![SAHI tiled inference for small objects](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sahi-sliced-inference-overview.avif)
+
+## Link to this sectionIntroducción a SAHI#
+
+SAHI (Slicing Aided Hyper Inference) es una librería innovadora diseñada para optimizar los algoritmos de detección de objetos en imágenes de gran escala y alta resolución. Su funcionalidad principal reside en dividir las imágenes en segmentos manejables, ejecutar la detección de objetos en cada segmento y luego volver a unir los resultados. SAHI es compatible con una variedad de modelos de detección de objetos, incluida la serie YOLO, ofreciendo así flexibilidad a la vez que garantiza un uso optimizado de los recursos computacionales.
+
+  
+
+
+  
+**Watch:** How to use SAHI with Ultralytics YOLO26 to Detect Small Objects | Slicing Aided Hyper Inference 🚀 
+
+### Link to this sectionCaracterísticas principales de SAHI#
+
+  * **Integración perfecta** : SAHI se integra sin esfuerzo con los modelos YOLO, lo que significa que puedes comenzar a segmentar y detectar sin necesidad de muchas modificaciones en el código.
+  * **Eficiencia de recursos** : Al dividir imágenes grandes en partes más pequeñas, SAHI optimiza el uso de la memoria, permitiéndote ejecutar detecciones de alta calidad en hardware con recursos limitados.
+  * **Alta[precisión](https://www.ultralytics.com/glossary/accuracy)**: SAHI mantiene la precisión de la detección empleando algoritmos inteligentes para fusionar cajas de detección superpuestas durante el proceso de unión.
+
+
+
+## Link to this section¿Qué es la inferencia segmentada?#
+
+La inferencia segmentada se refiere a la práctica de subdividir una imagen grande o de alta resolución en segmentos más pequeños (slices), realizar la detección de objetos en estos segmentos y luego recompilar los segmentos para reconstruir las ubicaciones de los objetos en la imagen original. Esta técnica es invaluable en escenarios donde los recursos computacionales son limitados o al trabajar con imágenes de altísima resolución que, de otro modo, podrían generar problemas de memoria.
+
+### Link to this sectionVentajas de la inferencia segmentada#
+
+  * **Carga computacional reducida** : Los segmentos de imagen más pequeños son más rápidos de procesar y consumen menos memoria, permitiendo un funcionamiento más fluido en hardware de gama baja.
+
+  * **Calidad de detección preservada** : Dado que cada segmento se trata de forma independiente, no hay reducción en la calidad de la detección de objetos, siempre que los segmentos sean lo suficientemente grandes como para capturar los objetos de interés.
+
+  * **Escalabilidad mejorada** : La técnica permite que la detección de objetos sea más fácil de escalar a través de diferentes tamaños y resoluciones de imágenes, haciéndola ideal para una amplia gama de aplicaciones, desde imágenes satelitales hasta diagnósticos médicos.
+
+
+
+
+YOLO26 without SAHI| YOLO26 with SAHI  
+---|---  
+![YOLO26 without SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-without-sahi.avif)| ![YOLO26 with SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-with-sahi.avif)  
+  
+## Link to this sectionInstalación y preparación#
+
+### Link to this sectionInstalación#
+
+Para comenzar, instala las versiones más recientes de SAHI y Ultralytics:
+    
+    
+    pip install -U ultralytics sahi
+
+### Link to this sectionImportar módulos y descargar recursos#
+
+Aquí tienes cómo descargar algunas imágenes de prueba:
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+## Link to this sectionInferencia estándar con YOLO26#
+
+### Link to this sectionInstanciar el modelo#
+
+Puedes instanciar un modelo YOLO26 para detección de objetos de esta manera:
+    
+    
+    from sahi import AutoDetectionModel
+    
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        confidence_threshold=0.3,
+        device="cpu",  # or 'cuda:0'
+    )
+
+### Link to this sectionRealizar una predicción estándar#
+
+Realiza la inferencia estándar usando una ruta de imagen.
+    
+    
+    from sahi.predict import get_prediction
+    
+    result = get_prediction("demo_data/small-vehicles1.jpeg", detection_model)
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+
+### Link to this sectionVisualizar resultados#
+
+Exporta y visualiza las cajas delimitadoras y máscaras predichas:
+    
+    
+    from PIL import Image
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionInferencia segmentada con YOLO26#
+
+Realiza una inferencia segmentada especificando las dimensiones de los segmentos y las relaciones de solapamiento:
+    
+    
+    from PIL import Image
+    from sahi.predict import get_sliced_prediction
+    
+    result = get_sliced_prediction(
+        "demo_data/small-vehicles1.jpeg",
+        detection_model,
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+    
+    # Export results
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionManejo de resultados de predicción#
+
+SAHI proporciona un objeto `PredictionResult`, que puede convertirse a varios formatos de anotación:
+    
+    
+    # Access the object prediction list
+    object_prediction_list = result.object_prediction_list
+    
+    # Convert to COCO annotation, COCO prediction, imantics, and fiftyone formats
+    result.to_coco_annotations()[:3]
+    result.to_coco_predictions(image_id=1)[:3]
+    result.to_imantics_annotations()[:3]
+    result.to_fiftyone_detections()[:3]
+
+## Link to this sectionPredicción por lotes#
+
+Para realizar predicciones por lotes en un directorio de imágenes:
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+Ya estás listo para usar YOLO26 con SAHI tanto para inferencia estándar como segmentada.
+
+## Link to this sectionCitas y agradecimientos#
+
+Si utilizas SAHI en tu trabajo de investigación o desarrollo, por favor cita el artículo original de SAHI y reconoce a los autores:
+
+Cita
+    
+    
+    @article{akyon2022sahi,
+      title={Slicing Aided Hyper Inference and Fine-tuning for Small Object Detection},
+      author={Akyon, Fatih Cagatay and Altinuc, Sinan Onur and Temizel, Alptekin},
+      journal={2022 IEEE International Conference on Image Processing (ICIP)},
+      doi={10.1109/ICIP46576.2022.9897990},
+      pages={966-970},
+      year={2022}
+    }
+
+Extendemos nuestro agradecimiento al grupo de investigación de SAHI por crear y mantener este recurso invaluable para la comunidad de [visión artificial](https://www.ultralytics.com/glossary/computer-vision-cv). Para más información sobre SAHI y sus creadores, visita el [repositorio de GitHub de SAHI](https://github.com/obss/sahi).
+
+## Link to this sectionPreguntas frecuentes#
+
+### Link to this section¿Cómo puedo integrar YOLO26 con SAHI para inferencia segmentada en la detección de objetos?#
+
+Integrar Ultralytics YOLO26 con SAHI (Slicing Aided Hyper Inference) para inferencia segmentada optimiza tus tareas de detección de objetos en imágenes de alta resolución al particionarlas en segmentos manejables. Este enfoque mejora el uso de la memoria y garantiza una alta precisión de detección. Para comenzar, necesitas instalar las librerías ultralytics y sahi:
+    
+    
+    pip install -U ultralytics sahi
+
+Luego, descarga las imágenes de prueba:
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+Para obtener instrucciones más detalladas, consulta nuestra guía de inferencia segmentada.
+
+### Link to this section¿Por qué debería usar SAHI con YOLO26 para la detección de objetos en imágenes grandes?#
+
+Usar SAHI con Ultralytics YOLO26 para la detección de objetos en imágenes grandes ofrece varios beneficios:
+
+  * **Carga computacional reducida** : Los segmentos más pequeños son más rápidos de procesar y consumen menos memoria, lo que hace posible ejecutar detecciones de alta calidad en hardware con recursos limitados.
+  * **Precisión de detección mantenida** : SAHI utiliza algoritmos inteligentes para fusionar cajas superpuestas, preservando la calidad de la detección.
+  * **Escalabilidad mejorada** : Al escalar las tareas de detección de objetos a través de diferentes tamaños y resoluciones de imagen, SAHI se vuelve ideal para diversas aplicaciones, como el análisis de imágenes satelitales y diagnósticos médicos.
+
+
+
+Aprende más sobre los beneficios de la inferencia segmentada en nuestra documentación.
+
+### Link to this section¿Puedo visualizar los resultados de la predicción cuando uso YOLO26 con SAHI?#
+
+Sí, puedes visualizar los resultados de la predicción cuando usas YOLO26 con SAHI. Aquí tienes cómo puedes exportar y visualizar los resultados:
+    
+    
+    from PIL import Image
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    processed_image.show()
+
+Este comando guardará las predicciones visualizadas en el directorio especificado, y luego podrás cargar la imagen para verla en tu notebook o aplicación. Para una guía detallada, revisa la sección de inferencia estándar.
+
+### Link to this section¿Qué características ofrece SAHI para mejorar la detección de objetos con YOLO26?#
+
+SAHI (Slicing Aided Hyper Inference) ofrece varias características que complementan a Ultralytics YOLO26 para la detección de objetos:
+
+  * **Integración perfecta** : SAHI se integra fácilmente con los modelos YOLO, requiriendo ajustes mínimos en el código.
+  * **Eficiencia de recursos** : Particiona imágenes grandes en segmentos más pequeños, lo que optimiza el uso de la memoria y la velocidad.
+  * **Alta precisión** : Al fusionar efectivamente las cajas de detección superpuestas durante el proceso de unión, SAHI mantiene una alta precisión de detección.
+
+
+
+Para una comprensión más profunda, lee sobre las características clave de SAHI.
+
+### Link to this section¿Cómo manejo proyectos de inferencia a gran escala usando YOLO26 y SAHI?#
+
+Para manejar proyectos de inferencia a gran escala usando YOLO26 y SAHI, sigue estas mejores prácticas:
+
+  1. **Instalar las librerías requeridas** : Asegúrate de tener las últimas versiones de ultralytics y sahi.
+  2. **Configurar la inferencia segmentada** : Determina las dimensiones de segmento y las relaciones de solapamiento óptimas para tu proyecto específico.
+  3. **Ejecutar predicciones por lotes** : Usa las capacidades de SAHI para realizar predicciones por lotes en un directorio de imágenes, lo que mejora la eficiencia.
+
+
+
+Ejemplo para la predicción por lotes:
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="path/to/yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+Para pasos más detallados, visita nuestra sección sobre predicción por lotes.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar8](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[COCoderUni1](https://github.com/CoderUni)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+Creado 12 nov 2023Actualizado el mes pasado
+
+## Comentarios
+
+En esta página
+
+Explora con IA

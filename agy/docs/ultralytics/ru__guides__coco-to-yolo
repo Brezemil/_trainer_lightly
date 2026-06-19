@@ -1,0 +1,311 @@
+---
+source_url: https://docs.ultralytics.com/ru/guides/coco-to-yolo
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-to-yolo.md)
+
+# Link to this sectionКак преобразовать аннотации COCO в формат YOLO#
+
+Для обучения моделей [Ultralytics YOLO](https://www.ultralytics.com/) требуются аннотации в формате YOLO, однако многие популярные инструменты [разметки](https://www.ultralytics.com/glossary/data-labeling) экспортируют данные в формате [COCO JSON](https://cocodataset.org/#format-data). Это руководство покажет, как конвертировать твои аннотации COCO в формат YOLO и приступить к обучению моделей [обнаружения объектов](https://www.ultralytics.com/glossary/object-detection), [сегментации экземпляров](https://www.ultralytics.com/glossary/instance-segmentation) и [оценки позы](https://www.ultralytics.com/glossary/pose-estimation).
+
+## Link to this sectionЗачем конвертировать из COCO в YOLO?#
+
+Формат COCO JSON хранит все аннотации в одном файле, в то время как [YOLO](https://docs.ultralytics.com/datasets/detect#ultralytics-yolo-format) использует один текстовый файл на изображение с нормализованными координатами. Конвертация необходима, потому что:
+
+  * **Моделям YOLO требуются файлы меток`.txt`**, по одному на изображение, содержащие `class x_center y_center width height` в нормализованных координатах.
+  * **COCO JSON использует пиксельные координаты** в формате `[x_min, y_min, width, height]` и один JSON-файл для всех изображений.
+  * **Идентификаторы классов различаются** — COCO использует произвольные значения `category_id`, в то время как YOLO требует идентификаторы классов, начинающиеся с нуля.
+
+
+
+Характеристика| COCO JSON| YOLO TXT  
+---|---|---  
+**Структура**|  Один JSON-файл для всех изображений| Один файл `.txt` на изображение  
+**Формат Bbox**| `[x_min, y_min, width, height]` в пикселях| `class x_center y_center width height` нормализованные (0-1)  
+**ID классов**| `category_id` (может начинаться с любого числа)| С нуля (индексация с 0)  
+**Сегментация**|  Массивы полигонов в поле `segmentation`| Координаты полигона после ID класса  
+**Ключевые точки**| `[x, y, visibility, ...]` в пикселях| `[x, y, visibility, ...]` нормализованные  
+  
+## Link to this sectionБыстрый старт#
+
+Самый быстрый способ конвертировать аннотации COCO и начать обучение:
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        labels_dir="path/to/annotations/",  # directory containing your JSON files
+        save_dir="path/to/output/",  # where to save converted labels
+        cls91to80=False,  # IMPORTANT: set False for custom datasets
+    )
+
+После конвертации организуй структуру своих директорий, создай dataset.yaml и начни обучение. Ознакомься с полным пошаговым руководством ниже.
+
+Пользовательские наборы данных: всегда используй `cls91to80=False`
+
+Значение по умолчанию `cls91to80=True` предназначено **только** для стандартного [набора данных COCO](/ru/datasets/detect/coco) с 80 классами объектов, которое отображает 91 несмежный идентификатор категории в 80 последовательных идентификаторов классов. Для любого пользовательского набора данных ты **должен** установить `cls91to80=False` — в противном случае твои идентификаторы классов будут ошибочно сопоставлены, и модель будет изучать неверные классы.
+
+## Link to this sectionПошаговое руководство по конвертации#
+
+### Link to this section1\. Подготовь свой набор данных COCO#
+
+Типичный набор данных в формате COCO, экспортированный из инструментов разметки, имеет следующую структуру:
+    
+    
+    my_dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── img_001.jpg
+    │   │   ├── img_002.jpg
+    │   │   └── ...
+    │   └── val/
+    │       ├── img_100.jpg
+    │       └── ...
+    └── annotations/
+        ├── instances_train.json
+        └── instances_val.json
+
+Каждый JSON-файл соответствует спецификации [формата данных COCO](https://cocodataset.org/#format-data) с тремя обязательными полями — `images`, `annotations` и `categories`:
+    
+    
+    {
+        "images": [{ "id": 1, "file_name": "img_001.jpg", "width": 640, "height": 480 }],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [100, 50, 200, 150],
+                "area": 30000,
+                "iscrowd": 0
+            }
+        ],
+        "categories": [
+            { "id": 1, "name": "helmet" },
+            { "id": 2, "name": "vest" }
+        ]
+    }
+
+### Link to this section2\. Конвертируй аннотации#
+
+Используй функцию [`convert_coco()`](/reference/data/converter#ultralytics.data.converter.convert_coco) для преобразования твоих аннотаций COCO JSON в формат YOLO `.txt`:
+
+Конвертация COCO в формат YOLO
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        labels_dir="my_dataset/annotations/",
+        save_dir="my_dataset/converted/",
+        cls91to80=False,
+    )
+
+### Link to this section3\. Организуй структуру директорий#
+
+После конвертации файлы меток должны быть размещены рядом с изображениями. YOLO ожидает наличие директории `labels/`, которая зеркально отражает директорию `images/`:
+    
+    
+    import shutil
+    from pathlib import Path
+    
+    # Paths
+    converted_dir = Path("my_dataset/converted/labels")
+    dataset_dir = Path("my_dataset")
+    
+    # Move labels next to images for each split
+    for split in ["train", "val"]:
+        src = converted_dir / split  # convert_coco strips "instances_" prefix from JSON filename
+        dst = dataset_dir / "labels" / split
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in src.glob("*.txt"):
+            shutil.move(str(f), str(dst / f.name))
+
+Твоя финальная [структура набора данных](/ru/datasets/detect#ultralytics-yolo-format) должна выглядеть так:
+    
+    
+    my_dataset/
+    ├── images/
+    │   ├── train/
+    │   │   ├── img_001.jpg
+    │   │   └── ...
+    │   └── val/
+    │       └── ...
+    ├── labels/
+    │   ├── train/
+    │   │   ├── img_001.txt
+    │   │   └── ...
+    │   └── val/
+    │       └── ...
+    └── dataset.yaml
+
+### Link to this section4\. Создай dataset.yaml#
+
+Создай конфигурационный файл `dataset.yaml`, который сопоставляет твои категории COCO с именами классов YOLO. Этот файл сообщает YOLO, где находятся твои данные и какие классы нужно обнаруживать:
+    
+    
+    import json
+    from pathlib import Path
+    
+    import yaml
+    
+    # Read categories from your COCO JSON
+    with open("my_dataset/annotations/instances_train.json") as f:
+        coco = json.load(f)
+    
+    # Build class names matching convert_coco output (category_id - 1)
+    categories = sorted(coco["categories"], key=lambda x: x["id"])
+    names = {cat["id"] - 1: cat["name"] for cat in categories}
+    # NOTE: convert_coco maps class IDs as category_id - 1, so category_id must
+    # start from 1. If your categories start from 0, add 1 to each ID first.
+    
+    # Create dataset.yaml
+    dataset = {
+        "path": str(Path("my_dataset").resolve()),
+        "train": "images/train",
+        "val": "images/val",
+        "names": names,
+    }
+    
+    with open("my_dataset/dataset.yaml", "w") as f:
+        yaml.dump(dataset, f, default_flow_style=False)
+
+Результирующий YAML-файл:
+    
+    
+    path: /absolute/path/to/my_dataset
+    train: images/train
+    val: images/val
+    names:
+        0: helmet
+        1: vest
+
+Для получения дополнительной информации о формате YAML набора данных, смотри [руководство по конфигурации набора данных](/ru/datasets/detect).
+
+### Link to this section5\. Обучи свою модель YOLO#
+
+Когда конвертированный набор данных готов, обучи модель YOLO:
+
+Обучение на конвертированных данных COCO
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load a pretrained model
+    results = model.train(data="my_dataset/dataset.yaml", epochs=100, imgsz=640)
+
+Советы и рекомендации по обучению см. в [руководстве по обучению моделей](/ru/guides/model-training-tips).
+
+### Link to this section6\. Проверь свою конвертацию#
+
+Перед обучением выборочно проверь несколько файлов меток, чтобы подтвердить правильность идентификаторов классов и координат:
+    
+    
+    from pathlib import Path
+    
+    label_file = Path("my_dataset/labels/train/img_001.txt")
+    for line in label_file.read_text().strip().splitlines():
+        parts = line.split()
+        cls_id = int(parts[0])
+        coords = [float(v) for v in parts[1:5]]
+        assert cls_id >= 0, f"Negative class ID {cls_id} — category_id in your JSON may start from 0"
+        assert all(0 <= v <= 1 for v in coords), f"Coordinates out of [0, 1] range: {coords}"
+
+Совет
+
+Если ты видишь отрицательные идентификаторы классов, вероятно, в твоем COCO JSON значения `category_id` начинаются с 0. Прибавь 1 ко всем значениям `category_id` в JSON перед запуском `convert_coco()`, так как она сопоставляет ID классов как `category_id - 1`.
+
+## Link to this sectionУстранение распространенных проблем#
+
+### Link to this sectionНеверные идентификаторы классов после конвертации#
+
+Если модель обучается, но обнаруживает неверные классы объектов, скорее всего, ты используешь `cls91to80=True` (по умолчанию) для пользовательского набора данных. Это сопоставляет твои значения `category_id` через таблицу поиска COCO 91-to-80, которая верна только для стандартного [набора данных COCO](/ru/datasets/detect/coco).
+
+**Решение** : Всегда используй `cls91to80=False` для пользовательских наборов данных.
+
+### Link to this sectionМетки не найдены во время обучения#
+
+Если при обучении отображается `WARNING: No labels found` или `0 images, N backgrounds`, значит твои файлы меток находятся не в той директории. `convert_coco()` сохраняет метки в отдельную выходную директорию (например, `save_dir/labels/train/`), но YOLO ожидает `labels/` параллельно `images/` внутри директории твоего набора данных.
+
+**Решение** : Перемести файлы меток в соответствии с ожидаемой структурой директорий. Убедись, что `labels/train/` находится на одном уровне с `images/train/`.
+
+### Link to this sectionKeyError во время конвертации#
+
+Если ты получаешь `KeyError: 'bbox'` или аналогичные ошибки при запуске `convert_coco()`, значит твоя `labels_dir` вероятно содержит JSON-файлы, не относящиеся к экземплярам (например, `captions_train2017.json`), имеющие другую структуру аннотаций.
+
+**Solution** : Only place instance annotation JSON files (e.g., `instances_train2017.json`) in the `labels_dir`.
+
+### Link to this sectionПустые файлы меток после конвертации#
+
+Если конвертация завершена, но файлы `.txt` пусты или отсутствуют, возможно, все аннотации имеют `iscrowd: 1` (распространено для масок, созданных с помощью [SAM](/ru/models/sam)), или [ограничивающие рамки](https://www.ultralytics.com/glossary/bounding-box) имеют нулевую ширину или высоту.
+
+**Решение** : Проверь свои JSON-аннотации на наличие значений `iscrowd`. При использовании масок SAM, предобработай JSON, установив `iscrowd: 0`.
+
+### Link to this sectionРазрывы в ID классов в конвертированных метках#
+
+Если идентификаторы классов в файлах меток не являются последовательными (например, 0, 4, 9 вместо 0, 1, 2), твой инструмент разметки использует не последовательные значения `category_id`.
+
+**Решение** : Убедись, что ID классов в твоих файлах `.txt` соответствуют словарю `names` в `dataset.yaml`. При необходимости переназначь ID на последовательные значения.
+
+Для получения полной информации об API и описания параметров смотри [справочник по API `convert_coco`](/reference/data/converter#ultralytics.data.converter.convert_coco).
+
+## Link to this sectionЧасто задаваемые вопросы (FAQ)#
+
+### Link to this sectionКак преобразовать аннотации COCO JSON в формат YOLO?#
+
+Используй функцию `convert_coco()` от Ultralytics для преобразования аннотаций COCO JSON в формат YOLO `.txt`. Установи `cls91to80=False` для пользовательских наборов данных:
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="path/to/annotations/", save_dir="output/", cls91to80=False)
+
+После конвертации реорганизуй файлы меток так, чтобы `labels/` отражала структуру директории `images/`, затем создай файл `dataset.yaml`. См. пошаговое руководство для получения полного рабочего процесса.
+
+### Link to this sectionПочему обучение YOLO показывает «No labels found» после конвертации COCO?#
+
+Это происходит потому, что `convert_coco()` сохраняет метки в поддиректорию внутри `save_dir/labels/` (например, `save_dir/labels/train/`), а не непосредственно в `labels/train/` твоего набора данных рядом с `images/train/`. YOLO ожидает, что метки будут находиться параллельно изображениям — например, `images/train/img.jpg` требует `labels/train/img.txt`. Перемести свои конвертированные метки, чтобы они соответствовали этой структуре. См. исправление структуры директорий.
+
+### Link to this sectionЧто делает `cls91to80` в `convert_coco()`?#
+
+Параметр `cls91to80` контролирует, как значения `category_id` в COCO сопоставляются с ID классов в YOLO. Если `True` (по умолчанию), используется таблица поиска, разработанная для стандартного [набора данных COCO](/ru/datasets/detect/coco), который имеет 80 классов с непоследовательными идентификаторами (1-90). Для **пользовательских наборов данных** всегда устанавливай `cls91to80=False` — это просто вычитает 1 из каждого `category_id`, чтобы создать ID классов с нулевой индексацией.
+
+### Link to this sectionМогу ли я обучать YOLO напрямую на COCO JSON без конвертации?#
+
+В текущем процессе обучения YOLO — нет, аннотации должны быть в формате YOLO `.txt`, по одному файлу на изображение. Сначала используй `convert_coco()` для конвертации твоего COCO JSON, а затем следуй этому руководству для организации и обучения. Дополнительную информацию о поддерживаемых форматах см. в разделе [форматы наборов данных](/ru/datasets/detect).
+
+### Link to this sectionМогу ли я конвертировать аннотации сегментации COCO в формат YOLO?#
+
+Да, используй `use_segments=True` при вызове `convert_coco()`, чтобы включить маски сегментации полигонов в конвертированные метки YOLO. Это создает файлы меток, совместимые с [моделями сегментации YOLO](/ru/tasks/segment):
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="annotations/", save_dir="output/", use_segments=True, cls91to80=False)
+
+### Link to this sectionКак конвертировать аннотации ключевых точек COCO в формат YOLO?#
+
+Используй `use_keypoints=True` для конвертации аннотаций ключевых точек COCO для обучения [оценке позы](/ru/tasks/pose):
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(labels_dir="annotations/", save_dir="output/", use_keypoints=True, cls91to80=False)
+
+Note that if both `use_segments` and `use_keypoints` are set to `True`, only keypoints will be written to the label files — segments are silently ignored.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coco-to-yolo.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[RAraimbekovm1](https://github.com/raimbekovm)
+
+Создано 2 месяца назадОбновлено в прошлом месяце
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

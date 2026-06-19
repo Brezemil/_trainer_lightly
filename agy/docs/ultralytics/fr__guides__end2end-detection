@@ -1,0 +1,233 @@
+---
+source_url: https://docs.ultralytics.com/fr/guides/end2end-detection
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/end2end-detection.md)
+
+# Link to this sectionComprendre la détection de bout en bout dans Ultralytics YOLO26#
+
+## Link to this sectionIntroduction#
+
+Si tu passes à [YOLO26](/fr/models/yolo26) depuis un modèle antérieur comme [YOLOv8](/fr/models/yolov8) ou [YOLO11](/fr/models/yolo11), l'un des changements les plus importants que tu remarqueras est la suppression du [Non-Maximum Suppression](https://www.ultralytics.com/glossary/non-maximum-suppression-nms) (NMS). Les modèles YOLO traditionnels produisent des milliers de prédictions qui se chevauchent, nécessitant une étape de post-traitement NMS séparée pour filtrer jusqu'aux détections finales. Cela ajoute de la latence, complique les graphes d'exportation et peut entraîner un comportement incohérent sur différentes plateformes matérielles.
+
+YOLO26 adopte une approche différente. Il génère les détections finales directement depuis le modèle, sans filtrage externe requis. C'est ce qu'on appelle la **[détection d'objets](https://www.ultralytics.com/glossary/object-detection) de bout en bout**, et c'est activé par défaut sur tous les modèles YOLO26. Le résultat est un pipeline de déploiement plus simple, une latence plus faible et jusqu'à **43 % d'inférence plus rapide sur CPU**.
+
+Ce guide t'explique ce qui a changé, si tu dois mettre à jour ton code, quels formats d'exportation prennent en charge l'inférence de bout en bout et comment migrer en douceur depuis les anciens modèles YOLO.
+
+Pour un aperçu approfondi de la motivation derrière ce changement architectural, consulte l'[article de blog d'Ultralytics sur les raisons pour lesquelles YOLO26 supprime le NMS et comment cela modifie le déploiement](https://www.ultralytics.com/blog/why-ultralytics-yolo26-removes-nms-and-how-that-changes-deployment).
+
+Résumé rapide
+
+  * **Tu utilises l'API ou la CLI d'Ultralytics ?** Aucun changement n'est nécessaire, remplace simplement le nom de ton modèle par `yolo26n.pt`.
+  * **Tu utilises un code d'inférence personnalisé (ONNX Runtime, TensorRT, etc.) ?** Mets à jour ton post-traitement : la sortie de détection est désormais `(N, 300, 6)` au format `xyxy`, sans NMS nécessaire. Les autres tâches ajoutent des données supplémentaires (coefficients de masque, points clés ou angle).
+  * **Tu exportes ?** La plupart des formats prennent nativement en charge la sortie de bout en bout. Cependant, quelques formats (NCNN, RKNN, PaddlePaddle, ExecuTorch, IMX, Edge TPU et QNN) reviennent automatiquement à la sortie traditionnelle en raison de contraintes liées aux opérateurs non pris en charge (par exemple, `torch.topk`). Les flux de travail Hailo HEF sont compilés à partir d'ONNX avec des scripts spécifiques à Hailo ; vérifie donc la tête de détection et la configuration NMS pour ton modèle.
+
+
+
+## Link to this sectionComment fonctionne la détection de bout en bout#
+
+YOLO26 utilise une **architecture à double tête** pendant l'[entraînement](/fr/modes/train). Les deux têtes partagent la même dorsale (backbone) et le même cou (neck), mais produisent des sorties de manières différentes :
+
+Tête| Objectif| Sortie de détection| Post-traitement  
+---|---|---|---  
+**Un-à-un** (par défaut)| Inférence de bout en bout| `(N, 300, 6)`| Seulement le seuil de confiance  
+**Un-à-plusieurs**|  Sortie YOLO traditionnelle| `(N, nc + 4, 8400)`| Nécessite le NMS  
+  
+Les formes ci-dessus concernent la [détection](/fr/tasks/detect). Les autres tâches étendent la sortie un-à-un avec des données supplémentaires par détection :
+
+Tâche| Sortie de bout en bout| Données supplémentaires  
+---|---|---  
+[Détection](/fr/tasks/detect)| `(N, 300, 6)`| —  
+[Segmentation d'instance](/fr/tasks/segment)| `(N, 300, 6 + nm)` \+ proto `(N, nm, H, W)`| Coefficients de masque `nm` (32 par défaut)  
+[Pose](/fr/tasks/pose)| `(N, 300, 57)`| 17 points clés × 3 (x, y, visibilité)  
+[OBB](/fr/tasks/obb)| `(N, 300, 7)`| Angle de rotation  
+  
+During training, both heads run simultaneously — the one-to-many head provides a richer learning signal, while the one-to-one head learns to produce clean, non-overlapping predictions. During [inference](/fr/modes/predict) and [export](/fr/modes/export), only the **one-to-one head** is active by default, producing up to 300 detections per image in the format `[x1, y1, x2, y2, confidence, class_id]`.
+
+Lorsque tu appelles `model.fuse()`, cela fusionne les couches Conv + BatchNorm pour une inférence plus rapide et, sur les modèles de bout en bout, supprime également la tête un-à-plusieurs, réduisant ainsi la taille du modèle et le nombre de FLOPs. Pour plus de détails sur l'architecture à double tête, consulte la [page du modèle YOLO26](/fr/models/yolo26).
+
+## Link to this sectionDois-je modifier mon code ?#
+
+### Link to this sectionUtilisation de l'API Python ou de la CLI Ultralytics#
+
+**Aucun changement nécessaire.** Si tu utilises l'[API Python Ultralytics](/fr/usage/python) standard ou la [CLI](/fr/usage/cli), tout fonctionne automatiquement : la [prédiction](/fr/modes/predict), la [validation](/fr/modes/val) et l'[exportation](/fr/modes/export) gèrent nativement les modèles de bout en bout.
+
+Aucune modification de code requise avec l'API Ultralytics
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Predict — no NMS step, no code changes
+    results = model.predict("image.jpg")
+
+### Link to this sectionUtilisation d'un code d'inférence personnalisé#
+
+**Oui, le format de sortie est différent.** Si tu as écrit une logique de post-traitement personnalisée pour [YOLOv8](/fr/models/yolov8) ou [YOLO11](/fr/models/yolo11) (par exemple, lors de l'exécution de l'inférence avec [ONNX Runtime](/fr/integrations/onnx) ou [TensorRT](/fr/integrations/tensorrt)), tu devras la mettre à jour pour gérer la nouvelle forme de sortie :
+
+| YOLOv8 / YOLO11| YOLO26 (bout en bout)  
+---|---|---  
+**Sortie de détection**| `(N, nc + 4, 8400)`| `(N, 300, 6)`  
+**Format des boîtes**| `xywh` (centre x, centre y, largeur, hauteur)| `xyxy` (x haut-gauche, y haut-gauche, x bas-droite, y bas-droite)  
+**Mise en page**|  Coordonnées de la boîte + scores de classe par ancrage| `[x1, y1, x2, y2, conf, class_id]`  
+**NMS requis**|  Oui| Non  
+**Post-traitement**|  NMS + filtre de confiance| Filtre de confiance seulement  
+  
+Pour les tâches de [segmentation](/fr/tasks/segment), de [pose](/fr/tasks/pose) et d'[OBB](/fr/tasks/obb), YOLO26 ajoute des données spécifiques à la tâche à chaque détection ; voir le tableau des formes de sortie ci-dessus.
+
+Où `N` est la [taille du lot (batch size)](https://www.ultralytics.com/glossary/batch-size) et `nc` est le nombre de classes (par exemple, 80 pour [COCO](/fr/datasets/detect/coco)).
+
+Avec les modèles de bout en bout, le post-traitement devient beaucoup plus simple ; par exemple, lors de l'utilisation d'[ONNX Runtime](/fr/integrations/onnx) :
+    
+    
+    import onnxruntime as ort
+    
+    # Load and run the exported end-to-end model
+    session = ort.InferenceSession("yolo26n.onnx")
+    output = session.run(None, {session.get_inputs()[0].name: input_tensor})
+    
+    # End-to-end output: (batch, 300, 6) → [x1, y1, x2, y2, confidence, class_id]
+    detections = output[0][0]  # first image in batch
+    detections = detections[detections[:, 4] > conf_threshold]  # confidence filter — that's it!
+
+### Link to this sectionPassage à la tête un-à-plusieurs#
+
+Si tu as besoin du format de sortie YOLO traditionnel (par exemple, pour réutiliser un code de post-traitement basé sur NMS existant), tu peux passer à la tête un-à-plusieurs à tout moment en réglant `end2end=False` :
+
+Utilisation de la tête un-à-plusieurs pour une sortie traditionnelle basée sur NMS
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Prediction with NMS (traditional behavior)
+    results = model.predict("image.jpg", end2end=False)
+    
+    # Validation with NMS
+    metrics = model.val(data="coco.yaml", end2end=False)
+    
+    # Export without end-to-end
+    model.export(format="onnx", end2end=False)
+
+## Link to this sectionCompatibilité des formats d'exportation#
+
+La plupart des [formats d'exportation](/fr/modes/export#export-formats) prennent nativement en charge l'inférence de bout en bout, y compris [ONNX](/fr/integrations/onnx), [TensorRT](/fr/integrations/tensorrt), [CoreML](/fr/integrations/coreml), [OpenVINO](/fr/integrations/openvino), [TFLite](/fr/integrations/tflite), [TF.js](/fr/integrations/tfjs) et [MNN](/fr/integrations/mnn).
+
+Les formats suivants **ne prennent pas** en charge le bout en bout et reviennent automatiquement à la tête un-à-plusieurs : [NCNN](/fr/integrations/ncnn), [RKNN](/fr/integrations/rockchip-rknn), [PaddlePaddle](/fr/integrations/paddlepaddle), [ExecuTorch](/fr/integrations/executorch), [IMX](/fr/integrations/sony-imx500), [Edge TPU](/fr/integrations/edge-tpu) et [Qualcomm QNN](/fr/integrations/qnn).
+
+Que se passe-t-il lorsque le bout en bout n'est pas pris en charge
+
+Lorsque tu exportes vers l'un de ces formats, Ultralytics passe automatiquement à la tête un-à-plusieurs et enregistre un avertissement : aucune intervention manuelle n'est nécessaire. Cela signifie que **tu auras besoin du NMS dans ton pipeline d'inférence** pour ces formats, tout comme avec [YOLOv8](/fr/models/yolov8) ou [YOLO11](/fr/models/yolo11).
+
+Pour [Hailo HEF](/fr/integrations/hailo), l'étape de compilation se déroule en dehors de `model.export(format=...)` après une exportation ONNX. Utilise les logs DFC de Hailo, le script de modèle `.alls` et le JSON NMS qui correspondent exactement à ton modèle de détection ; si un graphe YOLO26 de bout en bout n'est pas pris en charge par ta chaîne d'outils Hailo, exporte le modèle ONNX avec `end2end=False` et compile la tête de détection traditionnelle.
+
+TensorRT + INT8
+
+[TensorRT](/fr/integrations/tensorrt) prend en charge le bout en bout, mais il est **automatiquement désactivé** lors de l'exportation avec `int8=True` sur TensorRT 10.3.0 avec JetPack 6.
+
+## Link to this sectionCompromis entre précision et vitesse#
+
+La détection de bout en bout offre des avantages de déploiement significatifs avec un impact minimal sur la [précision](https://www.ultralytics.com/glossary/accuracy) :
+
+Métrique| Bout en bout (par défaut)| Un-à-plusieurs + NMS (`end2end=False`)  
+---|---|---  
+**Vitesse d'inférence CPU**|  Jusqu'à **43 % plus rapide**|  Référence  
+**Impact sur le mAP**|  ~0,5 mAP en moins| Égal ou supérieur à YOLO11  
+**Post-traitement**|  Filtre de confiance seulement| Pipeline NMS complet  
+**Complexité de déploiement**|  Minimale| Nécessite l'implémentation du NMS  
+  
+Pour la plupart des applications réelles, la différence de ~0,5 [mAP](https://www.ultralytics.com/glossary/mean-average-precision-map) est négligeable, surtout compte tenu des gains de vitesse et de simplicité. Si la précision maximale est ta priorité absolue, tu peux toujours revenir à la tête un-à-plusieurs en utilisant `end2end=False`.
+
+Consulte les [métriques de performance de YOLO26](/fr/models/yolo26#performance-metrics) pour des benchmarks détaillés sur toutes les tailles de modèle (n, s, m, l, x).
+
+## Link to this sectionMigration depuis YOLOv8 ou YOLO11#
+
+Si tu mets à niveau un projet existant vers YOLO26, voici une liste de contrôle rapide pour assurer une transition en douceur :
+
+  * **Utilisateurs de l'API / CLI Ultralytics :** Aucun changement nécessaire, mets simplement à jour le nom du modèle par `yolo26n.pt` (ou `yolo26n-seg.pt`, `yolo26n-pose.pt`, `yolo26n-obb.pt`)
+  * **Code de post-traitement personnalisé :** Mise à jour pour gérer les nouvelles formes de sortie : `(N, 300, 6)` pour la détection, plus les données spécifiques à la tâche pour la [segmentation](/fr/tasks/segment), la [pose](/fr/tasks/pose) et l'[OBB](/fr/tasks/obb). Note également le changement de format de boîte de `xywh` à `xyxy`
+  * **Pipelines d'exportation :** Vérifie la section compatibilité des formats ci-dessus pour ton format cible
+  * **TensorRT + INT8 :** Sur JetPack 6, TensorRT 10.3.0 désactive automatiquement le bout en bout avec `int8=True` ; utilise une autre version de TensorRT pour conserver le bout en bout
+  * **Exportations FP16 :** Si tu as besoin de toutes les sorties en FP16, exporte avec `end2end=False` ; voir [pourquoi output0 reste FP32](/fr/modes/export#why-is-output0-fp32-when-exporting-with-halftrue-and-end2endtrue)
+  * **iOS / CoreML :** Le bout en bout est entièrement pris en charge. Si tu as besoin de la prise en charge de l'aperçu Xcode, utilise `end2end=False` avec `nms=True`
+  * **Appareils Edge (NCNN, RKNN) :** Ces formats reviennent automatiquement à l'un-à-plusieurs, donc inclus le NMS dans ton pipeline embarqué
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionPuis-je utiliser end2end=True et nms=True ensemble ?#
+
+Non. Ces options sont mutuellement exclusives. Si tu définis `nms=True` sur un modèle de bout en bout lors de l'[exportation](/fr/modes/export), il sera automatiquement forcé à `nms=False` avec un avertissement. La tête de bout en bout gère déjà le filtrage des doublons en interne, donc un NMS externe est inutile.
+
+Cependant, `end2end=False` combiné avec `nms=True` est une configuration valide ; cela intègre le NMS traditionnel dans le graphe d'exportation. Cela peut être utile pour les exportations [CoreML](/fr/integrations/coreml) car cela te permet d'utiliser directement la fonction d'aperçu dans Xcode avec le modèle de détection.
+
+### Link to this sectionQue contrôle le paramètre max_det dans les modèles end-to-end ?#
+
+Le paramètre `max_det` (par défaut : 300) définit le nombre maximal de détections que la tête one-to-one peut générer par image. Tu peux l'ajuster lors de l'inférence ou de l'exportation :
+    
+    
+    model.predict("image.jpg", max_det=100)  # fewer detections, slightly faster
+    model.export(format="onnx", max_det=500)  # more detections for dense scenes
+
+Note que les points de contrôle YOLO26 par défaut ont été entraînés avec `max_det=300`. Bien que tu puisses augmenter cette valeur, la tête one-to-one a été optimisée durant l'entraînement pour produire jusqu'à 300 détections propres ; par conséquent, les détections au-delà de cette limite pourraient être de moindre qualité. Si tu as besoin de plus de 300 détections par image, envisage un réentraînement avec une valeur `max_det` plus élevée.
+
+### Link to this sectionMon modèle ONNX exporté génère (1, 300, 6) — est-ce correct ?#
+
+Oui, c'est le format de sortie end-to-end attendu pour la détection : une [batch size](https://www.ultralytics.com/glossary/batch-size) de 1, jusqu'à 300 détections, chacune avec 6 valeurs `[x1, y1, x2, y2, confidence, class_id]`. Il te suffit de filtrer par seuil de confiance et le tour est joué — aucun NMS n'est requis.
+
+Pour d'autres tâches, la forme de sortie diffère :
+
+Tâche| Forme de sortie| Description  
+---|---|---  
+Détection| `(1, 300, 6)`| `[x1, y1, x2, y2, conf, class_id]`  
+Segmentation| `(1, 300, 38)` \+ `(1, 32, 160, 160)`| 6 valeurs de boîte + 32 coefficients de masque, plus un tenseur de masque prototype  
+Pose| `(1, 300, 57)`| 6 valeurs de boîte + 17 points clés × 3 (x, y, visibilité)  
+OBB| `(1, 300, 7)`| 6 valeurs de boîte + 1 angle de rotation  
+  
+### Link to this sectionComment vérifier si mon modèle exporté est end-to-end ?#
+
+Tu peux vérifier en utilisant soit l'API Python d'Ultralytics, soit en inspectant directement les métadonnées du modèle ONNX exporté :
+
+Vérifier si un modèle est end-to-end
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.onnx")
+    model.predict(verbose=False)  # run predict to setup predictor first
+    print(model.predictor.model.end2end)  # True if end-to-end is enabled
+
+Alternativement, vérifie la forme de sortie — les modèles de détection end-to-end génèrent `(1, 300, 6)`, tandis que les modèles traditionnels génèrent `(1, nc + 4, 8400)`. Pour les formes d'autres tâches, consulte la FAQ sur les formes de sortie.
+
+### Link to this sectionLe mode end-to-end est-il pris en charge pour les tâches de segmentation d'instance, de pose et d'OBB ?#
+
+Oui. Les variantes de tâches de style détection YOLO26 — [détection](/fr/tasks/detect), [segmentation d'instance](/fr/tasks/segment), [estimation de pose](/fr/tasks/pose) et [détection d'objets orientés (OBB)](/fr/tasks/obb) — prennent en charge l'inférence end-to-end par défaut. L'option de repli `end2end=False` est également disponible pour ces tâches.
+
+Chaque tâche étend la sortie de détection de base avec des données spécifiques à la tâche :
+
+Tâche| Modèle| Sortie de bout en bout  
+---|---|---  
+Détection| `yolo26n.pt`| `(N, 300, 6)`  
+Segmentation d'instance| `yolo26n-seg.pt`| `(N, 300, 38)` \+ proto `(N, 32, 160, 160)`  
+Pose| `yolo26n-pose.pt`| `(N, 300, 57)`  
+OBB| `yolo26n-obb.pt`| `(N, 300, 7)`  
+  
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/end2end-detection.md)
+
+[GLglenn-jocher5](https://github.com/glenn-jocher)[AMambitious-octopus1](https://github.com/ambitious-octopus)[RAraimbekovm1](https://github.com/raimbekovm)
+
+Créé il y a 3 moisMis à jour la semaine dernière
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

@@ -1,0 +1,305 @@
+---
+source_url: https://docs.ultralytics.com/ru/guides/sahi-tiled-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+# Link to this sectionДокументация Ultralytics: Использование YOLO26 с SAHI для слайсового вывода#
+
+[![Открыть SAHI для слайсового вывода в Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/notebooks/blob/main/notebooks/how-to-use-ultralytics-yolo-with-sahi.ipynb)
+
+Добро пожаловать в документацию Ultralytics по использованию YOLO26 с [SAHI](https://github.com/obss/sahi) (Slicing Aided Hyper Inference). Это подробное руководство предоставит тебе все необходимые знания для внедрения SAHI вместе с YOLO26. Мы детально разберем, что такое SAHI, почему слайсовый вывод критически важен для крупномасштабных задач и как интегрировать эти функции с YOLO26 для повышения производительности [обнаружения объектов](https://www.ultralytics.com/glossary/object-detection).
+
+![SAHI tiled inference for small objects](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sahi-sliced-inference-overview.avif)
+
+## Link to this sectionВведение в SAHI#
+
+SAHI (Slicing Aided Hyper Inference) — это инновационная библиотека, созданная для оптимизации алгоритмов обнаружения объектов на крупномасштабных изображениях с высоким разрешением. Её основная функциональность заключается в разбиении изображений на удобные для обработки фрагменты (слайсы), запуске обнаружения объектов на каждом из них и последующей «сшивке» результатов обратно. SAHI совместима с рядом моделей обнаружения объектов, включая серию YOLO, что обеспечивает гибкость и оптимизированное использование вычислительных ресурсов.
+
+  
+
+
+  
+**Watch:** How to use SAHI with Ultralytics YOLO26 to Detect Small Objects | Slicing Aided Hyper Inference 🚀 
+
+### Link to this sectionКлючевые особенности SAHI#
+
+  * **Бесшовная интеграция** : SAHI легко интегрируется с моделями YOLO, что позволяет тебе начать нарезку и обнаружение без существенного изменения кода.
+  * **Эффективность ресурсов** : Разбивая большие изображения на меньшие части, SAHI оптимизирует использование памяти, позволяя выполнять качественное обнаружение на оборудовании с ограниченными ресурсами.
+  * **Высокая[точность](https://www.ultralytics.com/glossary/accuracy)**: SAHI поддерживает точность обнаружения, используя интеллектуальные алгоритмы для слияния перекрывающихся рамок обнаружения в процессе сшивки.
+
+
+
+## Link to this sectionЧто такое слайсовый вывод?#
+
+Слайсовый вывод (Sliced Inference) относится к практике разбиения большого изображения или изображения высокого разрешения на меньшие сегменты (слайсы), выполнения обнаружения объектов на этих фрагментах и последующей рекомпиляции слайсов для восстановления расположения объектов на исходном изображении. Этот метод бесценен в сценариях, где вычислительные ресурсы ограничены или при работе с изображениями сверхвысокого разрешения, которые в противном случае могли бы привести к проблемам с памятью.
+
+### Link to this sectionПреимущества слайсового вывода#
+
+  * **Снижение вычислительной нагрузки** : Фрагменты изображения меньшего размера обрабатываются быстрее и потребляют меньше памяти, что обеспечивает более плавную работу на менее мощном оборудовании.
+
+  * **Сохранение качества обнаружения** : Поскольку каждый слайс обрабатывается независимо, качество обнаружения объектов не снижается, при условии, что слайсы достаточно велики для захвата целевых объектов.
+
+  * **Повышенная масштабируемость** : Метод позволяет легче масштабировать задачи обнаружения объектов для изображений различных размеров и разрешений, что делает его идеальным для широкого спектра приложений — от спутниковых снимков до медицинской диагностики.
+
+
+
+
+YOLO26 without SAHI| YOLO26 with SAHI  
+---|---  
+![YOLO26 without SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-without-sahi.avif)| ![YOLO26 with SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-with-sahi.avif)  
+  
+## Link to this sectionУстановка и подготовка#
+
+### Link to this sectionУстановка#
+
+Чтобы начать, установи последние версии SAHI и Ultralytics:
+    
+    
+    pip install -U ultralytics sahi
+
+### Link to this sectionИмпорт модулей и загрузка ресурсов#
+
+Вот как можно загрузить тестовые изображения:
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+## Link to this sectionСтандартный вывод с YOLO26#
+
+### Link to this sectionИнициализация модели#
+
+Ты можешь инициализировать модель YOLO26 для обнаружения объектов так:
+    
+    
+    from sahi import AutoDetectionModel
+    
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        confidence_threshold=0.3,
+        device="cpu",  # or 'cuda:0'
+    )
+
+### Link to this sectionВыполнение стандартного предсказания#
+
+Выполни стандартный вывод, используя путь к изображению.
+    
+    
+    from sahi.predict import get_prediction
+    
+    result = get_prediction("demo_data/small-vehicles1.jpeg", detection_model)
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+
+### Link to this sectionВизуализация результатов#
+
+Экспортируй и визуализируй предсказанные ограничивающие рамки (bounding boxes) и маски:
+    
+    
+    from PIL import Image
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionСлайсовый вывод с YOLO26#
+
+Выполни слайсовый вывод, указав размеры слайса и коэффициенты перекрытия:
+    
+    
+    from PIL import Image
+    from sahi.predict import get_sliced_prediction
+    
+    result = get_sliced_prediction(
+        "demo_data/small-vehicles1.jpeg",
+        detection_model,
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+    
+    # Export results
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionОбработка результатов предсказания#
+
+SAHI предоставляет объект `PredictionResult`, который можно преобразовать в различные форматы аннотаций:
+    
+    
+    # Access the object prediction list
+    object_prediction_list = result.object_prediction_list
+    
+    # Convert to COCO annotation, COCO prediction, imantics, and fiftyone formats
+    result.to_coco_annotations()[:3]
+    result.to_coco_predictions(image_id=1)[:3]
+    result.to_imantics_annotations()[:3]
+    result.to_fiftyone_detections()[:3]
+
+## Link to this sectionПакетное предсказание#
+
+Для пакетного предсказания на директории с изображениями:
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+Теперь ты готов использовать YOLO26 с SAHI как для стандартного, так и для слайсового вывода.
+
+## Link to this sectionЦитаты и благодарности#
+
+Если ты используешь SAHI в своих исследованиях или разработках, пожалуйста, сошлися на оригинальную статью о SAHI и упомяни авторов:
+
+Цитата
+    
+    
+    @article{akyon2022sahi,
+      title={Slicing Aided Hyper Inference and Fine-tuning for Small Object Detection},
+      author={Akyon, Fatih Cagatay and Altinuc, Sinan Onur and Temizel, Alptekin},
+      journal={2022 IEEE International Conference on Image Processing (ICIP)},
+      doi={10.1109/ICIP46576.2022.9897990},
+      pages={966-970},
+      year={2022}
+    }
+
+Мы выражаем благодарность исследовательской группе SAHI за создание и поддержку этого бесценного ресурса для сообщества [компьютерного зрения](https://www.ultralytics.com/glossary/computer-vision-cv). Для получения дополнительной информации о SAHI и его создателях посети [репозиторий SAHI на GitHub](https://github.com/obss/sahi).
+
+## Link to this sectionFAQ#
+
+### Link to this sectionКак я могу интегрировать YOLO26 с SAHI для слайсового вывода при обнаружении объектов?#
+
+Интеграция Ultralytics YOLO26 с SAHI (Slicing Aided Hyper Inference) для слайсового вывода оптимизирует твои задачи по обнаружению объектов на изображениях высокого разрешения путем разделения их на управляемые фрагменты. Этот подход улучшает использование памяти и обеспечивает высокую точность обнаружения. Для начала установи библиотеки ultralytics и sahi:
+    
+    
+    pip install -U ultralytics sahi
+
+Затем загрузи тестовые изображения:
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+Для получения более подробных инструкций обратись к нашему руководству по слайсовому выводу.
+
+### Link to this sectionПочему мне стоит использовать SAHI с YOLO26 для обнаружения объектов на больших изображениях?#
+
+Использование SAHI с Ultralytics YOLO26 для обнаружения объектов на больших изображениях дает несколько преимуществ:
+
+  * **Снижение вычислительной нагрузки** : Фрагменты меньшего размера обрабатываются быстрее и потребляют меньше памяти, что делает возможным выполнение качественного обнаружения на оборудовании с ограниченными ресурсами.
+  * **Сохранение точности обнаружения** : SAHI использует интеллектуальные алгоритмы для слияния перекрывающихся рамок, сохраняя качество обнаружения.
+  * **Повышенная масштабируемость** : Благодаря масштабированию задач обнаружения объектов для разных размеров и разрешений изображений, SAHI идеально подходит для различных областей применения, таких как анализ спутниковых снимков и медицинская диагностика.
+
+
+
+Узнай больше о преимуществах слайсового вывода в нашей документации.
+
+### Link to this sectionМогу ли я визуализировать результаты предсказания при использовании YOLO26 с SAHI?#
+
+Да, ты можешь визуализировать результаты предсказания при использовании YOLO26 с SAHI. Вот как можно экспортировать и визуализировать результаты:
+    
+    
+    from PIL import Image
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    processed_image.show()
+
+Эта команда сохранит визуализированные предсказания в указанную директорию, после чего ты сможешь загрузить изображение для просмотра в своем ноутбуке или приложении. Подробное руководство смотри в разделе Стандартный вывод.
+
+### Link to this sectionКакие функции предлагает SAHI для улучшения обнаружения объектов с помощью YOLO26?#
+
+SAHI (Slicing Aided Hyper Inference) предлагает несколько функций, дополняющих Ultralytics YOLO26 при обнаружении объектов:
+
+  * **Бесшовная интеграция** : SAHI легко интегрируется с моделями YOLO и требует минимальных изменений в коде.
+  * **Эффективность ресурсов** : Библиотека разбивает большие изображения на меньшие слайсы, что оптимизирует использование памяти и скорость работы.
+  * **Высокая точность** : Эффективно объединяя перекрывающиеся рамки обнаружения в процессе сшивки, SAHI поддерживает высокую точность обнаружения.
+
+
+
+Для более глубокого понимания прочитай о ключевых функциях SAHI.
+
+### Link to this sectionКак мне обрабатывать крупномасштабные проекты с использованием YOLO26 и SAHI?#
+
+Для обработки крупномасштабных проектов с использованием YOLO26 и SAHI следуй этим лучшим практикам:
+
+  1. **Установи необходимые библиотеки** : Убедись, что у тебя установлены последние версии ultralytics и sahi.
+  2. **Настрой слайсовый вывод** : Определи оптимальные размеры слайсов и коэффициенты перекрытия для твоего конкретного проекта.
+  3. **Запускай пакетные предсказания** : Используй возможности SAHI для выполнения пакетных предсказаний на директории с изображениями, что повышает эффективность.
+
+
+
+Пример пакетного предсказания:
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="path/to/yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+Для получения более детальных шагов посети наш раздел Пакетное предсказание.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar8](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[COCoderUni1](https://github.com/CoderUni)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+Создано 12 нояб. 2023 г.Обновлено в прошлом месяце
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

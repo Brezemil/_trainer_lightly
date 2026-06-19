@@ -1,0 +1,175 @@
+---
+source_url: https://docs.ultralytics.com/fr/yolov5/tutorials/transfer-learning-with-frozen-layers
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/transfer-learning-with-frozen-layers.md)
+
+# Link to this sectionApprentissage par transfert avec des couches figées dans YOLOv5#
+
+📚 Ce guide t'explique comment **figer** les couches de [YOLOv5](https://github.com/ultralytics/yolov5) 🚀 lors de la mise en œuvre de l'[apprentissage par transfert](https://www.ultralytics.com/glossary/transfer-learning). L'apprentissage par transfert est une technique puissante d'[apprentissage automatique (ML)](https://www.ultralytics.com/glossary/machine-learning-ml) qui te permet de réentraîner rapidement un modèle sur de nouvelles données sans avoir à réentraîner l'intégralité du réseau à partir de zéro. En figeant les poids des couches initiales et en ne mettant à jour que les paramètres des couches ultérieures, tu peux réduire considérablement les besoins en ressources de calcul et le temps d'entraînement. Cependant, cette approche peut légèrement impacter la [précision](https://www.ultralytics.com/glossary/accuracy) finale du modèle.
+
+## Link to this sectionAvant de commencer#
+
+Tout d'abord, clone le dépôt YOLOv5 et installe les dépendances nécessaires listées dans [`requirements.txt`](https://github.com/ultralytics/yolov5/blob/master/requirements.txt). Assure-toi d'avoir un environnement [**Python >=3.8.0**](https://www.python.org/) avec [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/) installé. Les [modèles](https://github.com/ultralytics/yolov5/tree/master/models) pré-entraînés et les [datasets](https://github.com/ultralytics/yolov5/tree/master/data) requis seront téléchargés automatiquement à partir de la dernière [version](https://github.com/ultralytics/yolov5/releases) de YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone repository
+    cd yolov5
+    pip install -r requirements.txt # install dependencies
+
+## Link to this sectionComment fonctionne le gel des couches#
+
+Lorsque tu figes des couches dans un [réseau de neurones](https://www.ultralytics.com/glossary/neural-network-nn), tu empêches leurs paramètres (poids et biais) d'être mis à jour durant le processus d'entraînement. Dans PyTorch, cela est réalisé en définissant l'attribut `requires_grad` des tenseurs de la couche sur `False`. Par conséquent, les gradients ne sont pas calculés pour ces couches lors de la [rétropropagation](https://www.ultralytics.com/glossary/backpropagation), ce qui économise du calcul et de la mémoire.
+
+Voici comment YOLOv5 implémente le gel des couches dans son [script d'entraînement](https://github.com/ultralytics/yolov5/blob/master/train.py) :
+    
+    
+    # Freeze specified layers
+    freeze = [f"model.{x}." for x in range(freeze)]  # Define layers to freeze based on module index
+    for k, v in model.named_parameters():
+        v.requires_grad = True  # Ensure all parameters are initially trainable
+        if any(x in k for x in freeze):
+            print(f"Freezing layer: {k}")
+            v.requires_grad = False  # Disable gradient calculation for frozen layers
+
+## Link to this sectionExplorer l'architecture du modèle#
+
+Comprendre la structure du modèle YOLOv5 est crucial pour décider quelles couches figer. Tu peux inspecter les noms de tous les modules et leurs paramètres en utilisant l'extrait de code Python suivant :
+    
+    
+    # Assuming 'model' is your loaded YOLOv5 model instance
+    for name, param in model.named_parameters():
+        print(name)
+    
+    """
+    Example Output:
+    model.0.conv.conv.weight
+    model.0.conv.bn.weight
+    model.0.conv.bn.bias
+    model.1.conv.weight
+    model.1.bn.weight
+    model.1.bn.bias
+    model.2.cv1.conv.weight
+    model.2.cv1.bn.weight
+    ...
+    """
+
+L'architecture YOLOv5 se compose généralement d'une [backbone](https://www.ultralytics.com/glossary/backbone) (couches 0 à 9 dans les configurations standard comme YOLOv5s/m/l/x) responsable de l'[extraction de caractéristiques](https://www.ultralytics.com/glossary/feature-extraction), et d'une tête (les couches restantes) qui effectue la [détection d'objets](https://www.ultralytics.com/glossary/object-detection).
+    
+    
+    # Example YOLOv5 v6.0 backbone structure
+    backbone:
+        # [from, number, module, args]
+        - [-1, 1, Conv, [64, 6, 2, 2]]  # Layer 0: Initial convolution (P1/2 stride)
+        - [-1, 1, Conv, [128, 3, 2]] # Layer 1: Downsampling convolution (P2/4 stride)
+        - [-1, 3, C3, [128]]          # Layer 2: C3 module
+        - [-1, 1, Conv, [256, 3, 2]] # Layer 3: Downsampling convolution (P3/8 stride)
+        - [-1, 6, C3, [256]]          # Layer 4: C3 module
+        - [-1, 1, Conv, [512, 3, 2]] # Layer 5: Downsampling convolution (P4/16 stride)
+        - [-1, 9, C3, [512]]          # Layer 6: C3 module
+        - [-1, 1, Conv, [1024, 3, 2]]# Layer 7: Downsampling convolution (P5/32 stride)
+        - [-1, 3, C3, [1024]]         # Layer 8: C3 module
+        - [-1, 1, SPPF, [1024, 5]]    # Layer 9: Spatial Pyramid Pooling Fast
+    
+    # Example YOLOv5 v6.0 head structure
+    head:
+        - [-1, 1, Conv, [512, 1, 1]] # Layer 10
+        - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # Layer 11
+        - [[-1, 6], 1, Concat, [1]] # Layer 12: Concatenate with backbone P4 (from layer 6)
+        - [-1, 3, C3, [512, False]] # Layer 13: C3 module
+        # ... subsequent head layers for feature fusion and detection
+
+## Link to this sectionOptions de gel#
+
+Tu peux contrôler quelles couches sont figées en utilisant l'argument `--freeze` dans la commande d'entraînement. Cet argument spécifie l'index du premier module _non figé_ ; tous les modules avant cet index verront leurs poids figés. Utilise `model.model` (un `nn.Sequential`) pour inspecter l'ordre des modules si tu as besoin de confirmer quels indices correspondent à un bloc particulier.
+
+### Link to this sectionFiger uniquement la backbone#
+
+Pour figer l'intégralité de la backbone (couches 0 à 9), ce qui est courant lors de l'adaptation du modèle à de nouvelles classes d'objets tout en conservant les capacités générales d'extraction de caractéristiques apprises à partir d'un grand dataset comme [COCO](https://docs.ultralytics.com/datasets/detect/coco) :
+    
+    
+    python train.py --weights yolov5m.pt --data your_dataset.yaml --freeze 10
+
+Cette stratégie est efficace lorsque ton dataset cible partage des caractéristiques visuelles de bas niveau similaires (bords, textures) avec les données d'entraînement originales (par exemple, COCO) mais contient des catégories d'objets différentes.
+
+### Link to this sectionFiger tout sauf les couches de détection finale#
+
+Pour figer presque tout le réseau, en ne laissant que les couches de convolution de sortie finale (faisant partie du module `Detect`, généralement le dernier module, par exemple le module 24 dans YOLOv5s) entraînables :
+    
+    
+    python train.py --weights yolov5m.pt --data your_dataset.yaml --freeze 24
+
+Cette approche est utile quand tu as principalement besoin d'ajuster le modèle pour un nombre différent de classes de sortie tout en gardant la grande majorité des caractéristiques apprises intactes. Elle nécessite le moins de ressources de calcul pour le [fine-tuning](https://www.ultralytics.com/glossary/fine-tuning).
+
+## Link to this sectionComparaison des performances#
+
+Pour illustrer les effets du gel des couches, nous avons entraîné YOLOv5m sur le [dataset Pascal VOC](https://docs.ultralytics.com/datasets/detect/voc) pendant 50 [époques](https://www.ultralytics.com/glossary/epoch), en partant des [poids](https://www.ultralytics.com/glossary/model-weights) officiels pré-entraînés sur COCO (`yolov5m.pt`). Nous avons comparé trois scénarios : entraîner toutes les couches (`--freeze 0`), figer la backbone (`--freeze 10`), et figer tout sauf les couches de détection finales (`--freeze 24`).
+    
+    
+    # Example command for training with backbone frozen
+    python train.py --batch 48 --weights yolov5m.pt --data voc.yaml --epochs 50 --cache --img 512 --hyp data/hyps/hyp.VOC.yaml --freeze 10
+
+### Link to this sectionRésultats de précision#
+
+Les résultats montrent que figer les couches peut accélérer significativement l'entraînement mais peut mener à une légère réduction de la [mAP (précision moyenne)](https://www.ultralytics.com/glossary/mean-average-precision-map) finale. Entraîner toutes les couches produit généralement la meilleure précision, tandis que figer plus de couches offre un entraînement plus rapide au prix d'une performance potentiellement plus faible.
+
+![Résultats mAP50 de l'entraînement comparant différentes stratégies de gel](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/freezing-training-map50-results.avif) _Comparaison mAP50 durant l'entraînement_
+
+![Résultats mAP50-95 de l'entraînement comparant différentes stratégies de gel](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/freezing-training-map50-95-results.avif) _Comparaison mAP50-95 durant l'entraînement_
+
+![YOLOv5 frozen layer training performance](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/table-results.avif) *Summary table of performance metrics* 
+
+### Link to this sectionUtilisation des ressources#
+
+Figer plus de couches réduit considérablement les besoins en mémoire [GPU](https://www.ultralytics.com/glossary/gpu-graphics-processing-unit) et l'utilisation globale. Cela fait de l'apprentissage par transfert avec des couches figées une option attrayante lorsque tu travailles avec des ressources matérielles limitées, permettant d'entraîner des modèles plus grands ou d'utiliser des tailles d'image plus grandes que ce qui serait autrement possible.
+
+![Pourcentage de mémoire GPU allouée durant l'entraînement](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/training-gpu-memory-allocated-percent.avif) _Mémoire GPU allouée (%)_
+
+![Pourcentage d'utilisation de la mémoire GPU durant l'entraînement](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/training-gpu-memory-utilization-percent.avif) _Utilisation GPU (%)_
+
+## Link to this sectionQuand utiliser le gel de couches#
+
+Le gel de couches durant l'apprentissage par transfert est particulièrement avantageux dans plusieurs situations :
+
+  1. **Ressources de calcul limitées** : Si tu as des contraintes sur la mémoire GPU ou la puissance de traitement.
+  2. **Petits datasets** : Lorsque ton dataset cible est significativement plus petit que le dataset de pré-entraînement original, le gel aide à prévenir le [surapprentissage](https://www.ultralytics.com/glossary/overfitting).
+  3. **Prototypage rapide** : Quand tu as besoin d'adapter rapidement un modèle existant à une nouvelle tâche ou un nouveau domaine pour une évaluation initiale.
+  4. **Domaines de caractéristiques similaires** : Si les caractéristiques de bas niveau dans ton nouveau dataset sont très similaires à celles du dataset sur lequel le modèle a été pré-entraîné.
+
+
+
+Explore davantage les nuances de l'apprentissage par transfert dans notre [entrée de glossaire](https://www.ultralytics.com/glossary/transfer-learning) et envisage des techniques comme le [réglage d'hyperparamètres](https://docs.ultralytics.com/guides/hyperparameter-tuning) pour optimiser les performances.
+
+## Link to this sectionEnvironnements pris en charge#
+
+Ultralytics propose divers environnements prêts à l'emploi avec des dépendances essentielles comme [CUDA](https://developer.nvidia.com/cuda), [CuDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/) et [PyTorch](https://pytorch.org/) pré-installées.
+
+  * **Notebooks GPU gratuits** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [Guide de démarrage rapide GCP](/fr/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [Guide de démarrage rapide AWS](/fr/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [Guide de démarrage rapide AzureML](/fr/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Guide de démarrage rapide Docker](/fr/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionStatut du projet#
+
+[![Statut de l'Intégration Continue YOLOv5](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+Ce badge confirme que tous les tests d'Intégration Continue (CI) sur [GitHub Actions pour YOLOv5](https://github.com/ultralytics/yolov5/actions) réussissent. Ces tests CI évaluent rigoureusement la fonctionnalité et les performances de YOLOv5 à travers des opérations clés : [entraînement](https://github.com/ultralytics/yolov5/blob/master/train.py), [validation](https://github.com/ultralytics/yolov5/blob/master/val.py), [inférence](https://github.com/ultralytics/yolov5/blob/master/detect.py), [exportation](https://github.com/ultralytics/yolov5/blob/master/export.py) et [benchmarks](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). Ils garantissent un fonctionnement cohérent et fiable sur macOS, Windows et Ubuntu, en s'exécutant automatiquement toutes les 24 heures et à chaque nouveau commit de code.
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/transfer-learning-with-frozen-layers.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Créé il y a 3 joursMis à jour il y a 3 jours
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

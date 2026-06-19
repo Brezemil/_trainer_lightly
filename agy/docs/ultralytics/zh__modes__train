@@ -1,0 +1,491 @@
+---
+source_url: https://docs.ultralytics.com/zh/modes/train
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/train.md)
+
+# Link to this section使用 Ultralytics YOLO 进行模型训练#
+
+![Ultralytics YOLO ecosystem and integrations](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/ultralytics-yolov8-ecosystem-integrations.avif)
+
+## Link to this section简介#
+
+训练一个 [深度学习](https://www.ultralytics.com/glossary/deep-learning-dl) 模型涉及向其输入数据并调整其参数，以便它能做出准确的预测。Ultralytics YOLO26 中的训练模式专为高效、有效地训练目标检测模型而设计，充分利用了现代硬件性能。本指南旨在涵盖你开始使用 YOLO26 强大的功能集训练自己的模型所需的所有细节。
+
+  
+
+
+  
+**Watch:** How to Train a YOLO model on Your Custom Dataset in Google Colab. 
+
+## Link to this section为何选择 Ultralytics YOLO 进行训练？#
+
+以下是选择 YOLO26 训练模式的一些令人信服的理由：
+
+  * **效率：** 无论你是在单 GPU 设置下还是在多 GPU 环境中扩展，都能充分利用你的硬件性能。
+  * **多功能性：** 除了 COCO、VOC 和 ImageNet 等现成数据集外，还支持使用自定义数据集进行训练。
+  * **用户友好：** 简单而强大的 CLI 和 Python 接口，可提供直接的训练体验。
+  * **超参数灵活性：** 提供广泛的可自定义超参数以微调模型性能。如需更深入的控制，你可以[自定义训练器](/zh/guides/custom-trainer)。
+  * **云训练：** 通过 [Ultralytics Platform](https://platform.ultralytics.com) 在云端 GPU 上进行训练，并获取实时指标和自动检查点保存功能。
+
+
+
+### Link to this section训练模式的主要特点#
+
+以下是 YOLO26 训练模式的一些显著特点：
+
+  * **自动数据集下载：** COCO、VOC 和 ImageNet 等标准数据集会在首次使用时自动下载。
+  * **多 GPU 支持：** 在多个 GPU 上无缝扩展你的训练任务，以加快进程。
+  * **超参数配置：** 可以通过 YAML 配置文件或 CLI 参数修改超参数。
+  * **可视化与监控：** 实时跟踪训练指标并可视化学习过程，以获得更好的洞察力。
+
+
+
+提示
+
+  * YOLO26 的数据集（如 COCO、VOC、ImageNet 等）会在首次使用时自动下载，例如 `yolo train data=coco.yaml`
+
+
+
+## Link to this section使用示例#
+
+在 COCO8 数据集上训练 YOLO26n，进行 100 个 [epoch](https://www.ultralytics.com/glossary/epoch)，图像尺寸为 640。训练设备可以使用 `device` 参数指定。如果没有传入参数，在可用时将使用 GPU `device=0`；否则将使用 `device='cpu'`。有关训练参数的完整列表，请参见下方的“参数”部分。
+
+Windows 多进程错误
+
+在 Windows 上，以脚本形式启动训练时可能会收到 `RuntimeError`。在你的训练代码前添加一个 `if __name__ == "__main__":` 块即可解决此问题。
+
+单 GPU 和 CPU 训练示例
+
+设备将自动确定。如果有可用的 GPU，它将被使用（默认 CUDA 设备 0）；否则将在 CPU 上开始训练。
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.yaml")  # build a new model from YAML
+    model = YOLO("yolo26n.pt")  # load a pretrained model (recommended for training)
+    model = YOLO("yolo26n.yaml").load("yolo26n.pt")  # build from YAML and transfer weights
+    
+    # Train the model
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640)
+
+### Link to this section多 GPU 训练#
+
+多 GPU 训练通过将训练负载分配到多个 GPU 上，实现了对现有硬件资源更高效的利用。此功能可通过 Python API 和命令行界面使用。要启用多 GPU 训练，请指定你希望使用的 GPU 设备 ID。
+
+多 GPU 训练示例
+
+若要使用 CUDA 设备 0 和 1 这 2 个 GPU 进行训练，请使用以下命令。根据需要扩展到更多 GPU。
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")  # load a pretrained model (recommended for training)
+    
+    # Train the model with 2 GPUs
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device=[0, 1])
+    
+    # Train the model with the two most idle GPUs
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device=[-1, -1])
+
+使用自定义代码进行多 GPU 训练
+
+当你指定多个设备（例如 `device=[0, 1]`）时，Ultralytics 会在内部启动一个新的训练器实例，并在底层执行 `torch.distributed.run`。这对于标准的 CLI 使用和未经修改的 Python 脚本可以无缝运行。
+
+但是，如果你的脚本包含自定义组件（例如自定义训练器、验证器、数据集或增强流水线），这些对象无法自动序列化并传输到 DDP 子进程中。在这种情况下，你必须使用 `torch.distributed.run` 直接启动你的脚本：
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 your_training_script.py
+
+### Link to this section空闲 GPU 训练#
+
+空闲 GPU 训练能够自动选择多 GPU 系统中利用率最低的 GPU，从而在无需手动选择的情况下优化资源使用。此功能根据利用率指标和 VRAM 可用性来识别可用 GPU。
+
+空闲 GPU 训练示例
+
+要自动选择并使用最空闲的 GPU 进行训练，请使用 `-1` 设备参数。这在共享计算环境或多用户服务器中特别有用。
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")  # load a pretrained model (recommended for training)
+    
+    # Train using the single most idle GPU
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device=-1)
+    
+    # Train using the two most idle GPUs
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device=[-1, -1])
+
+自动选择算法会优先考虑具有以下特征的 GPU：
+
+  1. 较低的当前利用率百分比
+  2. 较高的可用内存（空闲 VRAM）
+  3. 较低的温度和功耗
+
+
+
+此功能在共享计算环境或跨不同模型运行多个训练作业时特别有价值。它会自动适应不断变化的系统条件，确保在无需人工干预的情况下实现最佳的资源分配。
+
+### Link to this sectionApple Silicon MPS 训练#
+
+随着 Ultralytics YOLO 模型对 Apple Silicon 芯片的支持，现在可以在利用强大的 Metal Performance Shaders (MPS) 框架的设备上训练你的模型。MPS 提供了一种在 Apple 自研芯片上执行计算和图像处理任务的高性能方式。
+
+要启用在 Apple Silicon 芯片上的训练，你应在启动训练过程时将 'mps' 指定为你的设备。以下是你在 Python 和命令行中如何进行此操作的示例：
+
+MPS 训练示例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")  # load a pretrained model (recommended for training)
+    
+    # Train the model with MPS
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device="mps")
+
+在利用 Apple Silicon 芯片计算能力的同时，这使得训练任务的处理更加高效。有关更详细的指导和高级配置选项，请参考 [PyTorch MPS 文档](https://docs.pytorch.org/docs/stable/notes/mps.html)。
+
+### Link to this section恢复中断的训练#
+
+在使用深度学习模型时，从先前保存的状态恢复训练是一项至关重要的功能。这在各种场景下都很方便，例如训练过程意外中断时，或者你希望用新数据或更多的 epoch 继续训练模型时。
+
+当恢复训练时，Ultralytics YOLO 会加载最后保存的模型权重，并恢复优化器状态、[学习率](https://www.ultralytics.com/glossary/learning-rate)调度器以及 epoch 编号。这使你能够从上次中断的地方无缝继续训练过程。
+
+You can easily resume training in Ultralytics YOLO by setting the `resume` argument to `True` when calling the `train` method, and specifying the path to the `.pt` file containing the partially trained model weights.
+
+以下是使用 Python 和命令行恢复中断训练的示例：
+
+恢复训练示例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/last.pt")  # load a partially trained model
+    
+    # Resume training
+    results = model.train(resume=True)
+
+通过设置 `resume=True`，`train` 函数将从上次中断的地方继续训练，使用存储在 'path/to/last.pt' 文件中的状态。如果省略 `resume` 参数或将其设置为 `False`，`train` 函数将开启一个新的训练会话。
+
+请记住，检查点默认在每个 epoch 结束时保存，或者使用 `save_period` 参数以固定间隔保存，因此你必须至少完成 1 个 epoch 才能恢复训练运行。
+
+## Link to this section训练设置#
+
+YOLO 模型的训练设置涵盖了训练过程中使用的各种超参数和配置。这些设置会影响模型的性能、速度和 [准确率](https://www.ultralytics.com/glossary/accuracy)。关键的训练设置包括 batch size、学习率、动量和权重衰减。此外，优化器的选择、[损失函数](https://www.ultralytics.com/glossary/loss-function)和训练数据集的构成也会影响训练过程。仔细调整和试验这些设置对于优化性能至关重要。
+
+### Link to this sectionMuSGD 优化器#
+
+在 YOLO26 中，**MuSGD** 是一种混合优化器，它将标准 **SGD** 更新与 **Muon 风格的正交化更新** 相结合。
+
+它**推荐用于较长的 YOLO26 训练运行和较大的数据集** ，在这种情况下，正交化的 Muon 更新可以帮助稳定优化过程。
+
+只有 `param.ndim >= 2` 的参数（例如卷积权重）才会接收与 SGD 一起使用的 Muon 风格更新，而较低维度的参数（如批归一化层和偏置项）则保留在标准 SGD 上。
+
+当使用 `optimizer=auto` 时，Ultralytics 会自动为较长的训练运行（通常当迭代次数 > 10000 时）选择 **MuSGD** 。对于较短的运行，训练器会回退到 **AdamW** 。
+
+使用示例：
+    
+    
+    yolo train model=yolo26n.pt data=coco8.yaml optimizer=MuSGD
+
+查看 `ultralytics/optim/muon.py` 中的实现以及 `BaseTrainer.build_optimizer` 中的优化器自动选择逻辑。
+
+参数| 类型| 默认值| 描述  
+---|---|---|---  
+`model`| `str`| `None`| 指定用于训练的模型文件。接受 `.pt` 预训练模型或 `.yaml` 配置文件的路径。这对于定义模型结构或初始化权重至关重要。  
+`data`| `str`| `None`| 数据集配置文件的路径（例如 `coco8.yaml`）。该文件包含特定于数据集的参数，包括训练和 [验证数据](https://www.ultralytics.com/glossary/validation-data)的路径、类别名称以及类别数量。  
+`epochs`| `int`| `100`| 总训练 epoch 数。每个 [epoch](https://www.ultralytics.com/glossary/epoch) 代表对整个数据集的一次完整遍历。调整此值会影响训练持续时间和模型性能。  
+`time`| `float`| `None`| 以小时为单位的最长训练时间。如果设置，它将覆盖 `epochs` 参数，允许训练在指定持续时间后自动停止。这对于有时间限制的训练场景非常有用。  
+`patience`| `int`| `100`| 在验证指标没有改善的情况下等待的 epoch 数，之后将提前停止训练。通过在性能停滞时停止训练，有助于防止 [过拟合](https://www.ultralytics.com/glossary/overfitting)。  
+`batch`| `int` 或 `float`| `16`| [Batch size](https://www.ultralytics.com/glossary/batch-size)，具有三种模式：设置为整数（例如 `batch=16`）、用于 60% GPU 内存利用率的自动模式（`batch=-1`），或带有指定利用率分数的自动模式（`batch=0.70`）。  
+`imgsz`| `int`| `640`| 训练的目标图像尺寸。图像被调整为边长等于指定值的正方形（如果 `rect=False`），这保留了 YOLO 模型的长宽比，但 RT-DETR 不会。这会影响模型 [准确率](https://www.ultralytics.com/glossary/accuracy) 和计算复杂度。  
+`save`| `bool`| `True`| 启用保存训练检查点和最终模型权重。这对于恢复训练或 [模型部署](https://www.ultralytics.com/glossary/model-deployment) 非常有用。  
+`save_period`| `int`| `-1`| 保存模型检查点的频率，以 epoch 为单位。值为 -1 会禁用此功能。这对于在长时间训练期间保存中间模型非常有用。  
+`cache`| `bool`| `False`| 启用将数据集图像缓存到内存（`True`/`ram`）、磁盘（`disk`）或禁用缓存（`False`）。通过减少磁盘 I/O 来提高训练速度，但会以增加内存使用量为代价。  
+`device`| `int` 或 `str` 或 `list`| `None`| 指定用于训练的计算设备：单个 GPU (`device=0`)、多个 GPU (`device=[0,1]`)、CPU (`device=cpu`)、用于 Apple Silicon 的 MPS (`device=mps`)、华为昇腾 NPU (`device=npu` 或 `device=npu:0`)，或自动选择最空闲的 GPU (`device=-1`) 或多个空闲 GPU (`device=[-1,-1]`)  
+`workers`| `int`| `8`| 用于数据加载的工作线程数（如果是多 GPU 训练，则为每个 `RANK` 分配的线程数）。影响数据预处理和输入模型的速度，在多 GPU 设置中特别有用。  
+`project`| `str`| `None`| 保存训练输出的项目目录名称。允许对不同的实验进行有组织的存储。  
+`name`| `str`| `None`| 训练运行的名称。用于在项目文件夹内创建子目录，存储训练日志和输出。  
+`exist_ok`| `bool`| `False`| 如果为 True，则允许覆盖现有的项目/名称目录。这对于迭代实验非常有用，无需手动清除之前的输出。  
+`save_dir`| `str`| `None`| 指定保存运行输出的确切目录，覆盖 `project`/`name` 组合。该路径按原样使用，不会自动递增，因此连续运行会重复使用同一个目录。  
+`pretrained`| `bool` 或 `str`| `True`| 确定是否从预训练权重开始训练。可以是布尔值，也可以是权重加载的字符串路径。`pretrained=False` 将从随机初始化的权重开始训练，同时保留模型架构。  
+`optimizer`| `str`| `'auto'`| 训练所选的优化器。选项包括 `SGD`、`MuSGD`、`Adam`、`Adamax`、`AdamW`、`NAdam`、`RAdam`、`RMSProp`，或用于基于模型配置自动选择的 `auto`。影响收敛速度和稳定性。  
+`seed`| `int`| `0`| 设置训练的随机种子，确保在相同配置下的运行结果具有可重复性。  
+`deterministic`| `bool`| `True`| 强制使用确定性算法，确保可重复性，但由于对非确定性算法的限制，可能会影响性能和速度。  
+`verbose`| `bool`| `True`| 在训练期间启用详细输出，在控制台中显示进度条、每个 epoch 的指标以及其他训练信息。  
+`single_cls`| `bool`| `False`| 在训练期间将多类别数据集中的所有类别视为单个类别。适用于二分类任务或专注于对象是否存在而非分类的情况。  
+`classes`| `list[int]`| `None`| 指定要训练的类别 ID 列表。有助于在训练期间过滤掉其他类别，仅关注特定类别。  
+`rect`| `bool`| `False`| 启用最小填充策略——批次中的图像会被最小程度地填充以达到统一大小，最长边等于 `imgsz`。这可以提高效率和速度，但可能会影响模型精度。  
+`multi_scale`| `float`| `0.0`| 每批次随机改变 `imgsz`，变化范围为 +/- `multi_scale`（例如 `0.25` -> `0.75x` 到 `1.25x`），并四舍五入到模型步长的倍数；`0.0` 表示禁用多尺度训练。  
+`cos_lr`| `bool`| `False`| 使用余弦 [学习率](https://www.ultralytics.com/glossary/learning-rate) 调度器，使学习率随 epoch 变化遵循余弦曲线。有助于管理学习率以获得更好的收敛效果。  
+`close_mosaic`| `int`| `10`| 在最后 N 个 epoch 禁用马赛克 [数据增强](https://www.ultralytics.com/glossary/data-augmentation)，以便在完成前稳定训练。设置为 0 则禁用此功能。  
+`resume`| `bool`| `False`| 从上一个保存的检查点恢复训练。自动加载模型权重、优化器状态和 epoch 计数，无缝继续训练。  
+`amp`| `bool`| `True`| 启用自动 [混合精度](https://www.ultralytics.com/glossary/mixed-precision) (AMP) 训练，在对精度影响极小的情况下减少内存使用并可能加快训练速度。  
+`fraction`| `float`| `1.0`| 指定用于训练的数据集比例。允许在完整数据集的子集上进行训练，适用于实验或资源受限的情况。  
+`profile`| `bool`| `False`| 在训练期间启用 ONNX 和 TensorRT 速度分析，有助于优化模型部署。  
+`freeze`| `int` 或 `list`| `None`| 冻结模型的前 N 层或按索引指定的层，从而减少可训练参数的数量。适用于微调或 [迁移学习](https://www.ultralytics.com/glossary/transfer-learning)。  
+`lr0`| `float`| `0.01`| 初始学习率（例如 `SGD=1E-2`，`Adam=1E-3`）。调整此值对于优化过程至关重要，它会影响模型权重的更新速度。  
+`lrf`| `float`| `0.01`| 最终学习率占初始学习率的比例 = (`lr0 * lrf`)，与调度器结合使用以随时间调整学习率。  
+`momentum`| `float`| `0.937`| SGD 的动量因子或 [Adam 优化器](https://www.ultralytics.com/glossary/adam-optimizer) 的 beta1，影响在当前更新中纳入过去梯度的程度。  
+`weight_decay`| `float`| `0.0005`| L2 [正则化](https://www.ultralytics.com/glossary/regularization) 项，通过惩罚过大的权重来防止过拟合。  
+`warmup_epochs`| `float`| `3.0`| 学习率预热的 epoch 数，将学习率从一个较小的值逐渐提高到初始学习率，以便在早期稳定训练。  
+`warmup_momentum`| `float`| `0.8`| 预热阶段的初始动量，在预热期间逐渐调整到设定的动量值。  
+`warmup_bias_lr`| `float`| `0.1`| 预热阶段偏置参数的学习率，有助于在初始 epoch 中稳定模型训练。  
+`box`| `float`| `7.5`| [损失函数](https://www.ultralytics.com/glossary/loss-function) 中框损失组件的权重，影响预测 [边界框](https://www.ultralytics.com/glossary/bounding-box) 坐标的准确性权重。  
+`cls`| `float`| `0.5`| 总损失函数中分类损失的权重，影响正确分类预测相对于其他组件的重要性。  
+`cls_pw`| `float`| `0.0`| 用于处理类别不平衡的类别加权幂指数，采用类别频率的倒数。`0.0` 禁用类别加权，`1.0` 应用完全倒数频率加权。0 到 1 之间的值提供部分加权。  
+`dfl`| `float`| `1.5`| 分布焦点损失（Distribution Focal Loss）的权重，用于某些 YOLO 版本中进行细粒度分类。  
+`pose`| `float`| `12.0`| 针对姿态估计模型训练中的姿态损失权重，影响对关键点预测准确性的重视程度。  
+`kobj`| `float`| `1.0`| 姿态估计模型中关键点目标性损失的权重，平衡检测置信度和姿态准确性。  
+`rle`| `float`| `1.0`| 姿态估计模型中残差对数似然估计损失的权重，影响关键点定位的精度。  
+`angle`| `float`| `1.0`| obb 模型中角度损失的权重，影响旋转边界框角度预测的精度。  
+`nbs`| `int`| `64`| 用于损失归一化的标称批次大小。  
+`overlap_mask`| `bool`| `True`| 确定训练时是否应将对象掩码合并为单个掩码，还是为每个对象保持独立。如果重叠，在合并期间较小的掩码会覆盖在较大的掩码之上。  
+`mask_ratio`| `int`| `4`| 分割掩码的下采样比率，影响训练期间所用掩码的分辨率。  
+`dropout`| `float`| `0.0`| 分类任务中用于正则化的 Dropout 率，通过在训练期间随机省略单元来防止过拟合。  
+`val`| `bool`| `True`| 在训练期间启用验证，允许在单独的数据集上定期评估模型性能。  
+`plots`| `bool`| `True`| 生成并保存训练和验证指标的绘图以及预测示例，从而提供关于模型性能和学习进度的视觉见解。  
+`compile`| `bool` 或 `str`| `False`| 启用 PyTorch 2.x 的 `torch.compile` 图编译，后台使用 `backend='inductor'`。接受 `True` -> `"default"`，`False` -> 禁用，或字符串模式如 `"default"`、`"reduce-overhead"`、`"max-autotune-no-cudagraphs"`。如果不支持，将回退到 eager 模式并发出警告。  
+`max_det`| `int`| `300`| 指定在训练验证阶段保留的对象最大数量。  
+  
+关于批次大小设置的说明
+
+`batch` 参数可以通过三种方式配置：
+
+  * **固定[批次大小](https://www.ultralytics.com/glossary/batch-size)**：设置一个整数值（例如 `batch=16`），直接指定每个批次的图像数量。
+  * **自动模式（60% GPU 内存）** ：使用 `batch=-1` 自动调整批次大小，以利用大约 60% 的 CUDA 内存。
+  * **带利用率分数的自动模式** ：设置一个分数（例如 `batch=0.70`），根据指定的 GPU 内存使用比例来调整批次大小。
+  * **OOM 自动重试** ：如果第一个 epoch 期间发生 CUDA 内存溢出错误，训练器会自动将批次大小减半并重试（最多 3 次）。这仅适用于单 GPU 训练；多 GPU (DDP) 训练将立即引发错误。
+
+
+
+## Link to this section增强设置和超参数#
+
+增强技术对于通过在 [训练数据](https://www.ultralytics.com/glossary/training-data) 中引入变异性来提高 YOLO 模型的稳健性和性能至关重要，有助于模型更好地推广到未见数据。下表概述了每个增强参数的目的和效果：
+
+参数| 类型| 默认值| 支持的任务| 范围| 描述  
+---|---|---|---|---|---  
+[`hsv_h`](/zh/guides/yolo-data-augmentation#hue-adjustment-hsv_h)| `float`| `0.015`| `detect`, `segment`, `pose`, `obb`, `classify`| `0.0 - 1.0`| 通过色轮的一小部分调整图像的色调，引入颜色变异性。有助于模型在不同光照条件下实现泛化。  
+[`hsv_s`](/zh/guides/yolo-data-augmentation#saturation-adjustment-hsv_s)| `float`| `0.7`| `detect`, `segment`, `pose`, `obb`, `classify`| `0.0 - 1.0`| 通过一小部分比例改变图像的饱和度，影响颜色的强度。适用于模拟不同的环境条件。  
+[`hsv_v`](/zh/guides/yolo-data-augmentation#brightness-adjustment-hsv_v)| `float`| `0.4`| `detect`, `segment`, `pose`, `obb`, `classify`| `0.0 - 1.0`| 通过一小部分比例修改图像的值（亮度），帮助模型在各种光照条件下表现良好。  
+[`degrees`](/zh/guides/yolo-data-augmentation#rotation-degrees)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `0.0 - 180`| 在指定的度数范围内随机旋转图像，提高模型识别不同朝向物体的能力。  
+[`translate`](/zh/guides/yolo-data-augmentation#translation-translate)| `float`| `0.1`| `detect`, `segment`, `pose`, `obb`| `0.0 - 1.0`| 按图像尺寸的一定比例水平和垂直平移图像，有助于学习检测部分可见的物体。  
+[`scale`](/zh/guides/yolo-data-augmentation#scale-scale)| `float`| `0.5`| `detect`, `segment`, `pose`, `obb`, `classify`| `0 - 1`| 通过增益因子缩放图像，模拟相机与物体距离不同的情况。  
+[`shear`](/zh/guides/yolo-data-augmentation#shear-shear)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `-180 - +180`| 按指定角度对图像进行剪切，模拟从不同角度观察物体的效果。  
+[`perspective`](/zh/guides/yolo-data-augmentation#perspective-perspective)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `0.0 - 0.001`| 对图像应用随机透视变换，增强模型在3D空间中理解物体的能力。  
+[`flipud`](/zh/guides/yolo-data-augmentation#flip-up-down-flipud)| `float`| `0`| `detect`, `segment`, `pose`, `obb`, `classify`| `0.0 - 1.0`| 以指定的概率将图像上下翻转，在不影响物体特性的前提下增加数据变体。  
+[`fliplr`](/zh/guides/yolo-data-augmentation#flip-left-right-fliplr)| `float`| `0.5`| `detect`, `segment`, `pose`, `obb`, `classify`| `0.0 - 1.0`| 以指定的概率将图像左右翻转，有助于学习对称物体并增加数据集的多样性。  
+[`bgr`](/zh/guides/yolo-data-augmentation#bgr-channel-swap-bgr)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `0.0 - 1.0`| 以指定的概率将图像通道从 RGB 翻转为 BGR，有助于增强对错误通道排序的鲁棒性。  
+[`mosaic`](/zh/guides/yolo-data-augmentation#mosaic-mosaic)| `float`| `1`| `detect`, `segment`, `pose`, `obb`| `0.0 - 1.0`| 将四张训练图像组合成一张，模拟不同的场景构成和物体交互。对于复杂场景理解非常有效。  
+[`mixup`](/zh/guides/yolo-data-augmentation#mixup-mixup)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `0.0 - 1.0`| 混合两张图像及其标签，创建一个复合图像。通过引入标签噪声和视觉变体，提高模型的泛化能力。  
+[`cutmix`](/zh/guides/yolo-data-augmentation#cutmix-cutmix)| `float`| `0`| `detect`, `segment`, `pose`, `obb`| `0.0 - 1.0`| 结合两张图像的部分内容，在保持不同区域的同时创建一个部分混合图像。通过创建遮挡场景来增强模型的鲁棒性。  
+[`copy_paste`](/zh/guides/yolo-data-augmentation#copy-paste-copy_paste)| `float`| `0`| `segment`| `0.0 - 1.0`| 在图像之间复制和粘贴物体，以增加物体实例。  
+[`copy_paste_mode`](/zh/guides/yolo-data-augmentation#copy-paste-mode-copy_paste_mode)| `str`| `flip`| `segment`| -| 指定使用的 `copy-paste` 策略。选项包括 `'flip'` 和 `'mixup'`。  
+[`auto_augment`](/zh/guides/yolo-data-augmentation#auto-augment-auto_augment)| `str`| `randaugment`| `classify`| -| 应用预定义的增强策略（`'randaugment'`、`'autoaugment'` 或 `'augmix'`），通过视觉多样性来提升模型性能。  
+[`erasing`](/zh/guides/yolo-data-augmentation#random-erasing-erasing)| `float`| `0.4`| `classify`| `0.0 - 1.0`| 在训练期间随机擦除图像区域，鼓励模型关注不太明显的特征。  
+[`augmentations`](/zh/guides/yolo-data-augmentation#custom-albumentations-transforms-augmentations)| `list`| ``| `detect`, `segment`, `pose`, `obb`| -| 用于高级数据增强的自定义 Albumentations 转换（仅限 Python API）。接受转换对象列表以满足特定的增强需求。  
+  
+这些设置可以根据数据集和当前任务的具体要求进行调整。尝试不同的数值有助于找到实现最佳模型性能的最佳增强策略。
+
+信息
+
+有关训练增强操作的更多信息，请参阅[参考部分](/reference/data/augment)。
+
+## Link to this section日志记录#
+
+在训练 YOLO26 模型时，跟踪模型的表现随时间的变化会非常有价值。这就是日志记录发挥作用的地方。Ultralytics YOLO 支持三种类型的记录器 - [Comet](/zh/integrations/comet)、[ClearML](/zh/integrations/clearml) 和 [TensorBoard](/zh/integrations/tensorboard)。
+
+要使用记录器，请从上面的代码片段中的下拉菜单中选择它并运行。所选的记录器将被安装并初始化。
+
+### Link to this sectionComet#
+
+[Comet](/zh/integrations/comet) 是一个平台，允许数据科学家和开发人员跟踪、比较、解释和优化实验与模型。它提供了诸如实时指标、代码差异和超参数跟踪等功能。
+
+要使用 Comet：
+
+示例
+    
+    
+    # pip install comet_ml
+    import comet_ml
+    
+    comet_ml.init()
+
+记得在他们的网站上登录你的 Comet 账户并获取你的 API key。你需要将其添加到环境变量或脚本中以记录你的实验。
+
+### Link to this sectionClearML#
+
+[ClearML](https://clear.ml/) 是一个开源平台，可自动跟踪实验并帮助高效共享资源。它旨在帮助团队更高效地管理、执行和复现其 ML 工作。
+
+要使用 ClearML：
+
+示例
+    
+    
+    # pip install clearml
+    import clearml
+    
+    clearml.browser_login()
+
+运行此脚本后，你需要在浏览器中登录你的 ClearML 账户并验证你的会话。
+
+### Link to this sectionTensorBoard#
+
+[TensorBoard](https://www.tensorflow.org/tensorboard) 是 [TensorFlow](https://www.ultralytics.com/glossary/tensorflow) 的可视化工具包。它允许你可视化 TensorFlow 图、绘制有关图执行的定量指标，并显示通过它的额外数据，如图像。
+
+要在 [Google Colab](https://colab.research.google.com/github/ultralytics/ultralytics/blob/main/examples/tutorial.ipynb) 中使用 TensorBoard：
+
+示例
+    
+    
+    load_ext tensorboard
+    tensorboard --logdir ultralytics/runs # replace with 'runs' directory
+
+要在本地使用 TensorBoard，请运行以下命令并在 `localhost:6006` 查看结果。
+
+示例
+    
+    
+    tensorboard --logdir ultralytics/runs # replace with 'runs' directory
+
+这将加载 TensorBoard 并将其定向到保存训练日志的目录。
+
+设置好记录器后，你就可以继续进行模型训练。所有训练指标将自动记录在你选择的平台上，你可以访问这些日志来监控模型随时间的表现，比较不同模型，并找出需要改进的地方。
+
+## Link to this section常见问题解答#
+
+### Link to this section我可以在没有本地 GPU 的情况下进行训练吗？#
+
+可以。[Ultralytics Platform](https://platform.ultralytics.com) 支持带有免费额度的云训练。上传你的数据集，选择模型和 GPU，即可直接从浏览器进行训练。有关详细信息，请参阅[云训练指南](/zh/platform/train/cloud-training)。
+
+### Link to this section如何使用 Ultralytics YOLO26 训练[目标检测](https://www.ultralytics.com/glossary/object-detection)模型？#
+
+要使用 Ultralytics YOLO26 训练目标检测模型，你可以使用 Python API 或 CLI。以下是两者的示例：
+
+单 GPU 和 CPU 训练示例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")  # load a pretrained model (recommended for training)
+    
+    # Train the model
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640)
+
+有关更多详细信息，请参阅训练设置部分。
+
+### Link to this sectionUltralytics YOLO26 的 Train 模式有哪些主要功能？#
+
+Ultralytics YOLO26 的 Train 模式的主要功能包括：
+
+  * **自动下载数据集：** 自动下载 COCO、VOC 和 ImageNet 等标准数据集。
+  * **多 GPU 支持：** 在多个 GPU 上扩展训练以实现更快的处理速度。
+  * **超参数配置：** 通过 YAML 文件或 CLI 参数自定义超参数。
+  * **可视化和监控：** 实时跟踪训练指标以获得更好的见解。
+
+
+
+这些功能使得训练变得高效且可根据你的需求进行定制。有关详细信息，请参阅Train 模式的主要功能部分。
+
+### Link to this section如何在 Ultralytics YOLO26 中从中断的会话中恢复训练？#
+
+要从中断的会话中恢复训练，请将 `resume` 参数设置为 `True` 并指定最后保存的检查点的路径。
+
+恢复训练示例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the partially trained model
+    model = YOLO("path/to/last.pt")
+    
+    # Resume training
+    results = model.train(resume=True)
+
+查看关于恢复中断的训练的部分以获取更多信息。
+
+### Link to this section如何在不平衡的数据集上训练模型？#
+
+当训练数据中某些类别的示例明显少于其他类别时，就会发生类别不平衡。这会导致模型在罕见类别上的表现较差。Ultralytics YOLO 通过 `cls_pw` 参数支持类别加权来解决此问题。
+
+`cls_pw` 参数根据反向类别频率控制类别加权能力：
+
+  * `cls_pw=0.0`（默认）：禁用类别加权
+  * `cls_pw=1.0`：应用完全反向频率加权
+  * `0.0` 到 `1.0` 之间的值：为中等不平衡提供部分加权
+
+
+
+类别权重计算方式为 `(1.0 / class_counts) ^ cls_pw`，并进行归一化处理，使其均值等于 1.0。
+
+在不平衡数据集上训练
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained model
+    model = YOLO("yolo26n.pt")
+    
+    # Train with full class weighting for severely imbalanced data
+    results = model.train(data="custom.yaml", epochs=100, imgsz=640, cls_pw=1.0)
+    
+    # Or use partial weighting (0.25) for moderate imbalance
+    results = model.train(data="custom.yaml", epochs=100, imgsz=640, cls_pw=0.25)
+
+提示
+
+对于中等不平衡的数据集，从 `cls_pw=0.25` 开始，如果罕见类别仍然表现不佳，则增加到 `1.0`。你可以在训练日志中检查计算出的类别权重，以验证权重分布。
+
+### Link to this section我可以在 Apple Silicon 芯片上训练 YOLO26 模型吗？#
+
+可以，Ultralytics YOLO26 支持利用 Metal Performance Shaders (MPS) 框架在 Apple Silicon 芯片上进行训练。将 'mps' 指定为你的训练设备。
+
+MPS 训练示例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained model
+    model = YOLO("yolo26n.pt")
+    
+    # Train the model on Apple silicon chip (M1/M2/M3/M4)
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640, device="mps")
+
+有关详细信息，请参阅Apple Silicon MPS 训练部分。
+
+### Link to this section常见的训练设置有哪些，我该如何配置它们？#
+
+Ultralytics YOLO26 允许你通过参数配置各种训练设置，如 batch size、学习率、epochs 等。以下是简要概述：
+
+参数| 默认值| 描述  
+---|---|---  
+`model`| `None`| 用于训练的模型文件路径。  
+`data`| `None`| 数据集配置文件路径（例如 `coco8.yaml`）。  
+`epochs`| `100`| 训练的总 epochs 数。  
+`batch`| `16`| Batch size，可调整为整数或自动模式。  
+`imgsz`| `640`| 训练的目标图像尺寸。  
+`device`| `None`| 用于训练的计算设备，例如 `cpu`、`0`、`0,1` 或 `mps`。  
+`save`| `True`| 启用训练检查点和最终模型权重的保存。  
+  
+有关训练设置的深入指南，请查看训练设置部分。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/train.md)
+
+[GLglenn-jocher27](https://github.com/glenn-jocher)[RAraimbekovm3](https://github.com/raimbekovm)[LALaughing-q3](https://github.com/Laughing-q)[Y-Y-T-G2](https://github.com/Y-T-G)[MAMatthewNoyce2](https://github.com/MatthewNoyce)AHAhmet Faruk GÜMÜŞTAŞ1[ONonuralpszr1](https://github.com/onuralpszr)[DEderiiinjv1](https://github.com/deriiinjv)[PDpderrenger1](https://github.com/pderrenger)[JAJairajJangle1](https://github.com/JairajJangle)[JKjk4e1](https://github.com/jk4e)[RIRizwanMunawar1](https://github.com/RizwanMunawar)[FCfcakyon1](https://github.com/fcakyon)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+已创建 2023年11月12日已更新 5天前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

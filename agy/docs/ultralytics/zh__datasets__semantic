@@ -1,0 +1,258 @@
+---
+source_url: https://docs.ultralytics.com/zh/datasets/semantic
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/semantic/index.md)
+
+# Link to this section语义分割数据集概述#
+
+[语义分割](https://www.ultralytics.com/glossary/semantic-segmentation)为图像中的每个像素分配一个类别标签。与[实例分割](/zh/datasets/segment)不同，语义分割不会区分同一类别的单个对象。训练目标是一个密集类掩码，其中每个像素存储一个类 ID。
+
+本指南解释了 Ultralytics YOLO 语义分割模型所使用的数据集格式，并列出了可用于训练和验证的内置数据集配置。
+
+## Link to this section支持的数据集格式#
+
+支持两种标签格式。数据集加载器会根据数据集 YAML 是否定义了 `masks_dir` 键来选择路径。
+
+### Link to this sectionPNG 掩码格式#
+
+语义分割数据集每个样本使用一个图像文件和一个掩码文件。掩码是单通道图像，通常为 PNG 格式，其中每个像素值都是对应图像像素的类别索引。
+
+  * 像素值 `0`、`1`、`2` 等代表数据集 `names` 映射中的类 ID。
+  * 像素值 `255` 被视为忽略标签，并在损失和指标计算中被排除。
+  * 掩码文件应与其匹配的图像文件使用相同的文件名主干，例如 `frankfurt_000000_000294.png`。
+  * 掩码默认被解析为 `.png` 文件；如果缺失，也接受其他支持的图像扩展名。请使用无损格式（如 `.png` 或 `.tiff`），因为有损压缩（如 `.jpg`）会损坏类 ID 像素值。
+
+
+
+默认布局将图像和掩码保留在并行文件夹中。数据集 YAML 中的 `masks_dir` 值会替换 `images` 路径组件以查找掩码。
+    
+    
+    dataset/
+    ├── images/
+    │   ├── train/
+    │   └── val/
+    └── masks/
+        ├── train/
+        └── val/
+
+For example, an image at `images/train/aachen_000000_000019.png` is paired with a mask at `masks/train/aachen_000000_000019.png` when `masks_dir: masks`.
+
+### Link to this sectionYOLO 多边形标签格式#
+
+如果你的数据集已经拥有 Ultralytics YOLO 多边形标签（每张图像一个 `.txt` 文件，包含 `<class-index> <x1> <y1> <x2> <y2> ...` 行），你可以直接从中训练语义分割，无需转换为 PNG 掩码。关于行级布局，请参考[实例分割数据集格式](/zh/datasets/segment#ultralytics-yolo-format)。
+
+当数据集 YAML **省略** `masks_dir` 时，会自动选择此路径。其行为如下：
+
+  * 多边形在加载时会被转换为每张图像的语义掩码，并按面积排序，以便在重叠区域中较小的对象覆盖较大的对象。
+  * **Multi-class** (`N > 1` in `names`): an extra `background` class is appended after your declared classes for pixels not covered by any polygon. The model is built with `N + 1` output channels and the last channel is background.
+  * **Single-class** (`N == 1` in `names`): still trained as 1 class. The mask is binary, with your declared class shown as `1` and pixels not covered by any polygon as `0`. No extra background class is added to `names`.
+  * 由增强填充（例如随机裁剪）添加的像素仍使用 `255` 作为忽略标签。
+
+
+
+当你的数据已经标注为实例多边形，且你想从相同文件生成语义分割模型时，请使用此路径。
+
+### Link to this section数据集 YAML 格式#
+
+语义分割数据集使用 YAML 文件进行配置。主要字段包括：
+
+键| 描述  
+---|---  
+`path`| 数据集根目录。  
+`train`| 相对于 `path` 的训练图像路径，或绝对路径。  
+`val`| 相对于 `path` 的验证图像路径，或绝对路径。  
+`test`| 可选的测试图像路径。  
+`masks_dir`| 用于语义掩码的目录名称。省略此键可切换至 YOLO 多边形标签格式。  
+`names`| 类 ID 到类名称的映射。  
+`label_mapping`| 可选的从源数据集 ID 到训练 ID 或 `ignore_label` 的映射。  
+  
+ultralytics/cfg/datasets/cityscapes8.yaml
+    
+    
+    # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+    
+    # Cityscapes semantic segmentation dataset (19 classes)
+    # Documentation: https://docs.ultralytics.com/datasets/semantic/cityscapes8
+    # Example usage: yolo semantic train data=cityscapes8.yaml model=yolo26n-sem.pt
+    # parent
+    # ├── ultralytics
+    # └── datasets
+    #     └── cityscapes8 ← downloads here (small subset)
+    #         └── images
+    #         └── masks
+    
+    # Dataset root directory
+    path: cityscapes8 # dataset root dir
+    train: images/train # train images (relative to 'path') 4 images
+    val: images/val # val images (relative to 'path') 4 images
+    
+    masks_dir: masks # semantic mask directory
+    
+    # Cityscapes 19-class labels
+    names:
+      0: road
+      1: sidewalk
+      2: building
+      3: wall
+      4: fence
+      5: pole
+      6: traffic light
+      7: traffic sign
+      8: vegetation
+      9: terrain
+      10: sky
+      11: person
+      12: rider
+      13: car
+      14: truck
+      15: bus
+      16: train
+      17: motorcycle
+      18: bicycle
+    
+    # Map source label IDs to train IDs; ignore_label is converted to 255.
+    label_mapping:
+      -1: ignore_label
+      0: ignore_label
+      1: ignore_label
+      2: ignore_label
+      3: ignore_label
+      4: ignore_label
+      5: ignore_label
+      6: ignore_label
+      7: 0
+      8: 1
+      9: ignore_label
+      10: ignore_label
+      11: 2
+      12: 3
+      13: 4
+      14: ignore_label
+      15: ignore_label
+      16: ignore_label
+      17: 5
+      18: ignore_label
+      19: 6
+      20: 7
+      21: 8
+      22: 9
+      23: 10
+      24: 11
+      25: 12
+      26: 13
+      27: 14
+      28: 15
+      29: ignore_label
+      30: ignore_label
+      31: 16
+      32: 17
+      33: 18
+    
+    # Download URL (optional)
+    download: https://github.com/ultralytics/assets/releases/download/v0.0.0/cityscapes8.zip
+
+当源掩码 ID 与连续的训练类 ID 不匹配时，请使用 `label_mapping`。Cityscapes 和 ADE20K 包含将原始标签 ID 转换为 YOLO 语义分割训练 ID 并忽略未使用标签的映射。
+
+## Link to this section用法#
+
+使用 Python 或 CLI 训练 YOLO26 语义分割模型：
+
+示例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained semantic segmentation model
+    model = YOLO("yolo26n-sem.pt")
+    
+    # Train on the Cityscapes8 semantic segmentation dataset
+    results = model.train(data="cityscapes8.yaml", epochs=100, imgsz=1024)
+
+## Link to this section支持的数据集#
+
+Ultralytics 为以下数据集提供语义分割数据集 YAML 文件：
+
+  * [Cityscapes](/zh/datasets/semantic/cityscapes)：具有 19 个训练类别的城市街道场景语义分割数据集。
+  * [Cityscapes8](/zh/datasets/semantic/cityscapes8)：用于快速测试和 CI 检查的 8 张图像 Cityscapes 子集。
+  * [ADE20K](/zh/datasets/semantic/ade20k)：包含 150 个语义类别的场景解析数据集。
+
+
+
+## Link to this section添加你自己的数据集#
+
+### Link to this section选项 A — PNG 掩码#
+
+  1. 将图像保存在如 `images/train` 和 `images/val` 等拆分文件夹中。
+  2. 在镜像掩码文件夹中，为每张图像保存一个单通道掩码，如 `masks/train` 和 `masks/val`。
+  3. 确保掩码像素值是类 ID。对于应被忽略的像素，请使用 `255`。
+  4. 创建包含 `path`、`train`、`val`、`masks_dir` 和 `names` 的数据集 YAML。
+  5. 仅当你的掩码 ID 需要转换为连续的训练 ID 时，才添加 `label_mapping`。
+
+
+    
+    
+    path: path/to/my-semantic-dataset
+    train: images/train
+    val: images/val
+    masks_dir: masks
+    
+    names:
+        0: background
+        1: road
+        2: building
+
+### Link to this section选项 B — 多边形标签#
+
+  1. Lay out images and `.txt` polygon files exactly as for [instance segmentation](/zh/datasets/segment).
+  2. 创建一个包含 `path`、`train`、`val` 和 `names` 的数据集 YAML —— **省略** `masks_dir`。
+  3. 不要在 `names` 中添加“background”条目。对于多类数据集，加载器会自动追加一个；对于单类数据集，训练仍保持 1 类——你声明的类在掩码中变为 `1`，未覆盖的像素变为 `0`。
+
+
+    
+    
+    path: path/to/my-polygon-dataset
+    train: images/train
+    val: images/val
+    
+    names:
+        0: person
+        1: car
+
+## Link to this section常见问题解答#
+
+### Link to this section语义分割掩码和实例分割标签之间有什么区别？#
+
+语义分割掩码是密集的像素图。每个像素存储一个类 ID，每张训练图像对应一个掩码图像。Ultralytics YOLO 中的实例分割标签使用包含多边形坐标的文本文件，每个对象实例占一行。
+
+### Link to this section训练期间哪些像素值会被忽略？#
+
+像素值 `255` 被用作忽略标签。这些像素在损失和指标计算期间会被跳过，这对于空区域、未标记像素或训练标签集之外的类别非常有用。
+
+### Link to this section掩码文件名需要与图像文件名匹配吗？#
+
+是的。每个语义掩码应与对应的图像具有相同的文件名主干。数据集加载器会将 `images` 目录组件替换为 `masks_dir`，并搜索匹配的掩码文件。
+
+### Link to this section我可以直接使用原始数据集标签 ID 吗？#
+
+可以，如果它们已经与你的 `names` 类 ID 匹配的话。如果源数据集使用非连续 ID 或包含应被忽略的标签，请添加 `label_mapping` 部分以将源像素值转换为训练 ID。
+
+### Link to this section我可以使用我的实例分割数据集来训练语义分割吗？#
+
+可以。实例分割数据集使用 Ultralytics YOLO 多边形标签（每张图像一个 `.txt` 文件，包含 `<class-index> <x1> <y1> <x2> <y2> ...` 行），相同的文件可重用于语义分割——只需在数据集 YAML 中**省略** `masks_dir`。加载器会实时将多边形转换为每张图像的掩码。对于多类数据集（`N > 1`），会自动追加一个额外的 `background` 类，且模型构建时会有 `N + 1` 个输出通道。对于单类数据集（`N == 1`），训练仍保持 1 类——掩码显示你声明的类为 `1`，未覆盖的像素为 `0`。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/semantic/index.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)
+
+已创建 4周前已更新 2周前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

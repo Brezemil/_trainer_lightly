@@ -1,0 +1,322 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/export-non-yolo-models
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/export-non-yolo-models.md)
+
+# Link to this sectionUltralytics ile YOLO Olmayan PyTorch Modelleri Nasıl Dışa Aktarılır#
+
+PyTorch modellerini üretime almak, genellikle her hedef için farklı bir dışa aktarıcıyı (exporter) yönetmek anlamına gelir: ONNX için `torch.onnx.export`, Apple cihazları için `coremltools`, TensorFlow için `onnx2tf`, NCNN için `pnnx` gibi. Her aracın kendi API'si, bağımlılık tuhaflıkları ve çıktı kuralları vardır.
+
+Ultralytics ships standalone export utilities that wrap multiple backends behind one consistent interface. You can export any `torch.nn.Module`, including [timm](https://github.com/huggingface/pytorch-image-models) image models, [torchvision](https://docs.pytorch.org/vision/) classifiers and detectors, or your own custom architectures, to [ONNX](/tr/integrations/onnx), [TorchScript](/tr/integrations/torchscript), [OpenVINO](/tr/integrations/openvino), [CoreML](/tr/integrations/coreml), [NCNN](/tr/integrations/ncnn), [PaddlePaddle](/tr/integrations/paddlepaddle), [MNN](/tr/integrations/mnn), [ExecuTorch](/tr/integrations/executorch), and [TensorFlow SavedModel](/tr/integrations/tf-savedmodel) without learning each backend separately.
+
+## Link to this sectionYOLO Olmayan Dışa Aktarma İşlemleri İçin Neden Ultralytics Kullanmalısın?#
+
+  * **10 formatta tek bir API:** düzinelercesi yerine tek bir çağırma kuralı öğren.
+  * **Paylaşılan yardımcı yüzey:** dışa aktarma yardımcıları `ultralytics.utils.export` altında yer alır, bu nedenle arka uç paketleri yüklendikten sonra formatlar genelinde aynı çağırma düzenini koruyabilirsin.
+  * **YOLO dışa aktarmalarıyla aynı kod yolu:** aynı yardımcılar her Ultralytics YOLO dışa aktarma işlemini destekler.
+  * **FP16 ve INT8 niceleme (quantization):** bunu destekleyen formatlar (OpenVINO, CoreML, MNN, NCNN) için yerleşik olarak gelir.
+  * **CPU üzerinde çalışır:** dışa aktarma adımının kendisi için GPU gerekmez, bu sayede herhangi bir dizüstü bilgisayarda yerel olarak çalıştırabilirsin.
+
+
+
+## Link to this sectionHızlı Başlangıç#
+
+The fastest path is a two-line export to [ONNX](/tr/integrations/onnx) with no YOLO code and no setup beyond `pip install ultralytics onnx timm`:
+    
+    
+    import timm
+    import torch
+    
+    from ultralytics.utils.export import torch2onnx
+    
+    model = timm.create_model("resnet18", pretrained=True).eval()
+    torch2onnx(model, torch.randn(1, 3, 224, 224), output_file="resnet18.onnx")
+
+## Link to this sectionDesteklenen Dışa Aktarma Formatları#
+
+`torch2*` fonksiyonları, standart bir `torch.nn.Module` ve örnek bir girdi tensörü alır. MNN, TF SavedModel ve TF Frozen Graph, ara bir ONNX veya Keras yapısı üzerinden geçer. Her iki durumda da YOLO'ya özgü öznitelikler gerekmez.
+
+Format| Fonksiyon| Yükle| Çıktı  
+---|---|---|---  
+ONNX| `torch2onnx()`| `pip install onnx`| `.onnx` dosyası  
+TorchScript| `torch2torchscript()`| PyTorch ile birlikte gelir| `.torchscript` dosyası  
+OpenVINO| `torch2openvino()`| `pip install openvino`| `_openvino_model/` dizini  
+CoreML| `torch2coreml()`| `pip install coremltools`| `.mlpackage`  
+TF SavedModel| `onnx2saved_model()`| aşağıdaki ayrıntılı gereksinimlere bak| `_saved_model/` dizini  
+TF Frozen Graph| `keras2pb()`| aşağıdaki ayrıntılı gereksinimlere bak| `.pb` dosyası  
+NCNN| `torch2ncnn()`| `pip install ncnn pnnx`| `_ncnn_model/` dizini  
+MNN| `onnx2mnn()`| `pip install MNN`| `.mnn` dosyası  
+PaddlePaddle| `torch2paddle()`| `pip install paddlepaddle x2paddle`| `_paddle_model/` dizini  
+ExecuTorch| `torch2executorch()`| `pip install executorch`| `_executorch_model/` dizini  
+  
+Ara format olarak ONNX
+
+[MNN](/tr/integrations/mnn), [TF SavedModel](/tr/integrations/tf-savedmodel) ve TF Frozen Graph dışa aktarma işlemleri ara adım olarak ONNX üzerinden geçer. Önce ONNX'e dışa aktar, ardından dönüştür.
+
+Meta veri yerleştirme
+
+Birçok dışa aktarma fonksiyonu, format destekliyorsa dışa aktarılan yapının içine özel anahtar-değer çiftleri yerleştiren isteğe bağlı bir `metadata` sözlüğü (örneğin `torch2torchscript(..., metadata={"author": "me"})`) kabul eder.
+
+## Link to this sectionAdım Adım Örnekler#
+
+Aşağıdaki her örnek, değerlendirme modundaki timm'den alınmış önceden eğitilmiş bir ResNet-18 ile aynı kurulumu kullanır:
+    
+    
+    import timm
+    import torch
+    
+    model = timm.create_model("resnet18", pretrained=True).eval()
+    im = torch.randn(1, 3, 224, 224)
+
+Dışa aktarmadan önce mutlaka `model.eval()` çağrısı yap
+
+Dropout, [batch normalization](https://www.ultralytics.com/glossary/batch-normalization) ve diğer sadece eğitim katmanları, çıkarım (inference) sırasında farklı davranır. `.eval()` adımını atlamak, hatalı çıktılara sahip dışa aktarmalar üretir.
+
+### Link to this sectionONNX'e Dışa Aktar#
+    
+    
+    from ultralytics.utils.export import torch2onnx
+    
+    torch2onnx(model, im, output_file="resnet18.onnx")
+
+Dinamik toplu iş boyutu (batch size) için bir `dynamic` sözlüğü geçir:
+    
+    
+    torch2onnx(model, im, output_file="resnet18_dyn.onnx", dynamic={"images": {0: "batch_size"}})
+
+Varsayılan opset `14` ve varsayılan girdi adı `"images"` şeklindedir. `opset`, `input_names` veya `output_names` argümanlarıyla bunları geçersiz kılabilirsin.
+
+### Link to this sectionTorchScript'e Dışa Aktar#
+
+Ek bağımlılık gerekmez. Arka planda `torch.jit.trace` kullanır.
+    
+    
+    from ultralytics.utils.export import torch2torchscript
+    
+    torch2torchscript(model, im, output_file="resnet18.torchscript")
+
+### Link to this sectionOpenVINO'ya Dışa Aktar#
+    
+    
+    from ultralytics.utils.export import torch2openvino
+    
+    ov_model = torch2openvino(model, im, output_dir="resnet18_openvino_model")
+
+Dizin, sabit isimli `model.xml` ve `model.bin` çiftini içerir:
+    
+    
+    resnet18_openvino_model/
+    ├── model.xml
+    └── model.bin
+
+Dinamik girdi şekilleri için `dynamic=True`, FP16 için `half=True` veya INT8 niceleme için `int8=True` değerlerini geçir. INT8 ayrıca bir `calibration_dataset` argümanı gerektirir.
+
+`openvino>=2024.0.0` (veya macOS 15.4+ üzerinde `>=2025.2.0`) ve `torch>=2.1` gerekir.
+
+### Link to this sectionCoreML'ye Dışa Aktar#
+    
+    
+    import coremltools as ct
+    
+    from ultralytics.utils.export import torch2coreml
+    
+    inputs = [ct.TensorType("input", shape=(1, 3, 224, 224))]
+    ct_model = torch2coreml(model, inputs, im, classifier_names=None, output_file="resnet18.mlpackage")
+
+[sınıflandırma](https://www.ultralytics.com/glossary/image-classification) modelleri için CoreML modeline bir sınıflandırma başlığı eklemek üzere `classifier_names` kısmına sınıf isimlerinin olduğu bir liste geçir.
+
+`coremltools>=9.0`, `torch>=1.11` ve `numpy<=2.3.5` gerekir. Windows üzerinde desteklenmez.
+
+`BlobWriter not loaded` hatası
+
+`coremltools>=9.0`, macOS ve Linux üzerinde Python 3.10–3.13 için wheel dosyalarıyla gelir. Daha yeni Python sürümlerinde yerel C uzantısı yüklenemez. CoreML dışa aktarımı için Python 3.10–3.13 kullan.
+
+### Link to this sectionTensorFlow SavedModel'e Dışa Aktar#
+
+TF SavedModel dışa aktarımı, ara adım olarak ONNX üzerinden geçer:
+    
+    
+    from ultralytics.utils.export import onnx2saved_model, torch2onnx
+    
+    torch2onnx(model, im, output_file="resnet18.onnx")
+    keras_model = onnx2saved_model("resnet18.onnx", output_dir="resnet18_saved_model")
+
+Fonksiyon bir Keras modeli döndürür ve ayrıca çıktı dizininde TFLite dosyaları (`.tflite`) üretir:
+    
+    
+    resnet18_saved_model/
+    ├── saved_model.pb
+    ├── variables/
+    ├── resnet18_float32.tflite
+    ├── resnet18_float16.tflite
+    └── resnet18_int8.tflite
+
+Gereksinimler:
+
+  * `tensorflow>=2.0.0,<=2.19.0`
+  * `onnx2tf>=1.26.3,<1.29.0`
+  * `tf_keras<=2.19.0`
+  * `sng4onnx>=1.0.1`
+  * `onnx_graphsurgeon>=0.3.26` (`--extra-index-url https://pypi.ngc.nvidia.com` ile yükle)
+  * macOS üzerinde `ai-edge-litert>=1.2.0,<1.4.0` (diğer platformlarda `ai-edge-litert>=1.2.0`)
+  * `onnxslim>=0.1.71`
+  * `onnx>=1.12.0,<2.0.0`
+  * `protobuf>=5`
+
+
+
+### Link to this sectionTensorFlow Frozen Graph'a Dışa Aktar#
+
+Yukarıdaki SavedModel dışa aktarımından devam ederek, döndürülen Keras modelini dondurulmuş bir `.pb` grafiğine dönüştür:
+    
+    
+    from pathlib import Path
+    
+    from ultralytics.utils.export import keras2pb
+    
+    keras2pb(keras_model, output_file=Path("resnet18_saved_model/resnet18.pb"))
+
+### Link to this sectionNCNN'e Dışa Aktar#
+    
+    
+    from ultralytics.utils.export import torch2ncnn
+    
+    torch2ncnn(model, im, output_dir="resnet18_ncnn_model")
+
+Dizin, Python sarmalayıcısı ile birlikte sabit isimli param ve bin dosyalarını içerir:
+    
+    
+    resnet18_ncnn_model/
+    ├── model.ncnn.param
+    ├── model.ncnn.bin
+    └── model_ncnn.py
+
+`torch2ncnn()` ilk kullanımda `ncnn` ve `pnnx` olup olmadığını kontrol eder.
+
+### Link to this sectionMNN'e Dışa Aktar#
+
+MNN dışa aktarımı, girdi olarak bir ONNX dosyası gerektirir. Önce ONNX'e dışa aktar, ardından dönüştür:
+    
+    
+    from ultralytics.utils.export import onnx2mnn, torch2onnx
+    
+    torch2onnx(model, im, output_file="resnet18.onnx")
+    onnx2mnn("resnet18.onnx", output_file="resnet18.mnn")
+
+FP16 için `half=True` ve INT8 niceleme için `int8=True` desteği vardır. `MNN>=2.9.6` ve `torch>=1.10` gerekir.
+
+### Link to this sectionPaddlePaddle'a Dışa Aktar#
+    
+    
+    from ultralytics.utils.export import torch2paddle
+    
+    torch2paddle(model, im, output_dir="resnet18_paddle_model")
+
+Dizin, PaddlePaddle modelini ve parametre dosyalarını içerir:
+    
+    
+    resnet18_paddle_model/
+    ├── model.pdmodel
+    └── model.pdiparams
+
+`x2paddle` ve platformun için doğru PaddlePaddle dağıtımı gerekir:
+
+  * CUDA üzerinde `paddlepaddle-gpu>=3.0.0,<3.3.0`
+  * ARM64 CPU üzerinde `paddlepaddle==3.0.0`
+  * Diğer CPU'larda `paddlepaddle>=3.0.0,<3.3.0`
+
+
+
+NVIDIA Jetson üzerinde desteklenmez.
+
+### Link to this sectionExecuTorch formatına dışa aktar#
+    
+    
+    from ultralytics.utils.export import torch2executorch
+    
+    torch2executorch(model, im, output_dir="resnet18_executorch_model")
+
+Dışa aktarılan `.pte` dosyası çıktı dizininin içine kaydedilir:
+    
+    
+    resnet18_executorch_model/
+    └── model.pte
+
+`torch>=2.9.0` ve eşleşen bir ExecuTorch çalışma zamanı (`pip install executorch`) gerektirir. Çalışma zamanı kullanımı için [ExecuTorch entegrasyonu](/tr/integrations/executorch) bölümüne bak.
+
+## Link to this sectionDışa Aktarılan Modelini Doğrula#
+
+After exporting, verify numerical parity with the original PyTorch model before shipping. A quick smoke test with `ONNXBackend` from `ultralytics.nn.backends` compares outputs and flags tracing or quantization errors early:
+    
+    
+    import numpy as np
+    import timm
+    import torch
+    
+    from ultralytics.nn.backends import ONNXBackend
+    
+    model = timm.create_model("resnet18", pretrained=True).eval()
+    im = torch.randn(1, 3, 224, 224)
+    with torch.no_grad():
+        pytorch_output = model(im).numpy()
+    
+    onnx_model = ONNXBackend("resnet18.onnx", device=torch.device("cpu"))
+    onnx_output = onnx_model(im)[0]
+    
+    diff = np.abs(pytorch_output - onnx_output).max()
+    print(f"Max difference: {diff:.6f}")  # should be < 1e-5
+
+Beklenen fark
+
+FP32 dışa aktarımları için maksimum mutlak fark `1e-5` değerinin altında olmalıdır. Daha büyük farklar desteklenmeyen işlemlere, hatalı giriş biçimine veya değerlendirme (eval) modunda olmayan bir modele işaret eder. FP16 ve INT8 dışa aktarımları daha gevşek toleranslara sahiptir. Rastgele tensörler yerine gerçek veriler üzerinde doğrula.
+
+Diğer çalışma zamanları için giriş tensör adı farklı olabilir. Örneğin OpenVINO, modelin ileri besleme argüman adını (genel modeller için genellikle `x`) kullanırken, `torch2onnx` varsayılan olarak `"images"` kullanır.
+
+## Link to this sectionBilinen Sınırlamalar#
+
+  * **Çoklu giriş desteği eşit değildir** : `torch2onnx` ve `torch2openvino`, birden fazla girişi olan modeller için örnek tensörlerden oluşan bir demet (tuple) veya liste kabul eder. `torch2torchscript`, `torch2coreml`, `torch2ncnn`, `torch2paddle` ve `torch2executorch` ise tek bir giriş tensörü varsayar.
+  * **ExecuTorch`flatc` gerektirir**: ExecuTorch çalışma zamanı, FlatBuffers derleyicisini gerektirir. macOS'te `brew install flatbuffers` veya Ubuntu'da `apt install flatbuffers-compiler` komutuyla yükle.
+  * **Ultralytics aracılığıyla çıkarım yapılamaz** : Dışa aktarılan YOLO dışı modeller, çıkarım için `YOLO()` üzerinden tekrar yüklenemez. Her format için yerel çalışma zamanını kullan ([ONNX Runtime](/tr/integrations/onnx), [OpenVINO Runtime](/tr/integrations/openvino) vb.).
+  * **Yalnızca YOLO formatları** : [Axelera](/tr/integrations/axelera) ve [Sony IMX500](/tr/integrations/sony-imx500) dışa aktarımları, YOLO'ya özgü model nitelikleri gerektirir ve genel modeller için mevcut değildir.
+  * **Platforma özgü formatlar** : [TensorRT](/tr/integrations/tensorrt) bir NVIDIA GPU gerektirir. [RKNN](/tr/integrations/rockchip-rknn) ise `rknn-toolkit2` SDK'sını gerektirir (sadece Linux). [Edge TPU](/tr/integrations/edge-tpu) ise `edgetpu_compiler` ikili dosyasını gerektirir (sadece Linux).
+
+
+
+## Link to this sectionSSS#
+
+### Link to this sectionUltralytics ile hangi modelleri dışa aktarabilirim?#
+
+Herhangi bir `torch.nn.Module`. Buna timm, torchvision veya herhangi bir özel PyTorch modelinden gelen modeller dahildir. Model, dışa aktarmadan önce değerlendirme modunda (`model.eval()`) olmalıdır. ONNX ve OpenVINO, çoklu girişli modeller için ek olarak örnek tensörlerden oluşan bir demeti kabul eder.
+
+### Link to this sectionHangi dışa aktarma formatları GPU olmadan çalışır?#
+
+Desteklenen tüm formatlar (TorchScript, ONNX, OpenVINO, CoreML, TF SavedModel, TF Frozen Graph, NCNN, PaddlePaddle, MNN, ExecuTorch) CPU üzerinde dışa aktarılabilir. Dışa aktarma işleminin kendisi için hiçbir GPU gerekmez. TensorRT, NVIDIA GPU gerektiren tek formattır.
+
+### Link to this sectionHangi Ultralytics sürümüne ihtiyacım var?#
+
+Use Ultralytics `>=8.4.38`, which includes the `ultralytics.utils.export` module and the standardized `output_file`/`output_dir` arguments.
+
+### Link to this sectionBir torchvision modelini iOS dağıtımı için CoreML'e aktarabilir miyim?#
+
+Yes. torchvision classifiers, detectors, and segmentation models export to `.mlpackage` via `torch2coreml`. For image classification models, pass a list of class names to `classifier_names` to bake in a classification head. Run the export on macOS or Linux. CoreML is not supported on Windows. See the [CoreML integration](/tr/integrations/coreml) for iOS deployment details.
+
+### Link to this sectionDışa aktardığım modelimi INT8 veya FP16'ya niceleyebilir miyim?#
+
+Yes, for several formats. Pass `half=True` for FP16 or `int8=True` for INT8 when exporting to OpenVINO, CoreML, MNN, or NCNN. INT8 in OpenVINO additionally requires a `calibration_dataset` argument for [post-training quantization](https://www.ultralytics.com/glossary/model-quantization). See each format's integration page for quantization trade-offs.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/export-non-yolo-models.md)
+
+[GLglenn-jocher3](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)[RAraimbekovm1](https://github.com/raimbekovm)
+
+Oluşturulma geçen ayGüncellenme 2 hafta önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

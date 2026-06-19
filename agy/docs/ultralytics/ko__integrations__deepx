@@ -1,0 +1,332 @@
+---
+source_url: https://docs.ultralytics.com/ko/integrations/deepx
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/deepx.md)
+
+# Link to this sectionUltralytics YOLO 모델을 위한 DEEPX 내보내기#
+
+컴퓨터 비전 모델을 특수 NPU 하드웨어에 배포하려면 호환 가능하고 최적화된 모델 형식이 필요합니다. [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) 모델을 DEEPX 형식으로 내보내면 DEEPX NPU 가속기에서 효율적인 INT8 양자화 추론이 가능합니다. 이 가이드에서는 YOLO 모델을 DEEPX 형식으로 변환하고 DEEPX 기반 하드웨어에 배포하는 방법을 설명합니다.
+
+## Link to this sectionDEEPX란 무엇입니까?#
+
+![DEEPX NPU Inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/deepx_cover.avif)
+
+[DEEPX](https://deepx.ai/)는 엣지에서의 전력 효율적인 [딥러닝](https://www.ultralytics.com/glossary/deep-learning-dl) 추론을 위해 설계된 신경망 처리 장치(NPU)를 전문으로 하는 AI 반도체 기업입니다. DEEPX NPU는 까다로운 임베디드 및 산업용 AI 애플리케이션을 위해 설계되었으며, 최소한의 전력 소비로 높은 처리량을 제공합니다. 해당 하드웨어는 로봇 공학, 스마트 카메라, 산업 자동화 시스템과 같이 클라우드 연결이 불안정하거나 바람직하지 않은 배포 시나리오에 적합합니다.
+
+## Link to this sectionDEEPX 내보내기 형식#
+
+DEEPX 내보내기 결과물은 DEEPX NPU 하드웨어 실행에 최적화된 컴파일된 `.dxnn` 모델 바이너리입니다. 컴파일 파이프라인은 `dx_com` 툴킷을 사용하여 INT8 양자화 및 하드웨어별 최적화를 수행하고, 배포 준비가 완료된 독립형 모델 디렉토리를 생성합니다.
+
+## Link to this sectionDEEPX 모델의 주요 특징#
+
+DEEPX 모델은 엣지 배포를 위해 다음과 같은 몇 가지 장점을 제공합니다:
+
+  * **INT8 양자화** : 모델은 내보내는 동안 INT8 정밀도로 양자화되어 모델 크기를 크게 줄이고 NPU 처리량을 극대화합니다. [모델 양자화](https://www.ultralytics.com/glossary/model-quantization)에 대해 자세히 알아보십시오.
+  * **NPU 최적화** : `.dxnn` 형식은 DEEPX NPU 하드웨어에 맞게 특별히 컴파일되어 전용 가속 유닛을 활용하여 빠르고 효율적인 추론을 수행합니다.
+  * **낮은 전력 소비** : 추론을 NPU로 오프로딩함으로써 DEEPX 모델은 동일한 수준의 CPU 또는 GPU 추론보다 훨씬 적은 전력을 소비합니다.
+  * **보정 기반 정확도** : 이 내보내기 과정은 실제 데이터셋 이미지를 사용하는 EMA 기반 보정을 사용하여 양자화 중 정확도 손실을 최소화합니다.
+  * **독립형 출력** : 내보낸 모델 디렉토리에는 간편한 배포를 위해 컴파일된 바이너리, 보정 설정 및 메타데이터가 번들로 포함되어 있습니다.
+
+
+
+## Link to this section지원되는 작업#
+
+모든 표준 Ultralytics 작업은 YOLO26, YOLO11 및 YOLOv8 모델 제품군 전반에서 DEEPX 내보내기를 지원합니다.
+
+작업| 지원됨  
+---|---  
+[객체 탐지](https://docs.ultralytics.com/tasks/detect)| ✅  
+[인스턴스 분할](https://docs.ultralytics.com/tasks/segment)| ✅  
+[의미론적 분할](https://docs.ultralytics.com/tasks/semantic)| ✅  
+[포즈 추정](https://docs.ultralytics.com/tasks/pose)| ✅  
+[OBB 탐지](https://docs.ultralytics.com/tasks/obb)| ✅  
+[분류](https://docs.ultralytics.com/tasks/classify)| ✅  
+  
+## Link to this sectionDEEPX로 내보내기: YOLO 모델 변환#
+
+Ultralytics YOLO 모델을 DEEPX 형식으로 내보내고 내보낸 모델로 추론을 실행합니다.
+
+참고
+
+DEEPX 내보내기는 x86-64 Linux 머신에서만 지원됩니다. ARM64(aarch64)는 내보내기 단계에서 지원되지 않습니다. 그러나 내보낸 dxnn 모델은 ARM64 플랫폼에서 완벽하게 호환되며 실행 가능합니다.
+
+### Link to this section설치#
+
+필수 패키지를 설치하려면 다음을 실행하십시오:
+
+설치
+    
+    
+    # Install the required package for YOLO
+    pip install ultralytics
+
+`dx_com` 컴파일러 패키지는 첫 내보내기 시 DEEPX SDK 저장소에서 자동으로 설치됩니다. 설치 과정과 관련된 자세한 지침 및 모범 사례는 [Ultralytics 설치 가이드](/ko/quickstart)를 확인하십시오. YOLO용 필수 패키지를 설치하는 동안 문제가 발생하면 [공통 문제 가이드](/ko/guides/yolo-common-issues)에서 해결 방법 및 팁을 참조하십시오.
+
+### Link to this section사용법#
+
+DEEPX 형식은 [Export](/ko/modes/export), [Predict](/ko/modes/predict) 및 [Validate](/ko/modes/val) 모드를 지원합니다. 추론 및 검증은 DEEPX NPU 하드웨어에서 실행됩니다. 모델을 내보낸 다음 내보낸 모델을 로드하여 추론을 실행하거나 정확도를 검증하십시오.
+
+내보내기(Export)
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to DEEPX format (int8=True is enforced automatically)
+    model.export(format="deepx")  # creates 'yolo26n_deepx_model/'
+
+추론(Predict)
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported DEEPX model
+    model = YOLO("yolo26n_deepx_model")
+    
+    # Run inference
+    results = model("https://ultralytics.com/images/bus.jpg")
+
+검증
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported DEEPX model
+    model = YOLO("yolo26n_deepx_model")
+    
+    # Validate accuracy on the COCO8 dataset
+    metrics = model.val(data="coco8.yaml")
+
+### Link to this section내보내기 인수#
+
+인수| 유형| 기본값| 설명  
+---|---|---|---  
+`format`| `str`| `'deepx'`| 내보낸 모델의 대상 형식으로, DEEPX NPU 하드웨어와의 호환성을 정의합니다.  
+`imgsz`| `int` 또는 `tuple`| `640`| 모델 입력에 필요한 이미지 크기입니다. DEEPX 내보내기는 정사각형 입력을 요구합니다. 정수(예: `640`) 또는 높이와 너비가 같은 튜플을 전달하십시오.  
+`int8`| `bool`| `True`| INT8 양자화를 활성화합니다. DEEPX 내보내기에 필수이며, 지정하지 않으면 자동으로 `True`로 설정됩니다.  
+`data`| `str`| `'coco8.yaml'`| INT8 보정에 사용되는 데이터셋 구성 파일입니다. 보정 이미지 소스를 지정합니다.  
+`device`| `str`| `None`| 내보내기용 장치를 지정합니다: GPU (`device=0`) 또는 CPU (`device=cpu`).  
+`optimize`| `bool`| `False`| 더 높은 컴파일러 최적화를 활성화하여 추론 지연 시간을 줄이고 컴파일 시간을 늘립니다.  
+  
+팁
+
+DEEPX 내보내기는 항상 **x86-64 Linux** 호스트에서 실행하십시오. `dx_com` 컴파일러는 ARM64를 지원하지 않습니다.
+
+내보내기 프로세스에 대한 자세한 내용은 [내보내기에 대한 Ultralytics 문서 페이지](/ko/modes/export)를 참조하십시오.
+
+### Link to this section출력 구조#
+
+성공적으로 내보낸 후에는 다음 레이아웃의 모델 디렉토리가 생성됩니다:
+    
+    
+    yolo26n_deepx_model/
+    ├── yolo26n.dxnn     # Compiled DEEPX model binary (NPU executable)
+    ├── config.json      # Calibration and preprocessing configuration
+    └── metadata.yaml    # Model metadata (classes, image size, task, etc.)
+
+`.dxnn` 파일은 `dx_engine` 런타임이 NPU에서 직접 로드하는 컴파일된 모델 바이너리입니다. `metadata.yaml`에는 Ultralytics 추론 파이프라인에서 사용하는 클래스 이름, 이미지 크기 및 기타 정보가 포함되어 있습니다.
+
+## Link to this section내보낸 YOLO DEEPX 모델 배포#
+
+Ultralytics YOLO 모델을 DEEPX 형식으로 성공적으로 내보냈다면, 다음 단계는 이러한 모델을 DEEPX NPU 하드웨어에 배포하는 것입니다.
+
+### Link to this section런타임 설치#
+
+추론을 수행하려면 DEEPX NPU 드라이버, `libdxrt` 런타임 및 `dx_engine` Python 패키지가 필요합니다.
+
+참고
+
+DEEPX 런타임은 x86-64 Linux 및 ARM64(예: Raspberry Pi 5)를 모두 지원합니다.
+    
+    
+    # Install the NPU driver and libdxrt runtime
+    sudo apt update
+    wget https://github.com/DEEPX-AI/dx_rt_npu_linux_driver/raw/main/release/2.4.1/dxrt-driver-dkms_2.4.1-2_all.deb
+    sudo apt install ./dxrt-driver-dkms_2.4.1-2_all.deb
+    wget https://github.com/DEEPX-AI/dx_rt/raw/main/release/3.3.2/libdxrt_3.3.2_all.deb
+    sudo apt install ./libdxrt_3.3.2_all.deb
+    
+    # Create dx-engine wheel
+    cd /usr/share/libdxrt/python_package && sudo ./make_whl.sh
+    
+    # Install the bundled dx_engine Python wheel
+    pip install dx_engine-*.whl
+
+`dxrt-cli --version`으로 런타임이 올바르게 설치되었는지 확인하십시오. 다음과 유사한 출력이 표시되어야 합니다:
+    
+    
+    DXRT v3.3.2
+    Minimum Driver Versions
+    Device Driver: v2.4.0
+    PCIe Driver: v2.2.0
+    Firmware: v2.5.2
+    Minimum Compiler Versions
+    Compiler: v1.18.1
+    .dxnn File Format: v6
+
+런타임이 설치되면 위의 사용법 섹션에 표시된 대로 정확히 DEEPX 장치에서 추론 및 검증을 실행하십시오. 내보낸 `_deepx_model`은 `YOLO(...)`를 사용하여 직접 로드됩니다.
+
+### Link to this sectiondxtron으로 시각화#
+
+[dxtron](https://developer.deepx.ai)은 컴파일된 `.dxnn` 모델을 검사하기 위한 DEEPX의 그래프 시각화 도구입니다.
+
+Install `dxtron` on x86-64 Linux by downloading the `.deb` package from the DEEPX SDK and installing it via `dpkg`:
+    
+    
+    wget https://sdk.deepx.ai/release/dxtron/v2.0.1/dxtron_2.0.1_amd64.deb
+    sudo dpkg -i dxtron_2.0.1_amd64.deb
+
+그런 다음 내보낸 모델을 엽니다:
+    
+    
+    dxtron yolo26n_deepx_model/yolo26n.dxnn
+
+참고
+
+`dxtron`은 x86-64 및 aarch64 플랫폼 모두에서 사용할 수 있습니다.
+
+## Link to this section벤치마크#
+
+Ultralytics 팀은 YOLO26 모델을 벤치마킹하여 PyTorch와 DEEPX 간의 속도와 정확도를 비교했습니다.
+
+성능
+
+![Raspberry Pi 5 DEEPX M1 NPU vs PyTorch benchmarks](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/deepx-m1-npu-vs-pytorch.avif)
+
+모델| 형식| 상태| 크기(MB)| metrics/mAP50-95(B)| 추론 시간(ms/im)  
+---|---|---|---|---|---  
+YOLO26n| PyTorch| ✅| 5.3| 0.4760| 315.2  
+YOLO26n| DEEPX| ✅| 6.6| 0.4660| 34.6  
+YOLO26n-seg| PyTorch| ✅| 6.5| 0.4080| 485.4  
+YOLO26n-seg| DEEPX| ✅| 7.9| 0.3920| 53.8  
+YOLO26n-pose| PyTorch| ✅| 7.6| 0.4230| 506.3  
+YOLO26n-pose| DEEPX| ✅| 8.8| 0.4590| 37.6  
+YOLO26n-obb| PyTorch| ✅| 5.7| 0.817| 1094.4  
+YOLO26n-obb| DEEPX| ✅| 7.3| 0.783| 56.4  
+  
+모델| 형식| 상태| 크기(MB)| acc (top1)| acc (top5)| 추론 시간(ms/im)  
+---|---|---|---|---|---|---  
+YOLO26n-cls| PyTorch| ✅| 5.6| 0.431| 0.716| 23.8  
+YOLO26n-cls| DEEPX| ✅| 5.9| 0.333| 0.686| 2.7  
+  
+참고
+
+상기 벤치마크 검증은 객체 탐지는 coco128, 세그멘테이션은 coco128-seg, 자세 추정은 coco8-pose, 분류는 imagenet100, OBB 모델은 dota128 데이터셋을 사용하여 수행되었습니다. 추론 시간은 전처리 및 후처리 시간을 포함하지 않습니다.
+
+성능 최적화 팁
+
+Raspberry Pi 5에 연결된 DX-M1 NPU에서 최상의 추론 처리량을 얻으려면 부팅 구성 파일을 열고 PCIe Gen 3 지원을 활성화하십시오.
+    
+    
+    sudo nano /boot/firmware/config.txt
+
+파일 끝에 다음 줄을 추가하십시오:
+    
+    
+    dtparam=pciex1
+    dtparam=pciex1_gen=3
+
+저장하고 종료한 후(Ctrl+X, 그다음 Y, 그다음 Enter), 재부팅하십시오:
+    
+    
+    sudo reboot
+
+PCIe 세대를 확인하십시오. PCIe Gen3의 예상 속도는 8GT/s입니다.
+    
+    
+    sudo lspci -vvv | grep -iA 33 accelerators | grep -E "LnkCap|LnkSta"
+
+## Link to this section권장 워크플로우#
+
+  1. Ultralytics [Train Mode](/ko/modes/train)를 사용하여 모델을 **학습(Train)**하십시오.
+  2. `model.export(format="deepx")`를 사용하여 DEEPX 형식으로 **내보내기(Export)**하십시오.
+  3. 최소한의 양자화 손실을 확인하기 위해 `yolo val`로 정확도를 **검증(Validate)**하십시오.
+  4. 정성적 검증을 위해 `yolo predict`를 사용하여 **예측(Predict)**하십시오.
+  5. **Deploy** the exported `_deepx_model/` directory to DEEPX NPU hardware using the `dx_engine` runtime
+
+
+
+## Link to this section실제 활용 사례#
+
+DEEPX NPU 하드웨어에 배포된 YOLO 모델은 다양한 [edge AI](https://www.ultralytics.com/glossary/edge-ai) 애플리케이션에 적합합니다:
+
+  * **스마트 감시** : 낮은 전력 소비와 클라우드 의존성 없이 보안 및 모니터링 시스템을 위한 실시간 [object detection](https://www.ultralytics.com/glossary/object-detection).
+  * **산업 자동화** : 공장 환경에서의 온디바이스 품질 관리, 결함 탐지 및 공정 모니터링.
+  * **로봇 공학** : 자율 로봇 및 드론에서의 비전 기반 내비게이션, 장애물 회피 및 객체 인식.
+  * **스마트 농업** : [computer vision in agriculture](https://www.ultralytics.com/solutions/ai-in-agriculture)를 활용한 작물 건강 모니터링, 해충 탐지 및 수확량 예측.
+  * **리테일 분석** : 실시간 엣지 추론을 통한 고객 흐름 분석, 선반 모니터링 및 재고 추적.
+
+
+
+## Link to this section요약#
+
+이 가이드에서는 Ultralytics YOLO 모델을 DEEPX 형식으로 내보내고 DEEPX NPU 하드웨어에 배포하는 방법을 배웠습니다. 내보내기 파이프라인은 INT8 보정과 `dx_com` 컴파일러를 사용하여 하드웨어 최적화된 `.dxnn` 바이너리를 생성하며, `dx_engine` 런타임이 장치에서의 추론을 처리합니다.
+
+[Ultralytics YOLO](https://www.ultralytics.com/yolo)와 DEEPX의 NPU 기술 결합은 임베디드 및 엣지 장치에서 고급 [computer vision](https://www.ultralytics.com/glossary/computer-vision-cv) 워크로드를 실행하기 위한 효과적인 솔루션을 제공하며, 실시간 애플리케이션을 위해 낮은 전력 소비로 높은 처리량을 제공합니다.
+
+사용에 대한 자세한 내용은 [DEEPX 공식 웹사이트](https://deepx.ai/)를 방문하십시오.
+
+또한 다른 Ultralytics YOLO 통합에 대해 더 알고 싶으시면 [통합 가이드 페이지](/ko/integrations)를 방문하십시오. 그곳에서 유용한 리소스와 인사이트를 많이 찾을 수 있습니다.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionUltralytics YOLO 모델을 어떻게 DEEPX 형식으로 내보내나요?#
+
+Python의 `export()` 메서드나 CLI를 통해 모델을 내보낼 수 있습니다. 내보내기는 자동으로 INT8 양자화를 활성화하고 보정 데이터셋을 사용하여 정확도 손실을 최소화합니다. `dx_com` 컴파일러 패키지는 설치되어 있지 않은 경우 자동으로 설치됩니다.
+
+예시
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    model.export(format="deepx")
+
+### Link to this sectionDEEPX 내보내기에 INT8 양자화가 필요한 이유는 무엇인가요?#
+
+DEEPX NPU는 INT8 연산을 최대 효율로 수행하도록 설계되었습니다. `dx_com` 컴파일러는 내보내는 동안 실제 데이터셋 이미지를 사용한 EMA 기반 보정을 통해 모델을 양자화하여 NPU가 최고의 성능을 발휘할 수 있도록 합니다. DEEPX 내보내기 시 INT8은 항상 강제되며, `int8=False`를 전달하면 경고와 함께 무시됩니다.
+
+### Link to this sectionDEEPX 내보내기는 어떤 플랫폼을 지원하나요?#
+
+DEEPX 모델 내보내기(컴파일)는 **x86-64 Linux** 호스트가 필요합니다. 내보내기 단계는 ARM64(aarch64) 및 Windows 머신에서는 지원되지 않습니다. 내보낸 `.dxnn` 모델을 사용한 추론은 `dx_engine` 런타임이 지원하는 모든 Linux 플랫폼(x86-64 및 ARM64)에서 실행할 수 있습니다.
+
+### Link to this sectionDEEPX 내보내기의 출력물은 무엇인가요?#
+
+내보내기를 수행하면 다음을 포함하는 디렉토리(예: `yolo26n_deepx_model/`)가 생성됩니다:
+
+  * `yolo26n.dxnn` — 컴파일된 NPU 바이너리
+  * `config.json` — 보정 및 전처리 설정
+  * `metadata.yaml` — 클래스 이름과 이미지 크기를 포함한 모델 메타데이터
+
+
+
+### Link to this section사용자 지정 학습 모델을 DEEPX 하드웨어에 배포할 수 있나요?#
+
+네. [Ultralytics Train Mode](/ko/modes/train)를 사용하여 학습하고 `format="deepx"`로 내보낸 모든 모델은 지원되는 레이어 연산을 사용하는 한 DEEPX NPU 하드웨어에 배포할 수 있습니다. 내보내기는 탐지, 세그멘테이션, 자세 추정, OBB(Oriented Bounding Box) 및 분류 작업을 지원합니다.
+
+### Link to this sectionDEEPX 내보내기에 몇 장의 보정 이미지를 사용해야 하나요?#
+
+DEEPX 내보내기 파이프라인은 EMA 보정 방법을 사용하여 보정 데이터셋의 모든 이미지를 사용합니다. 일반적으로 수백 장의 이미지만으로도 충분한 양자화 정확도를 얻을 수 있습니다. 큰 데이터셋으로 인해 컴파일 시간이 우려되는 경우 `data`를 더 작은 데이터셋으로 지정하십시오.
+
+### Link to this section추론을 위한 DEEPX 런타임은 어떻게 설치하나요?#
+
+DEEPX 런타임은 `ultralytics`에 포함되어 있지 않으므로 추론을 실행하기 전에 별도로 설치해야 합니다. x86-64 Linux 머신 및 ARM64 Linux 머신(예: Raspberry Pi 5)의 경우, DEEPX-AI GitHub 릴리스에서 NPU 드라이버(`dxrt-driver-dkms`)와 런타임(`libdxrt`)을 설치한 다음, 번들로 제공되는 `dx_engine` Python 휠을 설치하십시오. 단계별 명령어는 위의 Runtime Installation 섹션을 참조하십시오.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/deepx.md)
+
+[GLglenn-jocher6](https://github.com/glenn-jocher)[LAlakshanthad2](https://github.com/lakshanthad)[DEdeepx-dgkim1](https://github.com/deepx-dgkim)[AMambitious-octopus1](https://github.com/ambitious-octopus)
+
+생성됨 지난달업데이트됨 5일 전
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

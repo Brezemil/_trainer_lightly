@@ -1,0 +1,210 @@
+---
+source_url: https://docs.ultralytics.com/ko/usage/engine
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/usage/engine.md)
+
+# Link to this section고급 사용자 지정#
+
+Ultralytics YOLO의 명령줄 인터페이스와 Python 인터페이스는 모두 기본 엔진 실행기(engine executor)를 기반으로 구축된 고수준 추상화입니다. 이 가이드는 `Trainer` 엔진에 중점을 두어, 특정 요구 사항에 맞게 이를 사용자 지정하는 방법을 설명합니다.
+
+  
+
+
+  
+**Watch:** Mastering Ultralytics YOLO: Advanced Customization 
+
+팁
+
+사용자 지정 메트릭, 클래스 가중치 손실(class-weighted loss), 모델 저장, 백본 동결(backbone freezing), 레이어별 학습률 등 일반적인 트레이너 사용자 지정의 실제 예제는 [Customizing Trainer](/ko/guides/custom-trainer) 가이드를 참조하십시오.
+
+## Link to this sectionBaseTrainer#
+
+`BaseTrainer` 클래스는 다양한 작업에 적용할 수 있는 일반적인 학습 루틴을 제공합니다. 필수 형식을 준수하면서 특정 함수나 작업을 재정의(override)하여 사용자 지정하십시오. 예를 들어, 다음 함수들을 재정의하여 자신만의 사용자 지정 모델과 데이터로더를 통합할 수 있습니다:
+
+  * `get_model(cfg, weights)`: 학습할 모델을 빌드합니다.
+  * `get_dataloader()`: 데이터로더를 빌드합니다.
+
+
+
+자세한 내용과 소스 코드는 [`BaseTrainer` Reference](/reference/engine/trainer)를 참조하십시오.
+
+## Link to this sectionDetectionTrainer#
+
+Ultralytics YOLO `DetectionTrainer`를 사용하고 사용자 지정하는 방법은 다음과 같습니다:
+    
+    
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    
+    trainer = DetectionTrainer(overrides={...})
+    trainer.train()
+    trained_model = trainer.best  # Get the best model
+
+### Link to this sectionDetectionTrainer 사용자 지정#
+
+직접 지원되지 않는 사용자 지정 탐지 모델을 학습하려면 기존 `get_model` 기능을 오버로드(overload)하십시오:
+    
+    
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    
+    class CustomTrainer(DetectionTrainer):
+        def get_model(self, cfg=None, weights=None, verbose=True):
+            """Loads a custom detection model given configuration and weight files."""
+            ...
+    
+    trainer = CustomTrainer(overrides={...})
+    trainer.train()
+
+[손실 함수](https://www.ultralytics.com/glossary/loss-function)를 수정하거나 [콜백](/ko/usage/callbacks)을 추가하여 10 [에폭](https://www.ultralytics.com/glossary/epoch)마다 모델을 Google Drive에 업로드하도록 트레이너를 추가로 사용자 지정할 수 있습니다. 다음은 예제입니다:
+    
+    
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    from ultralytics.nn.tasks import DetectionModel
+    
+    class MyCustomModel(DetectionModel):
+        def init_criterion(self):
+            """Initializes the loss function and adds a callback for uploading the model to Google Drive every 10 epochs."""
+            ...
+    
+    class CustomTrainer(DetectionTrainer):
+        def get_model(self, cfg=None, weights=None, verbose=True):
+            """Returns a customized detection model instance configured with specified config and weights."""
+            return MyCustomModel(...)
+    
+    # Callback to upload model weights
+    def log_model(trainer):
+        """Logs the path of the last model weight used by the trainer."""
+        last_weight_path = trainer.last
+        print(last_weight_path)
+    
+    trainer = CustomTrainer(overrides={...})
+    trainer.add_callback("on_train_epoch_end", log_model)  # Adds to existing callbacks
+    trainer.train()
+
+콜백 트리거 이벤트 및 진입점에 대한 자세한 내용은 [Callbacks Guide](/ko/usage/callbacks)를 참조하십시오.
+
+## Link to this section기타 엔진 구성 요소#
+
+`Validators` 및 `Predictors`와 같은 다른 구성 요소도 유사하게 사용자 지정할 수 있습니다. 자세한 내용은 [Validators](/reference/engine/validator) 및 [Predictors](/reference/engine/predictor) 문서를 참조하십시오.
+
+## Link to this section사용자 지정 트레이너와 함께 YOLO 사용하기#
+
+`YOLO` 모델 클래스는 트레이너 클래스를 위한 고수준 래퍼(wrapper)를 제공합니다. 머신 러닝 워크플로에서 더 큰 유연성을 얻기 위해 이 아키텍처를 활용할 수 있습니다:
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    
+    # Create a custom trainer
+    class MyCustomTrainer(DetectionTrainer):
+        def get_model(self, cfg=None, weights=None, verbose=True):
+            """Custom code implementation."""
+            ...
+    
+    # Initialize YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Train with custom trainer
+    results = model.train(trainer=MyCustomTrainer, data="coco8.yaml", epochs=3)
+
+이 접근 방식을 사용하면 YOLO 인터페이스의 단순성을 유지하면서 특정 요구 사항에 맞게 기본 학습 과정을 사용자 지정할 수 있습니다.
+
+## Link to this section자주 묻는 질문(FAQ)#
+
+### Link to this section특정 작업을 위해 Ultralytics YOLO DetectionTrainer를 어떻게 사용자 지정합니까?#
+
+사용자 지정 모델 및 데이터로더에 맞게 메서드를 재정의하여 특정 작업에 대해 `DetectionTrainer`를 사용자 지정하십시오. `DetectionTrainer`를 상속받아 `get_model`과 같은 메서드를 재정의하여 사용자 지정 기능을 구현하십시오. 다음은 예제입니다:
+    
+    
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    
+    class CustomTrainer(DetectionTrainer):
+        def get_model(self, cfg=None, weights=None, verbose=True):
+            """Loads a custom detection model given configuration and weight files."""
+            ...
+    
+    trainer = CustomTrainer(overrides={...})
+    trainer.train()
+    trained_model = trainer.best  # Get the best model
+
+[손실 함수](https://www.ultralytics.com/glossary/loss-function) 변경 또는 [콜백](https://www.ultralytics.com/glossary/callback) 추가와 같은 추가 사용자 지정은 [Callbacks Guide](/ko/usage/callbacks)를 참조하십시오.
+
+### Link to this sectionUltralytics YOLO에서 BaseTrainer의 주요 구성 요소는 무엇입니까?#
+
+`BaseTrainer`는 학습 루틴의 기반이 되며, 일반 메서드를 재정의하여 다양한 작업에 맞게 사용자 지정할 수 있습니다. 주요 구성 요소는 다음과 같습니다:
+
+  * `get_model(cfg, weights)`: 학습할 모델을 빌드합니다.
+  * `get_dataloader()`: 데이터로더를 빌드합니다.
+  * `preprocess_batch()`: 모델 포워드 패스 전 배치 전처리를 처리합니다.
+  * `set_model_attributes()`: 데이터셋 정보를 기반으로 모델 속성을 설정합니다.
+  * `get_validator()`: 모델 평가를 위한 검증기(validator)를 반환합니다.
+
+
+
+사용자 지정 및 소스 코드에 대한 자세한 내용은 [`BaseTrainer` Reference](/reference/engine/trainer)를 참조하십시오.
+
+### Link to this sectionUltralytics YOLO DetectionTrainer에 콜백을 어떻게 추가할 수 있습니까?#
+
+`DetectionTrainer`에서 학습 과정을 모니터링하고 수정하기 위해 콜백을 추가하십시오. 매 학습 [에폭](https://www.ultralytics.com/glossary/epoch) 후 모델 가중치를 기록하는 콜백을 추가하는 방법은 다음과 같습니다:
+    
+    
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    
+    # Callback to upload model weights
+    def log_model(trainer):
+        """Logs the path of the last model weight used by the trainer."""
+        last_weight_path = trainer.last
+        print(last_weight_path)
+    
+    trainer = DetectionTrainer(overrides={...})
+    trainer.add_callback("on_train_epoch_end", log_model)  # Adds to existing callbacks
+    trainer.train()
+
+콜백 이벤트 및 진입점에 대한 자세한 내용은 [Callbacks Guide](/ko/usage/callbacks)를 참조하십시오.
+
+### Link to this section모델 학습에 Ultralytics YOLO를 사용해야 하는 이유는 무엇입니까?#
+
+Ultralytics YOLO는 강력한 엔진 실행기 위에 고수준 추상화를 제공하여 빠른 개발과 사용자 지정에 이상적입니다. 주요 이점은 다음과 같습니다:
+
+  * **사용 편의성** : 명령줄 및 Python 인터페이스 모두 복잡한 작업을 단순화합니다.
+  * **성능** : 실시간 [객체 탐지](https://www.ultralytics.com/glossary/object-detection) 및 다양한 비전 AI 애플리케이션에 최적화되어 있습니다.
+  * **사용자 지정** : 사용자 지정 모델, [손실 함수](https://www.ultralytics.com/glossary/loss-function) 및 데이터로더를 위해 쉽게 확장 가능합니다.
+  * **모듈성** : 구성 요소를 전체 파이프라인에 영향을 주지 않고 독립적으로 수정할 수 있습니다.
+  * **통합** : ML 생태계의 인기 있는 프레임워크 및 도구와 원활하게 작동합니다.
+
+
+
+YOLO의 기능에 대해 더 알아보려면 [Ultralytics YOLO](https://www.ultralytics.com/yolo) 메인 페이지를 살펴보십시오.
+
+### Link to this section비표준 모델에 Ultralytics YOLO DetectionTrainer를 사용할 수 있습니까?#
+
+네, `DetectionTrainer`는 비표준 모델에 대해 매우 유연하며 사용자 지정이 가능합니다. `DetectionTrainer`를 상속받아 특정 모델의 요구 사항을 지원하도록 메서드를 오버로드하십시오. 다음은 간단한 예제입니다:
+    
+    
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    
+    class CustomDetectionTrainer(DetectionTrainer):
+        def get_model(self, cfg=None, weights=None, verbose=True):
+            """Loads a custom detection model."""
+            ...
+    
+    trainer = CustomDetectionTrainer(overrides={...})
+    trainer.train()
+
+포괄적인 지침과 예제는 [`DetectionTrainer` Reference](/reference/models/yolo/detect/train)를 검토하십시오.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/usage/engine.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RAraimbekovm2](https://github.com/raimbekovm)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+생성됨 2023년 11월 12일업데이트됨 지난달
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

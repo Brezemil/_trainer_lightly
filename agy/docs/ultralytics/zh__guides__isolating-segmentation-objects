@@ -1,0 +1,349 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/isolating-segmentation-objects
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/isolating-segmentation-objects.md)
+
+# Link to this section隔离分割对象#
+
+在执行 [Segment Task](/zh/tasks/segment) 后，有时需要从推理结果中提取已隔离的对象。本指南提供了如何使用 Ultralytics [Predict Mode](/zh/modes/predict) 实现此目标的通用方法。
+
+  
+
+
+  
+**Watch:** How to Remove Background and Isolate Objects with Ultralytics YOLO Segmentation & OpenCV in Python 🚀 
+
+## Link to this section操作流程指南#
+
+  1. 请参阅 [Ultralytics Quickstart Installation section](/zh/quickstart) 以获取安装所需库的快速指南。
+
+* * *
+
+  2. 加载模型并在源上运行 `predict()` 方法。
+         
+         from ultralytics import YOLO
+         
+         # Load a model
+         model = YOLO("yolo26n-seg.pt")
+         
+         # Run inference
+         results = model.predict()
+
+
+
+
+没有预测参数？
+
+如果不指定源，将使用库中的示例图像：
+    
+    
+    'ultralytics/assets/bus.jpg'
+    'ultralytics/assets/zidane.jpg'
+
+这对于使用 `predict()` 方法进行快速测试非常有用。
+
+有关分割模型的更多信息，请访问 [Segment Task](/zh/tasks/segment#models) 页面。要了解有关 `predict()` 方法的更多信息，请参阅文档的 [Predict Mode](/zh/modes/predict) 部分。
+
+`*** `
+
+现在迭代结果和轮廓。对于想要将图像保存到文件的流程，可获取源图像 `base-name` 和检测 `class-label` 以供后续使用（可选）。
+    
+    
+    ```{ .py .annotate }
+    from pathlib import Path
+    
+    import numpy as np
+    
+    # (2) Iterate detection results (helpful for multiple images)
+    for r in results:
+        img = np.copy(r.orig_img)
+        img_name = Path(r.path).stem  # source image base-name
+    
+        # Iterate each object contour (multiple detections)
+        for ci, c in enumerate(r):
+            # (1) Get detection class name
+            label = c.names[c.boxes.cls.tolist().pop()]
+    ```
+    
+    1. To learn more about working with detection results, see [Boxes Section for Predict Mode](../modes/predict.md#boxes).
+    2. To learn more about `predict()` results see [Working with Results for Predict Mode](../modes/predict.md#working-with-results)
+
+For 循环
+
+单个图像只会迭代第一个循环一次。单个图像若只有一个检测结果，则每个循环 _仅_ 会迭代一次。
+
+* * *
+
+  4. 首先从源图像生成二进制掩码，然后在掩码上绘制填充后的轮廓。这将允许对象从图像的其他部分中隔离出来。右侧展示了 `bus.jpg` 中检测到的其中一个 `person` 类对象的示例。
+
+![Binary Mask Image](https://github.com/ultralytics/ultralytics/assets/62214284/59bce684-fdda-4b17-8104-0b4b51149aca){ width="240", align="right" }
+         
+         import cv2
+         
+         # Create binary mask
+         b_mask = np.zeros(img.shape[:2], np.uint8)
+         
+         # (1) Extract contour result
+         contour = c.masks.xy.pop()
+         # (2) Changing the type
+         contour = contour.astype(np.int32)
+         # (3) Reshaping
+         contour = contour.reshape(-1, 1, 2)
+         
+         # Draw contour onto mask
+         _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+
+     1. 有关 `c.masks.xy` 的更多信息，请参阅 [Masks Section from Predict Mode](/zh/modes/predict#masks)。
+
+     2. Here the values are cast into `np.int32` for compatibility with `drawContours()` function from [OpenCV](https://www.ultralytics.com/glossary/opencv).
+
+     3. OpenCV 的 `drawContours()` 函数期望轮廓形状为 `[N, 1, 2]`，展开下方部分以获取更多详细信息。
+
+Expand to understand what is happening when defining the `contour` variable.
+
+\- `c.masks.xy` :: Provides the coordinates of the mask contour points in the format `(x, y)`. For more details, refer to the [Masks Section from Predict Mode](../modes/predict.md#masks). \- `.pop()` :: As `masks.xy` is a list containing a single element, this element is extracted using the `pop()` method. \- `.astype(np.int32)` :: Using `masks.xy` will return with a data type of `float32`, but this won't be compatible with the OpenCV `drawContours()` function, so this will change the data type to `int32` for compatibility. \- `.reshape(-1, 1, 2)` :: Reformats the data into the required shape of `[N, 1, 2]` where `N` is the number of contour points, with each point represented by a single entry `1`, and the entry is composed of `2` values. The `-1` denotes that the number of values along this dimension is flexible. 
+
+Expand for an explanation of the `drawContours()` configuration.
+
+\- Encapsulating the `contour` variable within square brackets, `[contour]`, was found to effectively generate the desired contour mask during testing. \- The value `-1` specified for the `drawContours()` parameter instructs the function to draw all contours present in the image. \- The `tuple` `(255, 255, 255)` represents the color white, which is the desired color for drawing the contour in this binary mask. \- The addition of `cv2.FILLED` will color all pixels enclosed by the contour boundary the same, in this case, all enclosed pixels will be white. \- See [OpenCV Documentation on `drawContours()`](https://docs.opencv.org/4.8.0/d6/d6e/group__imgproc__draw.html#ga746c0625f1781f1ffc9056259103edbc) for more information. 
+
+* * *
+
+  5. 接下来有两种方法可以继续处理图像，每种方法都有后续选项。
+
+### Link to this section对象隔离选项#
+
+
+
+
+示例
+    
+    
+    # Create 3-channel mask
+    mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+    
+    # Isolate object with binary mask
+    isolated = cv2.bitwise_and(mask3ch, img)
+
+这是如何工作的？
+
+  * 首先，将二进制掩码从单通道图像转换为三通道图像。此转换对于随后的步骤是必要的，在随后的步骤中，掩码和原始图像将被合并。两个图像必须具有相同的通道数，才能与混合操作兼容。
+
+  * 使用 OpenCV 函数 `bitwise_and()` 合并原始图像和三通道二进制掩码。此操作 _仅_ 保留两个图像中大于零 `(> 0)` 的像素值。由于掩码像素 _仅_ 在轮廓区域内大于零 `(> 0)`，因此原始图像中保留的像素即为与轮廓重叠的像素。
+
+
+
+
+### Link to this section使用黑色像素隔离：子选项#
+
+全尺寸图像
+
+如果保持全尺寸图像，则无需额外步骤。
+
+![Example Full size Isolated Object Image Black Background](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/full-size-isolated-object-black-background.avif){ width=240 } Example full-size output
+
+裁剪后的对象图像
+
+需要额外步骤将图像裁剪为仅包含对象区域。
+
+![Example Crop Isolated Object Image Black Background](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/example-crop-isolated-object-image-black-background.avif){ align="right" }
+    
+    
+    # (1) Bounding box coordinates
+    x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+    # Crop image to object region
+    iso_crop = isolated[y1:y2, x1:x2]
+
+  1. 有关 [bounding box](https://www.ultralytics.com/glossary/bounding-box) 结果的更多信息，请参阅 [Boxes Section from Predict Mode](/zh/modes/predict#boxes)
+
+这段代码做了什么？
+
+  * 调用 `c.boxes.xyxy.cpu().numpy()` 以 `xyxy` 格式获取边界框作为 NumPy 数组，其中 `xmin`、`ymin`、`xmax` 和 `ymax` 表示边界框矩形的坐标。详情请参阅 [Boxes Section from Predict Mode](/zh/modes/predict#boxes)。
+
+  * `squeeze()` 操作会从 NumPy 数组中移除任何不必要的维度，确保其具有预期的形状。
+
+  * 使用 `.astype(np.int32)` 转换坐标值，将框坐标的数据类型从 `float32` 更改为 `int32`，使其兼容使用索引切片的图像裁剪。
+
+  * 最后，使用索引切片从图像中裁剪出边界框区域。边界由检测边界框的 `[ymin:ymax, xmin:xmax]` 坐标定义。
+
+
+
+
+如果我想要包含背景的裁剪对象该怎么办？
+
+This is a built-in feature for the Ultralytics library. See the `save_crop` argument for [Predict Mode Inference Arguments](/zh/modes/predict#inference-arguments) for details.
+
+* * *
+
+  6. _接下来的操作完全由你（开发者）决定。_ 这里展示了一个可能的后续步骤（将图像保存到文件以备后续使用）的基本示例。 
+     * **注意：** 此步骤是可选的，如果你的特定用例不需要，可以跳过。
+
+最终步骤示例
+    
+    
+    # Save isolated object to file
+    _ = cv2.imwrite(f"{img_name}_{label}-{ci}.png", iso_crop)
+
+  * 在此示例中，`img_name` 是源图像文件的基本名称，`label` 是检测到的类名称，`ci` 是 [object detection](https://www.ultralytics.com/glossary/object-detection) 的索引（以防出现多个同名类实例）。
+
+
+
+## Link to this section完整示例代码#
+
+这里将前一部分的所有步骤合并为一个代码块。为了重复使用，定义一个函数来执行 `for` 循环中包含的部分或全部命令是最理想的，但这留给读者作为练习。
+    
+    
+    from pathlib import Path
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    m = YOLO("yolo26n-seg.pt")  # (4)!
+    res = m.predict(source="path/to/image.jpg")  # (3)!
+    
+    # Iterate detection results (5)
+    for r in res:
+        img = np.copy(r.orig_img)
+        img_name = Path(r.path).stem
+    
+        # Iterate each object contour (6)
+        for ci, c in enumerate(r):
+            label = c.names[c.boxes.cls.tolist().pop()]
+    
+            b_mask = np.zeros(img.shape[:2], np.uint8)
+    
+            # Create contour mask (1)
+            contour = c.masks.xy.pop().astype(np.int32).reshape(-1, 1, 2)
+            _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+    
+            # Choose one:
+    
+            # OPTION-1: Isolate object with black background
+            mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+            isolated = cv2.bitwise_and(mask3ch, img)
+    
+            # OPTION-2: Isolate object with transparent background (when saved as PNG)
+            isolated = np.dstack([img, b_mask])
+    
+            # OPTIONAL: detection crop (from either OPT1 or OPT2)
+            x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+            iso_crop = isolated[y1:y2, x1:x2]
+    
+            # Add your custom post-processing here (2)
+
+  1. 填充 `contour` 的行在这里被合并为一行，而在上面被拆分成了多行。
+  2. {==这里放什么由你决定！==}
+  3. 更多信息请参阅 [Predict Mode](/zh/modes/predict)。
+  4. 更多信息请参阅 [Segment Task](/zh/tasks/segment#models)。
+  5. 了解更多关于 [Working with Results](/zh/modes/predict#working-with-results)
+  6. 了解更多关于 [Segmentation Mask Results](/zh/modes/predict#masks)
+
+
+
+## Link to this section常见问题 (FAQ)#
+
+### Link to this section如何使用 Ultralytics YOLO26 进行分割任务的对象隔离？#
+
+要使用 Ultralytics YOLO26 隔离对象，请遵循以下步骤：
+
+  1. **加载模型并运行推理：**
+         
+         from ultralytics import YOLO
+         
+         model = YOLO("yolo26n-seg.pt")
+         results = model.predict(source="path/to/your/image.jpg")
+
+  2. **生成二进制掩码并绘制轮廓：**
+         
+         import cv2
+         import numpy as np
+         
+         img = np.copy(results[0].orig_img)
+         b_mask = np.zeros(img.shape[:2], np.uint8)
+         contour = results[0].masks.xy[0].astype(np.int32).reshape(-1, 1, 2)
+         cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+
+  3. **使用二进制掩码隔离对象：**
+         
+         mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+         isolated = cv2.bitwise_and(mask3ch, img)
+
+
+
+
+有关更多信息，请参考 [Predict Mode](/zh/modes/predict) 和 [Segment Task](/zh/tasks/segment) 指南。
+
+### Link to this section分割后有哪些保存隔离对象的选项？#
+
+Ultralytics YOLO26 提供了两种主要的隔离对象保存选项：
+
+  1. **带黑色背景：**
+         
+         mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+         isolated = cv2.bitwise_and(mask3ch, img)
+
+  2. **带透明背景：**
+         
+         isolated = np.dstack([img, b_mask])
+
+
+
+
+更多详情，请访问 [Predict Mode](/zh/modes/predict) 部分。
+
+### Link to this section如何使用 Ultralytics YOLO26 将隔离的对象裁剪到其边界框？#
+
+将隔离对象裁剪到其边界框：
+
+  1. **获取边界框坐标：**
+         
+         x1, y1, x2, y2 = results[0].boxes.xyxy[0].cpu().numpy().astype(np.int32)
+
+  2. **裁剪隔离后的图像：**
+         
+         iso_crop = isolated[y1:y2, x1:x2]
+
+
+
+
+在 [Predict Mode](/zh/modes/predict#boxes) 文档中了解更多关于边界框结果的信息。
+
+### Link to this section为什么要在分割任务中使用 Ultralytics YOLO26 进行对象隔离？#
+
+Ultralytics YOLO26 提供：
+
+  * **高速** 实时对象检测和分割。
+  * **准确的边界框和掩码生成** ，用于精确的对象隔离。
+  * **全面的文档** 和易于使用的 API，以实现高效开发。
+
+
+
+在 [Segment Task documentation](/zh/tasks/segment) 中探索使用 YOLO 的优势。
+
+### Link to this section我可以使用 Ultralytics YOLO26 保存包含背景的隔离对象吗？#
+
+Yes, this is a built-in feature in Ultralytics YOLO26. Use the `save_crop` argument in the `predict()` method. For example:
+    
+    
+    results = model.predict(source="path/to/your/image.jpg", save_crop=True)
+
+Read more about the `save_crop` argument in the [Predict Mode Inference Arguments](/zh/modes/predict#inference-arguments) section.
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/isolating-segmentation-objects.md)
+
+[GLglenn-jocher16](https://github.com/glenn-jocher)[RIRizwanMunawar6](https://github.com/RizwanMunawar)[JKjk4e2](https://github.com/jk4e)[PDpderrenger1](https://github.com/pderrenger)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[IVIvorZhu3311](https://github.com/IvorZhu331)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+已创建 2023年11月27日已更新 4个月前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

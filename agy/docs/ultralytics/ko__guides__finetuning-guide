@@ -1,0 +1,194 @@
+---
+source_url: https://docs.ultralytics.com/ko/guides/finetuning-guide
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+# Link to this section사용자 지정 데이터셋에서 YOLO를 파인튜닝하는 방법#
+
+[파인튜닝](https://www.ultralytics.com/glossary/fine-tuning)은 무작위 초기화가 아닌, 학습된 가중치에서 시작하여 새로운 클래스를 인식하도록 사전 학습된 모델을 조정하는 과정입니다. 처음부터 수백 에폭(epoch) 동안 학습하는 대신, 파인튜닝은 사전 학습된 [COCO](/ko/datasets/detect/coco) 특징을 활용하여 훨씬 짧은 시간 안에 사용자 지정 데이터에 수렴합니다.
+
+이 가이드에서는 [YOLO26](/ko/models/yolo26)을 사용자 지정 데이터셋에 파인튜닝하는 방법을 다루며, 기본 사용법부터 레이어 프리징(layer freezing) 및 2단계 학습(two-stage training)과 같은 고급 기술까지 설명합니다.
+
+## Link to this section파인튜닝 vs 처음부터 학습#
+
+사전 학습된 모델은 수백만 개의 이미지로부터 엣지 감지, 텍스처 인식, 형태 이해와 같은 일반적인 시각적 특징을 이미 학습했습니다. 파인튜닝을 통한 [전이 학습(Transfer learning)](https://www.ultralytics.com/glossary/transfer-learning)은 이러한 지식을 재사용하고 모델에게 새로운 클래스가 어떻게 생겼는지만 학습시키므로, 더 빠르게 수렴하고 더 적은 데이터가 필요합니다. 처음부터 학습하는 것은 이러한 모든 지식을 버리고 픽셀 수준의 패턴부터 모든 것을 배우도록 모델을 강제하는 것이며, 이는 훨씬 더 많은 리소스를 요구합니다.
+
+| 파인튜닝| 처음부터 학습  
+---|---|---  
+**시작 가중치**|  COCO(80개 클래스) 사전 학습| 무작위 초기화  
+**명령어**| `YOLO("yolo26n.pt")`| `YOLO("yolo26n.yaml")`  
+**수렴**|  더 빠름 - 백본이 이미 학습됨| 더 느림 - 모든 레이어가 0부터 학습  
+**데이터 요구 사항**|  더 낮음 - 사전 학습된 특징이 부족한 데이터를 보완| 더 높음 - 모델이 데이터셋만으로 모든 특징을 학습해야 함  
+**사용 시기**|  자연스러운 이미지가 포함된 사용자 지정 클래스| COCO와 근본적으로 다른 도메인(의료, 위성, 레이더)  
+  
+파인튜닝은 추가 코드가 필요하지 않습니다
+
+When a `.pt` file is loaded with `YOLO("yolo26n.pt")`, the pretrained weights are stored in the model. Calling `.train(data="custom.yaml")` after that automatically transfers all compatible weights to the new model architecture, reinitializes any layers that don't match (such as the detection head when the number of classes differs), and begins training. No manual weight loading, layer manipulation, or custom transfer learning code is required.
+
+### Link to this section사전 학습된 가중치 전송 작동 원리#
+
+사전 학습된 모델을 클래스 수가 다른 데이터셋(예: COCO의 80개 클래스에서 5개 사용자 지정 클래스로)에 파인튜닝할 때, Ultralytics는 형상을 인식하는 가중치 전송(shape-aware weight transfer)을 수행합니다:
+
+  1. **백본 및 넥(neck) 완전 전송** \- 이 레이어들은 일반적인 시각적 특징을 추출하며, 그 형상은 클래스 수와 독립적입니다.
+  2. **감지 헤드 부분 재초기화** \- 분류 출력 레이어(`cv3`, `one2one_cv3`)는 클래스 수(80 대 5)와 연결된 형상을 가지므로 전송할 수 없으며 무작위로 초기화됩니다. 헤드의 박스 회귀 레이어(`cv2`, `one2one_cv2`)는 클래스 수와 관계없이 고정된 형상을 가지므로 정상적으로 전송됩니다.
+  3. 클래스 수를 변경할 때 **가중치의 대다수가 전송** 됩니다. 감지 헤드 내의 분류 관련 레이어만 재초기화되며, 백본, 넥 및 박스 회귀 분기는 그대로 유지됩니다.
+
+
+
+사전 학습된 모델과 동일한 수의 클래스를 가진 데이터셋(예: COCO 사전 학습 가중치를 다른 80개 클래스 데이터셋에 파인튜닝)의 경우, 감지 헤드를 포함한 가중치의 100%가 전송됩니다.
+
+## Link to this section기본 파인튜닝 예제#
+
+예시
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load pretrained model
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+
+### Link to this section모델 크기 선택#
+
+더 큰 모델은 용량이 크지만 업데이트할 매개변수도 많아 학습 데이터가 제한적일 때 과적합(overfitting) 위험이 증가할 수 있습니다. 더 작은 모델(YOLO26n 또는 YOLO26s)로 시작하여 검증 지표가 정체될 때만 모델 크기를 키우는 것이 실용적인 접근 방식입니다. 최적의 모델 크기는 작업의 복잡성, 클래스 수, 데이터셋의 다양성 및 배포 환경의 하드웨어에 따라 달라집니다. 사용 가능한 크기 및 성능 벤치마크는 [YOLO26 모델 페이지](/ko/models/yolo26)를 참조하십시오.
+
+## Link to this section옵티마이저 및 학습률 선택#
+
+기본 `optimizer=auto` 설정은 총 학습 반복 횟수를 기준으로 옵티마이저와 학습률을 선택합니다:
+
+  * **< 10,000 반복** (작은 데이터셋 또는 적은 에폭): 낮고 자동으로 계산된 학습률을 사용하는 AdamW
+  * **> 10,000 반복** (대규모 데이터셋): [MuSGD](/reference/optim/muon) (Muon+SGD 하이브리드 옵티마이저), lr=0.01
+
+
+
+대부분의 파인튜닝 작업에서는 기본 설정으로 충분히 잘 작동합니다. 다음과 같은 경우에 옵티마이저를 명시적으로 설정하는 것을 고려하십시오:
+
+  * **학습이 불안정한 경우** (손실 값이 급증하거나 발산): 더 안정적인 수렴을 위해 `optimizer=AdamW, lr0=0.001`을 시도하십시오.
+  * **작은 데이터셋에서 큰 모델을 파인튜닝하는 경우** : `lr0=0.001`과 같은 낮은 학습률이 사전 학습된 특징을 보존하는 데 도움이 됩니다.
+
+
+
+자동 옵티마이저는 수동 lr0 설정을 덮어씁니다
+
+`optimizer=auto` 설정 시 `lr0` 및 `momentum` 값은 무시됩니다. 학습률을 수동으로 제어하려면 `optimizer=SGD, lr0=0.005`와 같이 옵티마이저를 명시적으로 설정하십시오.
+
+## Link to this section레이어 프리징#
+
+프리징(freezing)은 학습 중 특정 레이어가 업데이트되지 않도록 합니다. 이는 학습 속도를 높이고 모델 용량 대비 데이터셋이 작을 때 발생하는 [과적합(overfitting)](https://www.ultralytics.com/glossary/overfitting)을 줄여줍니다.
+
+`freeze` 매개변수는 정수 또는 리스트를 허용합니다. `freeze=10`과 같은 정수는 처음 10개 레이어(0~9, YOLO26의 백본에 해당)를 고정합니다. 리스트는 부분적인 백본 고정을 위한 `freeze=[0, 3, 5]`와 같은 레이어 인덱스를 포함할 수 있으며, 레이어 내 특정 분기에 대한 세밀한 제어를 위해 `freeze=["23.cv2"]`와 같은 모듈 이름 문자열을 포함할 수도 있습니다.
+
+예시
+    
+    
+    model.train(data="custom.yaml", epochs=50, freeze=10)
+
+적절한 프리징 깊이는 대상 도메인이 사전 학습된 데이터와 얼마나 유사한지, 그리고 사용 가능한 학습 데이터가 얼마나 많은지에 따라 달라집니다:
+
+시나리오| 권장 사항| 근거  
+---|---|---  
+대규모 데이터셋, 유사한 도메인| `freeze=None` (기본값)| 과적합 없이 모든 레이어를 조정할 충분한 데이터 있음  
+소규모 데이터셋, 유사한 도메인| `freeze=10`| 백본 특징 보존, 학습 가능한 매개변수 감소  
+매우 작은 데이터셋| `freeze=23`| 감지 헤드만 학습하여 과적합 위험 최소화  
+COCO와 먼 도메인| `freeze=None`| 백본 특징이 잘 전송되지 않을 수 있어 재학습 필요  
+  
+프리징 깊이는 하이퍼파라미터로도 취급할 수 있습니다. 몇 가지 값(0, 5, 10)을 시도하고 검증 mAP를 비교하는 것이 특정 데이터셋에 가장 적합한 설정을 찾는 실용적인 방법입니다.
+
+## Link to this section파인튜닝을 위한 주요 하이퍼파라미터#
+
+파인튜닝은 일반적으로 처음부터 학습하는 것보다 하이퍼파라미터 조정이 덜 필요합니다. 가장 중요한 매개변수는 다음과 같습니다:
+
+  * **`epochs`** : 파인튜닝은 처음부터 학습할 때보다 빠르게 수렴합니다. 적당한 값으로 시작하고 검증 지표가 정체될 때 `patience`를 사용하여 조기에 학습을 중단하십시오.
+  * **`patience`** : 기본값인 100은 긴 학습 과정을 위해 설계되었습니다. 이를 10-20으로 줄이면 이미 수렴된 학습에 시간을 낭비하는 것을 방지할 수 있습니다.
+  * **`warmup_epochs`** : 기본 워밍업(3 에폭)은 학습률을 0에서부터 점진적으로 증가시켜, 초기 반복에서 큰 그래디언트 업데이트가 사전 학습된 특징을 손상시키는 것을 방지합니다. 파인튜닝 시에도 기본값을 유지하는 것이 좋습니다.
+
+
+
+전체 학습 매개변수 목록은 [학습 설정 참조](/ko/usage/cfg)를 확인하십시오.
+
+## Link to this section2단계 파인튜닝#
+
+2단계 파인튜닝은 학습을 두 단계로 나눕니다. 첫 번째 단계에서는 백본을 고정하고 넥과 헤드만 학습하여 사전 학습된 특징을 방해하지 않으면서 감지 레이어가 새로운 클래스에 적응하도록 합니다. 두 번째 단계에서는 모든 레이어를 고정 해제하고 낮은 학습률로 전체 모델을 학습하여 대상 도메인에 맞게 백본을 다듬습니다.
+
+이 접근 방식은 대상 도메인이 COCO와 크게 다를 때(의료 영상, 항공 이미지, 현미경 사진) 특히 유용합니다. 백본의 적응이 필요하지만 한꺼번에 모든 것을 학습하면 불안정해질 수 있기 때문입니다. 콜백 기반의 자동 고정 해제 방식은 [백본 고정 및 고정 해제](/ko/guides/custom-trainer#freezing-and-unfreezing-the-backbone)를 참조하십시오.
+
+2단계 파인튜닝
+    
+    
+    from ultralytics import YOLO
+    
+    # Stage 1: freeze backbone, train head and neck
+    model = YOLO("yolo26n.pt")
+    model.train(data="custom.yaml", epochs=20, freeze=10, name="stage1", exist_ok=True)
+    
+    # Stage 2: unfreeze all, fine-tune with lower lr
+    model = YOLO("runs/detect/stage1/weights/best.pt")
+    model.train(data="custom.yaml", epochs=30, lr0=0.001, name="stage2", exist_ok=True)
+
+## Link to this section일반적인 함정#
+
+### Link to this section모델이 예측을 생성하지 않음#
+
+  * **학습 데이터 부족** : 매우 적은 수의 샘플로 학습하는 것이 가장 흔한 원인입니다. 데이터가 너무 적으면 모델이 학습하거나 일반화할 수 없습니다. 다른 원인을 조사하기 전에 클래스당 충분하고 다양한 예제가 있는지 확인하십시오.
+  * **데이터셋 경로 확인** : `data.yaml`의 경로가 잘못되면 경고 없이 레이블이 0개가 됩니다. 학습 전에 `yolo detect val model=yolo26n.pt data=your_data.yaml`을 실행하여 레이블이 올바르게 로드되는지 확인하십시오.
+  * **낮은 신뢰도 임계값** : 예측 결과가 있지만 필터링된 경우 추론 중 `conf=0.1`을 시도하십시오.
+  * **Verify class count** : ensure `nc` in `data.yaml` matches the actual number of classes in the label files.
+
+
+
+### Link to this section검증 mAP가 조기에 정체됨#
+
+  * **데이터 추가** : 파인튜닝은 추가적인 학습 데이터, 특히 다양한 각도, 조명, 배경이 포함된 다양한 예제로부터 큰 혜택을 받습니다.
+  * **클래스 균형 확인** : 과소 대표된 클래스는 낮은 AP를 가집니다. `cls_pw`를 사용하여 역빈도 클래스 가중치를 적용하십시오(적당한 불균형에는 `cls_pw=0.25`로 시작하여 심각한 불균형에는 `1.0`까지 높이십시오).
+  * **증강 감소** : 데이터셋이 매우 작은 경우 과도한 증강은 도움이 되기보다 해가 될 수 있습니다. `mosaic=0.5` 또는 `mosaic=0.0`을 시도하십시오.
+  * **해상도 증가** : 작은 객체가 있는 데이터셋의 경우 디테일을 유지하기 위해 `imgsz=1280`을 시도하십시오.
+
+
+
+### Link to this section파인튜닝 후 원래 클래스에 대한 성능 저하#
+
+이는 파괴적 망각(catastrophic forgetting)으로 알려진 현상으로, 새로운 데이터로만 파인튜닝할 때 모델이 이전에 학습한 지식을 잃어버리는 현상입니다. 망각은 원래 데이터셋 이미지를 새 데이터와 함께 포함하지 않으면 대부분 피할 수 없습니다. 이를 완화하려면 다음을 수행하십시오:
+
+  * **데이터셋 병합** : 파인튜닝 중 새로운 클래스와 함께 원래 클래스의 예제를 포함하십시오. 이것이 망각을 방지하는 유일한 확실한 방법입니다.
+  * **백본 및 넥 프리징** : 백본과 넥을 모두 고정하여 감지 헤드만 학습시키면 매우 낮은 학습률로 짧은 파인튜닝을 수행할 때 도움이 됩니다.
+  * **적은 에폭으로 학습** : 새로운 데이터로만 학습하는 시간이 길어질수록 망각은 증가합니다.
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionYOLO를 파인튜닝하려면 얼마나 많은 이미지가 필요합니까?#
+
+정해진 최소값은 없으며 결과는 작업의 복잡성, 클래스 수, 도메인이 COCO와 얼마나 유사한지에 따라 달라집니다. 양보다 더 다양한 이미지(다양한 조명, 각도, 배경)가 중요합니다. 현재 가진 데이터로 시작하여 검증 지표가 불충분할 경우 데이터 규모를 확장하십시오.
+
+### Link to this section사용자 지정 데이터셋에서 YOLO26을 파인튜닝하려면 어떻게 해야 합니까?#
+
+Load a pretrained `.pt` file and call `.train()` with the path to a custom `data.yaml`. Ultralytics automatically handles [weight transfer](https://www.ultralytics.com/glossary/transfer-learning), detection head reinitialization, and optimizer selection. See the Basic Fine-Tuning section for the complete code example.
+
+### Link to this section파인튜닝된 YOLO 모델이 아무것도 감지하지 못하는 이유는 무엇입니까?#
+
+가장 일반적인 원인은 `data.yaml`의 잘못된 경로(경고 없이 레이블이 0개가 됨), YAML의 `nc`와 실제 레이블 파일 간의 불일치, 또는 너무 높은 신뢰도 임계값 때문입니다. 전체 문제 해결 체크리스트는 일반적인 함정을 참조하십시오.
+
+### Link to this section파인튜닝을 위해 어떤 YOLO 레이어를 고정해야 합니까?#
+
+데이터셋 크기와 도메인 유사성에 따라 다릅니다. COCO와 유사한 도메인의 작은 데이터셋의 경우 백본을 고정(`freeze=10`)하면 과적합을 방지할 수 있습니다. COCO와 매우 다른 도메인의 경우 모든 레이어를 고정 해제(`freeze=None`) 상태로 두면 백본이 적응할 수 있습니다. 자세한 권장 사항은 레이어 프리징을 참조하십시오.
+
+### Link to this sectionYOLO를 새로운 클래스에 파인튜닝할 때 파괴적 망각을 어떻게 방지합니까?#
+
+새로운 클래스와 함께 원래 클래스의 예제를 학습 데이터에 포함하십시오. 이것이 불가능하다면 더 많은 레이어를 고정(`freeze=10` 이상)하고 더 낮은 학습률을 사용하면 사전 학습된 지식을 보존하는 데 도움이 됩니다. 자세한 내용은 원래 클래스에 대한 성능 저하를 참조하십시오.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+[RAraimbekovm1](https://github.com/raimbekovm)
+
+생성됨 지난달업데이트됨 지난달
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

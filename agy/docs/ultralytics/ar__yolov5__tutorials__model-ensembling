@@ -1,0 +1,190 @@
+---
+source_url: https://docs.ultralytics.com/ar/yolov5/tutorials/model-ensembling
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-ensembling.md)
+
+# Link to this sectionتجميع نماذج YOLOv5#
+
+📚 يشرح هذا الدليل كيفية استخدام **تجميع النماذج** (model ensembling) في Ultralytics YOLOv5 🚀 أثناء الاختبار والاستدلال لتحسين mAP و[Recall](https://www.ultralytics.com/glossary/recall).
+
+من [التعلم التجميعي](https://en.wikipedia.org/wiki/Ensemble_learning):
+
+> نمذجة التجميع هي عملية يتم فيها إنشاء نماذج متنوعة متعددة للتنبؤ بنتيجة ما، إما باستخدام خوارزميات نمذجة مختلفة أو باستخدام مجموعات [بيانات تدريب](https://www.ultralytics.com/glossary/training-data) مختلفة. يقوم نموذج التجميع بعد ذلك بتجميع تنبؤ كل نموذج أساسي ويؤدي إلى تنبؤ نهائي واحد للبيانات غير المرئية. الدافع لاستخدام نماذج التجميع هو تقليل خطأ التعميم في التنبؤ. طالما أن النماذج الأساسية متنوعة ومستقلة، فإن خطأ التنبؤ للنموذج ينخفض عند استخدام نهج التجميع. يسعى هذا النهج إلى استغلال "حكمة الحشود" في إجراء التنبؤ. على الرغم من أن نموذج التجميع يحتوي على نماذج أساسية متعددة بداخله، إلا أنه يعمل ويؤدي كنموذج واحد.
+
+## Link to this sectionقبل البدء#
+
+قم باستنساخ المستودع وتثبيت [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) في بيئة [**Python >=3.8.0**](https://www.python.org/)، بما في ذلك [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). يتم تنزيل [النماذج](https://github.com/ultralytics/yolov5/tree/master/models) و[مجموعات البيانات](https://github.com/ultralytics/yolov5/tree/master/data) تلقائيًا من أحدث [إصدار](https://github.com/ultralytics/yolov5/releases) لـ YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+## Link to this sectionالاختبار العادي#
+
+قبل التجميع، قم بتحديد الأداء الأساسي لنموذج واحد. يقوم هذا الأمر باختبار YOLOv5x على COCO val2017 بحجم صورة 640 بكسل. `yolov5x.pt` هو النموذج الأكبر والأكثر دقة المتاح. الخيارات الأخرى هي `yolov5s.pt` و`yolov5m.pt` و`yolov5l.pt`، أو نقطة فحص خاصة بك من تدريب مجموعة بيانات مخصصة `./weights/best.pt`. للحصول على تفاصيل حول جميع النماذج المتاحة، راجع [جدول نقاط الفحص المدربة مسبقاً](https://docs.ultralytics.com/models/yolov5).
+    
+    
+    python val.py --weights yolov5x.pt --data coco.yaml --img 640 --half
+
+المخرجات:
+    
+    
+    val: data=./data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients
+    
+    val: Scanning '../datasets/coco/val2017' images and labels...4952 found, 48 missing, 0 empty, 0 corrupted: 100% 5000/5000 [00:01<00:00, 2846.03it/s]
+    val: New cache created: ../datasets/coco/val2017.cache
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [02:30<00:00,  1.05it/s]
+                     all       5000      36335      0.746      0.626       0.68       0.49
+    Speed: 0.1ms pre-process, 22.4ms inference, 1.4ms NMS per image at shape (32, 3, 640, 640)  # <--- baseline speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.504  # <--- baseline mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.688
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.546
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.351
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.551
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.644
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.382
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.628
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.681  # <--- baseline mAR
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.524
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.735
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.826
+
+## Link to this sectionاختبار التجميع#
+
+Multiple pretrained models can be ensembled together at test and inference time by simply appending extra models to the `--weights` argument in any existing val.py or detect.py command. This example tests an ensemble of 2 models together:
+
+  * YOLOv5x
+  * YOLOv5l6
+
+
+    
+    
+    python val.py --weights yolov5x.pt yolov5l6.pt --data coco.yaml --img 640 --half
+
+يمكنك سرد أي عدد تريده من نقاط الفحص، بما في ذلك الأوزان المخصصة مثل `runs/train/exp-5/weights/best.pt`. سيقوم YOLOv5 تلقائياً بتشغيل كل نموذج، ومحاذاة التنبؤات على أساس كل صورة، وحساب متوسط المخرجات قبل إجراء NMS.
+
+المخرجات:
+    
+    
+    val: data=./data/coco.yaml, weights=['yolov5x.pt', 'yolov5l6.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.6, task=val, device=, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients  # Model 1
+    Fusing layers...
+    Model Summary: 501 layers, 77218620 parameters, 0 gradients  # Model 2
+    Ensemble created with ['yolov5x.pt', 'yolov5l6.pt']  # Ensemble notice
+    
+    val: Scanning '../datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupted: 100% 5000/5000 [00:00<00:00, 49695545.02it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [03:58<00:00,  1.52s/it]
+                     all       5000      36335      0.747      0.637      0.692      0.502
+    Speed: 0.1ms pre-process, 39.5ms inference, 2.0ms NMS per image at shape (32, 3, 640, 640)  # <--- ensemble speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-3/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.515  # <--- ensemble mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.699
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.557
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.356
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.563
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.668
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.387
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.638
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.689  # <--- ensemble mAR
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.526
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.743
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.844
+
+## Link to this sectionاستدلال التجميع#
+
+أضف نماذج إضافية إلى وسيط `--weights` لتشغيل استدلال التجميع:
+    
+    
+    python detect.py --weights yolov5x.pt yolov5l6.pt --img 640 --source data/images
+
+المخرجات:
+    
+    
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients
+    Fusing layers...
+    Model Summary: 501 layers, 77218620 parameters, 0 gradients
+    Ensemble created with ['yolov5x.pt', 'yolov5l6.pt']
+    
+    image 1/2 /content/yolov5/data/images/bus.jpg: 640x512 4 persons, 1 bus, 1 tie, Done. (0.063s)
+    image 2/2 /content/yolov5/data/images/zidane.jpg: 384x640 3 persons, 2 ties, Done. (0.056s)
+    Results saved to runs/detect/exp-2
+    Done. (0.223s)
+
+![YOLO inference result](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolo-inference-result.avif)
+
+## Link to this sectionفوائد تجميع النماذج#
+
+يوفر تجميع النماذج مع YOLOv5 العديد من المزايا:
+
+  1. **دقة محسنة** : كما هو موضح في الأمثلة أعلاه، يؤدي تجميع نماذج متعددة إلى زيادة mAP من 0.504 إلى 0.515 وزيادة mAR من 0.681 إلى 0.689.
+  2. **تعميم أفضل** : يساعد الجمع بين نماذج متنوعة في تقليل الإفراط في التخصيص (overfitting) وتحسين الأداء على البيانات المتنوعة.
+  3. **متانة معززة** : تكون النماذج المجمعة عادةً أكثر قوة في مواجهة الضوضاء والقيم المتطرفة في البيانات.
+  4. **نقاط قوة تكميلية** : قد تتفوق نماذج مختلفة في اكتشاف أنواع مختلفة من الكائنات أو في ظروف بيئية مختلفة.
+
+
+
+المقايضة الأساسية هي زيادة وقت الاستدلال، كما هو موضح في مقاييس السرعة (22.4 مللي ثانية للنموذج الواحد مقابل 39.5 مللي ثانية للتجميع).
+
+## Link to this sectionمتى تستخدم تجميع النماذج#
+
+فكر في استخدام تجميع النماذج في هذه السيناريوهات:
+
+  * عندما تكون الدقة أكثر أهمية من سرعة الاستدلال
+  * للتطبيقات الحساسة حيث يجب تقليل النتائج السلبية الكاذبة
+  * عند معالجة صور صعبة ذات إضاءة متفاوتة أو حجب أو مقاييس مختلفة
+  * أثناء المسابقات أو القياس المعياري حيث يلزم الحصول على أقصى أداء
+
+
+
+بالنسبة للتطبيقات في الوقت الفعلي ذات متطلبات زمن الانتقال الصارمة، قد يكون استدلال النموذج الواحد أكثر ملاءمة.
+
+## Link to this sectionالبيئات المدعومة#
+
+توفر Ultralytics مجموعة من البيئات الجاهزة للاستخدام، حيث يتم تثبيت التبعيات الأساسية مسبقًا مثل [CUDA](https://developer.nvidia.com/cuda)، و [CUDNN](https://developer.nvidia.com/cudnn)، و [Python](https://www.python.org/)، و [PyTorch](https://pytorch.org/)، لبدء مشاريعك.
+
+  * **دفاتر ملاحظات مجانية لوحدات معالجة الرسومات** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [GCP Quickstart Guide](/ar/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [دليل البدء السريع لـ AWS](/ar/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [دليل البدء السريع لـ AzureML](/ar/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [دليل البدء السريع لـ Docker](/ar/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionحالة المشروع#
+
+[![YOLOv5 CI](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+تشير هذه الشارة إلى أن جميع اختبارات التكامل المستمر (CI) الخاصة بـ [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) تمر بنجاح. تقوم اختبارات CI هذه بفحص دقة وأداء YOLOv5 عبر جوانب رئيسية مختلفة بشكل صارم: [التدريب](https://github.com/ultralytics/yolov5/blob/master/train.py)، و[التحقق](https://github.com/ultralytics/yolov5/blob/master/val.py)، و[الاستدلال](https://github.com/ultralytics/yolov5/blob/master/detect.py)، و[التصدير](https://github.com/ultralytics/yolov5/blob/master/export.py)، و[المقاييس](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). وهي تضمن تشغيلًا متسقًا وموثوقًا على macOS و Windows و Ubuntu، مع إجراء الاختبارات كل 24 ساعة ومع كل التزام (commit) جديد.
+
+المساهمون
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-ensembling.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+تم الإنشاء قبل 3 أيامتم التحديث قبل 3 أيام
+
+## التعليقات
+
+في هذه الصفحة
+
+استكشف باستخدام الذكاء الاصطناعي

@@ -1,0 +1,332 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/kfold-cross-validation
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+# Link to this sectionUltralytics ile K-Fold Çapraz Doğrulama#
+
+## Link to this sectionGiriş#
+
+Bu kapsamlı rehber, Ultralytics ekosistemi içerisindeki [nesne tespiti](https://www.ultralytics.com/glossary/object-detection) veri setleri için K-Fold Çapraz Doğrulamanın nasıl uygulanacağını göstermektedir. Gerekli kurulum, özellik vektörleri oluşturma süreci ve K-Fold veri seti bölme işlemini gerçekleştirmek için YOLO tespit formatından ve sklearn, pandas ve PyYAML gibi temel Python kütüphanelerinden yararlanacağız.
+
+![K-fold cross validation data splitting](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/k-fold-cross-validation-overview.avif)
+
+Projen ister Fruit Detection veri setini ister özel bir veri kaynağını içeriyor olsun, bu öğretici [makine öğrenimi](https://www.ultralytics.com/glossary/machine-learning-ml) modellerinin güvenilirliğini ve sağlamlığını artırmak için K-Fold Çapraz Doğrulamayı kavraman ve uygulaman konusunda sana yardımcı olmayı amaçlıyor. Bu öğreticide `k=5` katlama kullanıyor olsak da, optimum katlama sayısının veri setine ve projenin özelliklerine bağlı olarak değişebileceğini unutma.
+
+Haydi başlayalım.
+
+## Link to this sectionKurulum#
+
+  * Açıklamaların [YOLO tespit formatında](/tr/datasets/detect) olmalıdır.
+
+  * Bu rehber, açıklama dosyalarının yerel olarak mevcut olduğunu varsayar.
+
+  * Gösterimimiz için [Fruit Detection](https://www.kaggle.com/datasets/lakshaytyagi01/fruit-detection/code) veri setini kullanıyoruz.
+
+    * Bu veri seti toplam 8479 görsel içermektedir.
+    * Her birinin toplam örnek sayıları aşağıda listelenen 6 sınıf etiketi içerir.
+
+
+
+Sınıf Etiketi| Örnek Sayısı  
+---|---  
+Elma| 7049  
+Üzüm| 7202  
+Ananas| 1613  
+Portakal| 15549  
+Muz| 3536  
+Karpuz| 1976  
+  
+  * Gerekli Python paketleri şunlardır:
+
+    * `ultralytics`
+    * `sklearn`
+    * `pandas`
+    * `pyyaml`
+  * Bu öğretici `k=5` katlama ile çalışır. Ancak, kendi veri setin için en iyi katlama sayısını belirlemelisin.
+
+
+
+  1. Projen için yeni bir Python sanal ortamı (`venv`) başlat ve etkinleştir. Yükleme yapmak için `pip` (veya tercih ettiğin paket yöneticisini) kullan:
+
+     * Ultralytics kütüphanesi: `pip install -U ultralytics`. Alternatif olarak resmi [depoyu](https://github.com/ultralytics/ultralytics) klonlayabilirsin.
+     * Scikit-learn, pandas ve PyYAML: `pip install -U scikit-learn pandas pyyaml`.
+  2. Açıklamalarının [YOLO tespit formatında](/tr/datasets/detect) olduğunu doğrula.
+
+     * Bu öğretici için tüm açıklama dosyaları `Fruit-Detection/labels` dizininde bulunur.
+
+
+
+## Link to this sectionNesne Tespiti Veri Seti için Özellik Vektörleri Oluşturma#
+
+  1. Aşağıdaki adımlar için yeni bir `example.py` Python dosyası oluşturarak başla.
+
+  2. Veri setin için tüm etiket dosyalarını almaya devam et.
+         
+         from pathlib import Path
+         
+         dataset_path = Path("./Fruit-detection")  # replace with 'path/to/dataset' for your custom data
+         labels = sorted(dataset_path.rglob("*labels/*.txt"))  # all data in 'labels'
+
+  3. Şimdi, veri seti YAML dosyasının içeriğini oku ve sınıf etiketi indekslerini çıkar.
+         
+         import yaml
+         
+         yaml_file = "path/to/data.yaml"  # your data YAML with data directories and names dictionary
+         with open(yaml_file, encoding="utf8") as y:
+             classes = yaml.safe_load(y)["names"]
+         cls_idx = sorted(classes.keys())
+
+  4. Boş bir `pandas` DataFrame başlat.
+         
+         import pandas as pd
+         
+         index = [label.stem for label in labels]  # uses base filename as ID (no extension)
+         labels_df = pd.DataFrame([], columns=cls_idx, index=index)
+
+  5. Açıklama dosyalarında bulunan her bir sınıf etiketinin örneklerini say.
+         
+         from collections import Counter
+         
+         for label in labels:
+             lbl_counter = Counter()
+         
+             with open(label) as lf:
+                 lines = lf.readlines()
+         
+             for line in lines:
+                 # classes for YOLO label uses integer at first position of each line
+                 lbl_counter[int(line.split(" ", 1)[0])] += 1
+         
+             labels_df.loc[label.stem] = lbl_counter
+         
+         labels_df = labels_df.fillna(0.0)  # replace `nan` values with `0.0`
+
+  6. Aşağıdakiler, doldurulmuş DataFrame'in örnek bir görünümüdür:
+         
+         0    1    2    3    4    5
+         '0000a16e4b057580_jpg.rf.00ab48988370f64f5ca8ea4...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.7e6dce029fb67f01eb19aa7...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.bc4d31cdcbe229dd022957a...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '00020ebf74c4881c_jpg.rf.508192a0a97aa6c4a3b6882...'  0.0  0.0  0.0  1.0  0.0  0.0
+         '00020ebf74c4881c_jpg.rf.5af192a2254c8ecc4188a25...'  0.0  0.0  0.0  1.0  0.0  0.0
+          ...                                                  ...  ...  ...  ...  ...  ...
+         'ff4cd45896de38be_jpg.rf.c4b5e967ca10c7ced3b9e97...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff4cd45896de38be_jpg.rf.ea4c1d37d2884b3e3cbce08...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff5fd9c3c624b7dc_jpg.rf.bb519feaa36fc4bf630a033...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'ff5fd9c3c624b7dc_jpg.rf.f0751c9c3aa4519ea3c9d6a...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'fffe28b31f2a70d4_jpg.rf.7ea16bd637ba0711c53b540...'  0.0  6.0  0.0  0.0  0.0  0.0
+
+
+
+
+Satırlar, veri setindeki her bir görsele karşılık gelen etiket dosyalarını indeksler ve sütunlar sınıf etiketi indekslerine karşılık gelir. Her satır, veri setinde bulunan her bir sınıf etiketinin sayısını içeren sözde bir özellik vektörünü temsil eder. Bu veri yapısı, bir nesne tespiti veri setine [K-Fold Çapraz Doğrulama](https://www.ultralytics.com/glossary/cross-validation) uygulanmasını sağlar.
+
+## Link to this sectionK-Fold Veri Seti Bölme#
+
+  1. Now we will use the `KFold` class from `sklearn.model_selection` to generate `k` splits of the dataset.
+
+     * Önemli: 
+       * `shuffle=True` ayarı, bölmelerinde sınıfların rastgele dağılımını sağlar.
+       * `random_state=M` (burada `M` seçilen bir tam sayıdır) ayarlayarak tekrarlanabilir sonuçlar elde edebilirsin.
+    
+    import random
+    
+    from sklearn.model_selection import KFold
+    
+    random.seed(0)  # for reproducibility
+    ksplit = 5
+    kf = KFold(n_splits=ksplit, shuffle=True, random_state=20)  # setting random_state for repeatable results
+    
+    kfolds = list(kf.split(labels_df))
+
+  2. The dataset has now been split into `k` folds, each having a list of `train` and `val` indices. We will construct a DataFrame to display these results more clearly.
+         
+         folds = [f"split_{n}" for n in range(1, ksplit + 1)]
+         folds_df = pd.DataFrame(index=index, columns=folds)
+         
+         for i, (train, val) in enumerate(kfolds, start=1):
+             folds_df[f"split_{i}"].loc[labels_df.iloc[train].index] = "train"
+             folds_df[f"split_{i}"].loc[labels_df.iloc[val].index] = "val"
+
+  3. Şimdi, her katlama için sınıf etiketi dağılımını, `val` içinde bulunan sınıfların `train` içinde bulunanlara oranı olarak hesaplayacağız.
+         
+         fold_lbl_distrb = pd.DataFrame(index=folds, columns=cls_idx)
+         
+         for n, (train_indices, val_indices) in enumerate(kfolds, start=1):
+             train_totals = labels_df.iloc[train_indices].sum()
+             val_totals = labels_df.iloc[val_indices].sum()
+         
+             # To avoid division by zero, we add a small value (1E-7) to the denominator
+             ratio = val_totals / (train_totals + 1e-7)
+             fold_lbl_distrb.loc[f"split_{n}"] = ratio
+
+İdeal senaryo, tüm sınıf oranlarının her bölme için ve sınıflar arasında makul ölçüde benzer olmasıdır. Ancak bu, veri setinin özelliklerine bağlı olacaktır.
+
+  4. Ardından, her bölme için dizinleri ve veri seti YAML dosyalarını oluşturuyoruz.
+         
+         import datetime
+         
+         supported_extensions = [".jpg", ".jpeg", ".png"]
+         
+         # Initialize an empty list to store image file paths
+         images = []
+         
+         # Loop through supported extensions and gather image files
+         for ext in supported_extensions:
+             images.extend(sorted((dataset_path / "images").rglob(f"*{ext}")))
+         
+         # Create the necessary directories and dataset YAML files
+         save_path = Path(dataset_path / f"{datetime.date.today().isoformat()}_{ksplit}-Fold_Cross-val")
+         save_path.mkdir(parents=True, exist_ok=True)
+         ds_yamls = []
+         
+         for split in folds_df.columns:
+             # Create directories
+             split_dir = save_path / split
+             split_dir.mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "labels").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "labels").mkdir(parents=True, exist_ok=True)
+         
+             # Create dataset YAML files
+             dataset_yaml = split_dir / f"{split}_dataset.yaml"
+             ds_yamls.append(dataset_yaml)
+         
+             with open(dataset_yaml, "w") as ds_y:
+                 yaml.safe_dump(
+                     {
+                         "path": split_dir.as_posix(),
+                         "train": "train",
+                         "val": "val",
+                         "names": classes,
+                     },
+                     ds_y,
+                 )
+
+  5. Son olarak, görselleri ve etiketleri her bölme için ilgili dizine ('train' veya 'val') kopyala.
+
+     * **NOT:** Kodun bu kısmı için gereken süre, veri setinin boyutuna ve sistem donanımına göre değişecektir.
+    
+    import shutil
+    
+    from tqdm import tqdm
+    
+    for image, label in tqdm(zip(images, labels), total=len(images), desc="Copying files"):
+        for split, k_split in folds_df.loc[image.stem].items():
+            # Destination directory
+            img_to_path = save_path / split / k_split / "images"
+            lbl_to_path = save_path / split / k_split / "labels"
+    
+            # Copy image and label files to new directory (SamefileError if file already exists)
+            shutil.copy(image, img_to_path / image.name)
+            shutil.copy(label, lbl_to_path / label.name)
+
+
+
+
+## Link to this sectionKayıtları Kaydet (İsteğe bağlı)#
+
+İsteğe bağlı olarak, K-Fold bölme ve etiket dağılımı DataFrame'lerinin kayıtlarını ileride başvurmak üzere CSV dosyaları olarak kaydedebilirsin.
+    
+    
+    folds_df.to_csv(save_path / "kfold_datasplit.csv")
+    fold_lbl_distrb.to_csv(save_path / "kfold_label_distribution.csv")
+
+## Link to this sectionK-Fold Veri Bölmelerini kullanarak YOLO Eğitimi#
+
+  1. İlk olarak, YOLO modelini yükle.
+         
+         from ultralytics import YOLO
+         
+         weights_path = "path/to/weights.pt"  # use yolo26n.pt for a small model
+         model = YOLO(weights_path, task="detect")
+
+  2. Ardından, eğitimi çalıştırmak için veri seti YAML dosyaları üzerinde yinele. Sonuçlar, `project` ve `name` argümanları tarafından belirtilen bir dizine kaydedilecektir. Varsayılan olarak bu dizin, # bir tam sayı indeksi olmak üzere 'runs/detect/train#' şeklindedir.
+         
+         results = {}
+         
+         # Define your additional arguments here
+         batch = 16
+         project = "kfold_demo"
+         epochs = 100
+         
+         for k, dataset_yaml in enumerate(ds_yamls):
+             model = YOLO(weights_path, task="detect")
+             results[k] = model.train(
+                 data=dataset_yaml, epochs=epochs, batch=batch, project=project, name=f"fold_{k + 1}"
+             )  # include any additional train arguments
+
+  3. Ayrıca otomatik veri seti bölme için [Ultralytics data.split.autosplit](https://docs.ultralytics.com/reference/data/split) fonksiyonunu da kullanabilirsin:
+         
+         from ultralytics.data.split import autosplit
+         
+         # Automatically split dataset into train/val/test
+         autosplit(path="path/to/images", weights=(0.8, 0.2, 0.0), annotated_only=True)
+
+
+
+
+## Link to this sectionSonuç#
+
+Bu rehberde, YOLO nesne tespiti modelini eğitmek için K-Fold çapraz doğrulama kullanma sürecini inceledik. Veri setimizi K parçaya nasıl böleceğimizi ve farklı katlamalar arasında dengeli bir sınıf dağılımı sağlamayı öğrendik.
+
+Ayrıca veri bölmelerini ve bu bölmelerdeki etiket dağılımlarını görselleştirmek için rapor DataFrame'leri oluşturma prosedürünü inceledik, bu bize eğitim ve doğrulama setlerimizin yapısı hakkında net bir içgörü sağladı.
+
+İsteğe bağlı olarak, kayıtlarımızı gelecekte başvurmak üzere sakladık; bu, büyük ölçekli projelerde veya model performansında sorun giderirken özellikle yararlı olabilir.
+
+Son olarak, her bir bölmeyi bir döngü içinde kullanarak gerçek model eğitimini uyguladık ve eğitim sonuçlarımızı daha fazla analiz ve karşılaştırma için kaydettik.
+
+Bu K-Fold çapraz doğrulama tekniği, mevcut verinden en iyi şekilde yararlanmanın sağlam bir yoludur ve model performansının farklı veri alt kümelerinde güvenilir ve tutarlı olmasını sağlamaya yardımcı olur. Bu, belirli veri kalıplarına [aşırı öğrenme](https://www.ultralytics.com/glossary/overfitting) olasılığı daha düşük olan, daha genel ve güvenilir bir model ile sonuçlanır.
+
+Bu rehberde YOLO kullansak da, bu adımların çoğunun diğer makine öğrenimi modellerine aktarılabilir olduğunu unutma. Bu adımları anlamak, kendi makine öğrenimi projelerinde çapraz doğrulamayı etkili bir şekilde uygulamanı sağlar.
+
+## Link to this sectionSSS#
+
+### Link to this sectionK-Fold Çapraz Doğrulama nedir ve nesne tespitinde neden yararlıdır?#
+
+K-Fold Çapraz Doğrulama, model performansını daha güvenilir bir şekilde değerlendirmek için veri setinin 'k' alt kümeye (katlamaya) bölündüğü bir tekniktir. Her katlama hem eğitim hem de [doğrulama verisi](https://www.ultralytics.com/glossary/validation-data) olarak hizmet eder. Nesne tespiti bağlamında, K-Fold Çapraz Doğrulama kullanmak, Ultralytics YOLO modelinin performansının farklı veri bölmelerinde sağlam ve genel geçer olmasını sağlamaya yardımcı olarak güvenilirliğini artırır. Ultralytics YOLO ile K-Fold Çapraz Doğrulama kurulumuna ilişkin ayrıntılı talimatlar için Ultralytics ile K-Fold Çapraz Doğrulama bölümüne bak.
+
+### Link to this sectionUltralytics YOLO kullanarak K-Fold Çapraz Doğrulamayı nasıl uygularım?#
+
+Ultralytics YOLO ile K-Fold Çapraz Doğrulamayı uygulamak için şu adımları izlemen gerekir:
+
+  1. Açıklamaların [YOLO tespit formatında](/tr/datasets/detect) olduğunu doğrula.
+  2. `sklearn`, `pandas` ve `pyyaml` gibi Python kütüphanelerini kullan.
+  3. Veri setinden özellik vektörleri oluştur.
+  4. Split your dataset using `KFold` from `sklearn.model_selection`.
+  5. YOLO modelini her bölme üzerinde eğit.
+
+
+
+Kapsamlı bir rehber için belgelerimizdeki K-Fold Veri Seti Bölme bölümüne bak.
+
+### Link to this sectionNesne tespiti için neden Ultralytics YOLO kullanmalıyım?#
+
+Ultralytics YOLO offers state-of-the-art, real-time object detection with high [accuracy](https://www.ultralytics.com/glossary/accuracy) and efficiency. It's versatile, supporting multiple [computer vision](https://www.ultralytics.com/glossary/computer-vision-cv) tasks such as [detection](/tr/tasks/detect), [instance segmentation](/tr/tasks/segment), [semantic segmentation](/tr/tasks/semantic), and [classification](/tr/tasks/classify). Additionally, it integrates seamlessly with tools like [Ultralytics Platform](https://docs.ultralytics.com/platform) for no-code model training and deployment. For more details, explore the benefits and features on our [Ultralytics YOLO page](https://www.ultralytics.com/yolo).
+
+### Link to this sectionAçıklamalarımın Ultralytics YOLO için doğru formatta olduğundan nasıl emin olabilirim?#
+
+Açıklamaların YOLO tespit formatını takip etmelidir. Her açıklama dosyası, görseldeki [sınırlayıcı kutu](https://www.ultralytics.com/glossary/bounding-box) koordinatlarıyla birlikte nesne sınıfını listelemelidir. YOLO formatı, nesne tespiti modellerini eğitmek için akıcı ve standartlaştırılmış bir veri işleme sağlar. Doğru açıklama biçimlendirmesi hakkında daha fazla bilgi için [YOLO tespit formatı rehberini](/tr/datasets/detect) ziyaret et.
+
+### Link to this sectionK-Fold Çapraz Doğrulamayı Fruit Detection dışındaki özel veri setleri ile kullanabilir miyim?#
+
+Evet, açıklamalar YOLO tespit formatında olduğu sürece K-Fold Çapraz Doğrulamayı herhangi bir özel veri seti ile kullanabilirsin. Veri seti yollarını ve sınıf etiketlerini kendi özel veri setine uygun olanlarla değiştir. Bu esneklik, her nesne tespiti projesinin K-Fold Çapraz Doğrulama kullanarak sağlam model değerlendirmesinden faydalanmasını sağlar. Pratik bir örnek için Özellik Vektörleri Oluşturma bölümümüzü incele.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+[GLglenn-jocher21](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[AMambitious-octopus1](https://github.com/ambitious-octopus)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[BUBurhan-Q1](https://github.com/Burhan-Q)[M-M-Amrollahi1](https://github.com/M-Amrollahi)[IVIvorZhu3311](https://github.com/IvorZhu331)
+
+Oluşturulma 12 Kas 2023Güncellenme 2 hafta önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

@@ -1,0 +1,305 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/sahi-tiled-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+# Link to this sectionUltralytics 文档：将 YOLO26 与 SAHI 结合用于切片推理#
+
+[![在 Colab 中打开 SAHI 进行切片推理](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/notebooks/blob/main/notebooks/how-to-use-ultralytics-yolo-with-sahi.ipynb)
+
+欢迎阅读关于如何将 YOLO26 与 [SAHI](https://github.com/obss/sahi)（切片辅助超推理）结合使用的 Ultralytics 文档。本综合指南旨在为你提供实现 SAHI 与 YOLO26 配合使用所需的所有基本知识。我们将深入探讨什么是 SAHI，为什么切片推理对于大规模应用至关重要，以及如何将这些功能与 YOLO26 集成以提升 [目标检测](https://www.ultralytics.com/glossary/object-detection) 性能。
+
+![SAHI tiled inference for small objects](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sahi-sliced-inference-overview.avif)
+
+## Link to this sectionSAHI 简介#
+
+SAHI（切片辅助超推理）是一个创新的库，旨在优化用于大规模和高分辨率图像的目标检测算法。其核心功能在于将图像分割成易于处理的切片，对每个切片运行目标检测，然后再将结果拼接在一起。SAHI 兼容多种目标检测模型，包括 YOLO 系列，从而在确保计算资源得到优化利用的同时提供灵活性。
+
+  
+
+
+  
+**Watch:** How to use SAHI with Ultralytics YOLO26 to Detect Small Objects | Slicing Aided Hyper Inference 🚀 
+
+### Link to this sectionSAHI 的主要特性#
+
+  * **无缝集成** ：SAHI 可以轻松与 YOLO 模型集成，这意味着你无需大量修改代码即可开始进行切片和检测。
+  * **资源效率** ：通过将大图分解成较小的部分，SAHI 优化了内存使用，使你能够在资源有限的硬件上运行高质量的检测。
+  * **高[准确率](https://www.ultralytics.com/glossary/accuracy)**：SAHI 通过在拼接过程中采用智能算法合并重叠的检测框，保持了检测的准确性。
+
+
+
+## Link to this section什么是切片推理？#
+
+切片推理是指将大尺寸或高分辨率图像细分为较小段（切片）、对这些切片进行目标检测，然后重新组合切片以还原原始图像上目标位置的实践。当计算资源有限，或者处理可能导致内存问题的超高分辨率图像时，此技术非常有价值。
+
+### Link to this section切片推理的优势#
+
+  * **降低计算负担** ：较小的图像切片处理速度更快，消耗的内存也更少，从而能够在低端硬件上实现更流畅的操作。
+
+  * **保持检测质量** ：由于每个切片都被独立对待，只要切片足够大以捕捉到感兴趣的目标，目标检测的质量就不会降低。
+
+  * **增强可扩展性** ：该技术允许目标检测更轻松地扩展到不同尺寸和分辨率的图像，使其成为从卫星影像到医学诊断等广泛应用的理想选择。
+
+
+
+
+YOLO26 without SAHI| YOLO26 with SAHI  
+---|---  
+![YOLO26 without SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-without-sahi.avif)| ![YOLO26 with SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-with-sahi.avif)  
+  
+## Link to this section安装与准备#
+
+### Link to this section安装#
+
+首先，安装最新版本的 SAHI 和 Ultralytics：
+    
+    
+    pip install -U ultralytics sahi
+
+### Link to this section导入模块并下载资源#
+
+以下是下载一些测试图像的方法：
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+## Link to this sectionYOLO26 的标准推理#
+
+### Link to this section实例化模型#
+
+你可以像这样实例化 YOLO26 模型进行目标检测：
+    
+    
+    from sahi import AutoDetectionModel
+    
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        confidence_threshold=0.3,
+        device="cpu",  # or 'cuda:0'
+    )
+
+### Link to this section执行标准预测#
+
+使用图像路径执行标准推理。
+    
+    
+    from sahi.predict import get_prediction
+    
+    result = get_prediction("demo_data/small-vehicles1.jpeg", detection_model)
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+
+### Link to this section可视化结果#
+
+导出并可视化预测的边界框和掩码：
+    
+    
+    from PIL import Image
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionYOLO26 的切片推理#
+
+通过指定切片尺寸和重叠比例来执行切片推理：
+    
+    
+    from PIL import Image
+    from sahi.predict import get_sliced_prediction
+    
+    result = get_sliced_prediction(
+        "demo_data/small-vehicles1.jpeg",
+        detection_model,
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+    
+    # Export results
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this section处理预测结果#
+
+SAHI 提供了一个 `PredictionResult` 对象，它可以转换为多种标注格式：
+    
+    
+    # Access the object prediction list
+    object_prediction_list = result.object_prediction_list
+    
+    # Convert to COCO annotation, COCO prediction, imantics, and fiftyone formats
+    result.to_coco_annotations()[:3]
+    result.to_coco_predictions(image_id=1)[:3]
+    result.to_imantics_annotations()[:3]
+    result.to_fiftyone_detections()[:3]
+
+## Link to this section批量预测#
+
+对于图像目录进行批量预测：
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+你现在已准备好将 YOLO26 与 SAHI 结合用于标准推理和切片推理。
+
+## Link to this section引用和致谢#
+
+如果你在研究或开发工作中使用了 SAHI，请引用原始的 SAHI 论文并致谢作者：
+
+引用
+    
+    
+    @article{akyon2022sahi,
+      title={Slicing Aided Hyper Inference and Fine-tuning for Small Object Detection},
+      author={Akyon, Fatih Cagatay and Altinuc, Sinan Onur and Temizel, Alptekin},
+      journal={2022 IEEE International Conference on Image Processing (ICIP)},
+      doi={10.1109/ICIP46576.2022.9897990},
+      pages={966-970},
+      year={2022}
+    }
+
+我们感谢 SAHI 研究小组为 [计算机视觉](https://www.ultralytics.com/glossary/computer-vision-cv) 社区创建并维护了这一宝贵资源。有关 SAHI 及其创建者的更多信息，请访问 [SAHI GitHub 仓库](https://github.com/obss/sahi)。
+
+## Link to this section常见问题解答#
+
+### Link to this section我该如何将 YOLO26 与 SAHI 集成以进行目标检测中的切片推理？#
+
+将 Ultralytics YOLO26 与 SAHI（切片辅助超推理）集成用于切片推理，可以通过将高分辨率图像划分为可管理的切片来优化你的目标检测任务。这种方法改善了内存使用并确保了高检测准确率。首先，你需要安装 ultralytics 和 sahi 库：
+    
+    
+    pip install -U ultralytics sahi
+
+然后，下载测试图像：
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+有关更详细的说明，请参阅我们的 切片推理指南。
+
+### Link to this section为什么我应该在处理大图像的目标检测时将 SAHI 与 YOLO26 一起使用？#
+
+将 SAHI 与 Ultralytics YOLO26 结合用于大图像目标检测具有以下几个优势：
+
+  * **降低计算负担** ：较小的切片处理速度更快且占用内存更少，使得在资源受限的硬件上运行高质量检测变得可行。
+  * **保持检测准确率** ：SAHI 使用智能算法合并重叠的边界框，从而保持检测质量。
+  * **增强可扩展性** ：通过在不同图像尺寸和分辨率下扩展目标检测任务，SAHI 成为卫星影像分析和医学诊断等各种应用的理想选择。
+
+
+
+在我们的文档中了解更多关于 切片推理的优势 的信息。
+
+### Link to this section使用 YOLO26 和 SAHI 时，我可以可视化预测结果吗？#
+
+是的，当你使用 YOLO26 和 SAHI 时，可以可视化预测结果。以下是如何导出并可视化这些结果的方法：
+    
+    
+    from PIL import Image
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    processed_image.show()
+
+此命令会将可视化后的预测结果保存到指定目录，然后你可以加载该图像在笔记本或应用程序中查看。如需详细指南，请查看 标准推理部分。
+
+### Link to this sectionSAHI 提供了哪些功能来改进 YOLO26 的目标检测？#
+
+SAHI（切片辅助超推理）提供了一些功能，可以补充 Ultralytics YOLO26 的目标检测能力：
+
+  * **无缝集成** ：SAHI 可以轻松与 YOLO 模型集成，仅需极少的代码调整。
+  * **资源效率** ：它将大图像划分为较小的切片，从而优化了内存使用和处理速度。
+  * **高准确率** ：通过在拼接过程中有效地合并重叠的检测框，SAHI 保持了高检测准确率。
+
+
+
+如需更深入的了解，请阅读关于 SAHI 的 主要特性。
+
+### Link to this section我该如何处理使用 YOLO26 和 SAHI 的大规模推理项目？#
+
+要处理使用 YOLO26 和 SAHI 的大规模推理项目，请遵循以下最佳实践：
+
+  1. **安装所需的库** ：确保你拥有最新版本的 ultralytics 和 sahi。
+  2. **配置切片推理** ：确定适合你特定项目的最佳切片尺寸和重叠比例。
+  3. **运行批量预测** ：利用 SAHI 的能力对图像目录进行批量预测，从而提高效率。
+
+
+
+批量预测示例：
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="path/to/yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+有关更详细的步骤，请访问我们的 批量预测 部分。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar8](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[COCoderUni1](https://github.com/CoderUni)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+已创建 2023年11月12日已更新 上个月
+
+## 评论
+
+本页内容
+
+使用 AI 探索

@@ -1,0 +1,745 @@
+---
+source_url: https://docs.ultralytics.com/pt/modes/track
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/track.md)
+
+# Link to this sectionRastreamento de Múltiplos Objetos com Ultralytics YOLO#
+
+![YOLO multi-object tracking with trajectory paths](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/multi-object-tracking-examples.avif)
+
+O rastreamento de objetos no domínio da análise de vídeo é uma tarefa crítica que não apenas identifica a localização e a classe dos objetos dentro do quadro, mas também mantém um ID único para cada objeto detectado à medida que o vídeo progride. As aplicações são ilimitadas — variando de vigilância e segurança a análises esportivas em tempo real.
+
+## Link to this sectionPor que escolher o Ultralytics YOLO para Rastreamento de Objetos?#
+
+A saída dos rastreadores Ultralytics é consistente com a [detecção de objetos](https://www.ultralytics.com/glossary/object-detection) padrão, mas tem o valor agregado de IDs de objeto. Isso facilita o rastreamento de objetos em fluxos de vídeo e a realização de análises subsequentes. Eis por que você deve considerar usar o Ultralytics YOLO para suas necessidades de rastreamento de objetos:
+
+  * **Eficiência:** Processe fluxos de vídeo em tempo real sem comprometer a [precisão](https://www.ultralytics.com/glossary/accuracy).
+  * **Flexibilidade:** Suporta múltiplos algoritmos e configurações de rastreamento.
+  * **Facilidade de Uso:** API Python simples e opções de CLI para integração e implantação rápidas.
+  * **Customização:** Fácil de usar com modelos YOLO treinados de forma personalizada, permitindo a integração em aplicações de domínio específico.
+
+
+
+  
+
+
+  
+**Watch:** How to Run Multi-Object Tracking with Ultralytics YOLO26 | BoT-SORT & ByteTrack | VisionAI 🚀 
+
+## Link to this sectionAplicações do mundo real#
+
+Transporte| Varejo| Aquicultura  
+---|---|---  
+![Rastreamento de Veículos](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/vehicle-tracking.avif)| ![Rastreamento de Pessoas](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/people-tracking.avif)| ![Rastreamento de Peixes](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/fish-tracking.avif)  
+Rastreamento de Veículos| Rastreamento de Pessoas| Rastreamento de Peixes  
+  
+## Link to this sectionInício Rápido#
+
+Execute o rastreamento em um vídeo com o rastreador BoT-SORT padrão. Troque por outro rastreador alterando o argumento `tracker`.
+
+Exemplo
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Default tracker (BoT-SORT)
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", show=True)
+    
+    # Switch to ByteTrack
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", show=True, tracker="bytetrack.yaml")
+
+Para executar o rastreador em fluxos de vídeo, usa um modelo treinado de Detect, Segment, Pose ou OBB como YOLO26n, YOLO26n-seg, YOLO26n-pose ou YOLO26n-obb. Podes treinar modelos personalizados localmente ou em GPUs na nuvem através da [Ultralytics Platform](https://platform.ultralytics.com).
+
+Exemplo
+    
+    
+    from ultralytics import YOLO
+    
+    # Load an official or custom model
+    model = YOLO("yolo26n.pt")  # Load an official Detect model
+    model = YOLO("yolo26n-seg.pt")  # Load an official Segment model
+    model = YOLO("yolo26n-pose.pt")  # Load an official Pose model
+    model = YOLO("path/to/best.pt")  # Load a custom-trained model
+    
+    # Perform tracking with the model
+    results = model.track("https://youtu.be/LNwODJXcvt4", show=True)  # Tracking with default tracker
+    results = model.track("https://youtu.be/LNwODJXcvt4", show=True, tracker="bytetrack.yaml")  # with ByteTrack
+
+Como pode ser visto no uso acima, o rastreamento está disponível para todos os modelos Detect, Segment e Pose executados em vídeos ou fontes de streaming.
+
+## Link to this sectionRastreadores Suportados#
+
+O Ultralytics YOLO vem com seis rastreadores integrados. Ative um deles passando seu arquivo de configuração YAML para o argumento `tracker`.
+
+Rastreador| Arquivo de configuração| Modelo de movimento| Aparência / ReID| Compensação de movimento da câmera| Tratamento de oclusão  
+---|---|---|---|---|---  
+**BoT-SORT**| `botsort.yaml`| Kalman Linear| Opcional (`with_reid`)| Sim (sparseOptFlow / ECC)| Buffer de rastreamento + religação ReID  
+**ByteTrack**| `bytetrack.yaml`| Kalman Linear| Nenhuma| Não| Resgate de baixa confiança em dois estágios  
+**OC-SORT**| `ocsort.yaml`| Kalman centrado na observação| Nenhuma| Não| Reatualização ORU, OCM, OCR a partir da última observação  
+**Deep OC-SORT**| `deepocsort.yaml`| Kalman centrado na observação| Opcional (`with_reid`)| Opcional (`gmc_method`)| OC-SORT + EMA de aparência adaptativa  
+**FastTracker**| `fasttrack.yaml`| Kalman Linear + reversão| Nenhuma| Não| Reversão Kalman + ampliação de BBox em oclusão  
+**TrackTrack**| `tracktrack.yaml`| Kalman Linear (NSA)| Opcional (fallback HMIoU)| Sim (sparseOptFlow / ECC)| Associação iterativa de múltiplas pistas + TAI  
+  
+### Link to this sectionQual Rastreador Devo Usar?#
+
+Use este fluxo para escolher um ponto de partida:
+
+  1. **Precisa da base mais rápida e simples?** → **ByteTrack** (sem ReID, sem compensação de movimento de câmera, sobrecarga mínima).
+  2. **Filmagem portátil, de drone ou com câmera em movimento?** → **BoT-SORT** (padrão; adiciona compensação de movimento de câmera e ReID opcional).
+  3. **Movimento não linear (esportes, dança, curvas bruscas) e sem ReID?** → **OC-SORT** (correções centradas na observação sem custo de aparência).
+  4. **Cenas movimentadas com câmera em movimento onde as trocas de ID são o problema principal?** → **Deep OC-SORT** ou **TrackTrack** (ambos adicionam fusão de aparência adaptativa; TrackTrack também adiciona associação de múltiplas pistas e supressão de ID duplicado).
+  5. **Sobreposição parcial frequente em tempo real, sem orçamento de ReID?** → **FastTracker** (variante do ByteTrack consciente de oclusão com reversão Kalman).
+
+
+
+## Link to this sectionAlternando Rastreadores#
+
+Passe o nome do arquivo de configuração do rastreador para `tracker=`. Todo o resto do código permanece o mesmo.
+
+Exemplo
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    results = model.track(source="path/to/video.mp4", tracker="bytetrack.yaml")
+    results = model.track(source="path/to/video.mp4", tracker="ocsort.yaml")
+    results = model.track(source="path/to/video.mp4", tracker="tracktrack.yaml")
+
+## Link to this sectionConfiguração#
+
+### Link to this sectionArgumentos de Rastreamento#
+
+A configuração de rastreamento compartilha propriedades com o modo Predict, como `conf`, `iou` e `show`. Para mais configurações, consulte a página do modelo [Predict](/pt/modes/predict#inference-arguments).
+
+Exemplo
+    
+    
+    from ultralytics import YOLO
+    
+    # Configure the tracking parameters and run the tracker
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", conf=0.1, iou=0.7, show=True)
+
+### Link to this sectionConfiguração de Rastreador Personalizado#
+
+O Ultralytics também permite usar um arquivo de configuração de rastreador modificado. Para fazer isso, simplesmente faça uma cópia de um arquivo de configuração de rastreador (por exemplo, `custom_tracker.yaml`) de [ultralytics/cfg/trackers](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers) e modifique quaisquer configurações (exceto o `tracker_type`) conforme suas necessidades.
+
+Exemplo
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the model and run the tracker with a custom configuration file
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", tracker="custom_tracker.yaml")
+
+### Link to this sectionArgumentos Compartilhados do Rastreador#
+
+Os seguintes parâmetros são comuns à maioria dos arquivos YAML de rastreador; nem todo parâmetro aparece em todas as configurações:
+
+Informações de Limiar do Rastreador
+
+Se a pontuação de confiança de uma detecção cair abaixo de `track_high_thresh`, o rastreador não atualizará esse objeto, resultando em nenhum rastreamento ativo.
+
+Parâmetro| Valores Válidos ou Intervalos| Descrição  
+---|---|---  
+`tracker_type`| `botsort`, `bytetrack`, `ocsort`, `deepocsort`, `fasttrack`, `tracktrack`| Especifica o tipo de rastreador.  
+`track_high_thresh`| `0.0-1.0`| Limiar para a primeira associação. Afeta a confiança com que uma detecção é combinada com um rastreamento existente.  
+`track_low_thresh`| `0.0-1.0`| Limiar para a segunda associação sobre detecções de baixa confiança. Para OC-SORT e Deep OC-SORT, isso se aplica apenas quando `use_byte: True`.  
+`new_track_thresh`| `0.0-1.0`| Limiar para inicializar um novo rastreamento se a detecção não corresponder a nenhum rastreamento existente.  
+`track_buffer`| `>=0`| Quadros que rastreamentos perdidos são mantidos vivos antes da remoção. Um valor mais alto significa mais tolerância para oclusão.  
+`match_thresh`| `0.0-1.0`| Limiar para combinar rastreamentos. Valores mais altos tornam a correspondência mais leniente.  
+`fuse_score`| `True`, `False`| Se deve fundir pontuações de confiança com distâncias IoU antes de corresponder.  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| Método de compensação de movimento global. Ajuda a considerar o movimento da câmera.  
+`proximity_thresh`| `0.0-1.0`| IoU mínimo necessário para uma correspondência ReID válida. Garante proximidade espacial antes de usar dicas de aparência.  
+`appearance_thresh`| `0.0-1.0`| Similaridade de aparência mínima necessária para ReID.  
+`with_reid`| `True`, `False`| Ative a correspondência baseada em aparência para um rastreamento melhor durante oclusões. Suportado por BoT-SORT, Deep OC-SORT e TrackTrack.  
+`model`| `auto` ou caminho para um arquivo exportado| Modelo ReID. `auto` usa recursos nativos do backbone YOLO quando disponíveis; caso contrário, retorna a `yolo26n-cls.pt`. Passe um arquivo `.torchscript`, `.onnx`, `.engine`, `.openvino`, ... para um codificador personalizado.  
+  
+#### Link to this sectionArgumentos específicos do rastreador#
+
+Cada algoritmo expõe botões adicionais além dos parâmetros compartilhados. Consulte as seções por rastreador abaixo para obter descrições e dicas de ajuste, ou consulte diretamente os arquivos de configuração:
+
+  * [`botsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/botsort.yaml)
+  * [`bytetrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/bytetrack.yaml)
+  * [`ocsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/ocsort.yaml)
+  * [`deepocsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/deepocsort.yaml)
+  * [`fasttrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/fasttrack.yaml)
+  * [`tracktrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/tracktrack.yaml)
+
+
+
+### Link to this sectionHabilitando a Reidentificação (ReID)#
+
+A ReID é desabilitada por padrão para minimizar o custo computacional. Habilite-a configurando `with_reid: True` em um arquivo de configuração de rastreador.
+
+**Opções de modelo de ReID:**
+
+  * **`model: auto`** — Utiliza recursos nativos do detector YOLO, adicionando um custo mínimo. Ideal quando você precisa de alguma ReID sem uma grande perda de desempenho. Recorre ao `yolo26n-cls.pt` se o detector não expuser recursos compatíveis.
+  * **Modelo de ReID exportado** — Aponte `model:` para um arquivo exportado (`.torchscript`, `.onnx`, `.engine`, `.openvino`, etc.) para obter embeddings mais discriminativos ao custo de uma passagem direta extra por recorte. O codificador é carregado via `AutoBackend`, portanto, qualquer formato de exportação suportado pelo Ultralytics funciona sem alterações de código.
+
+
+
+Codificadores ONNX prontos para uso são publicados para todos os tamanhos de modelo. Define `model:` como um destes nomes e o arquivo será baixado automaticamente na primeira vez que o rastreador for executado (da mesma forma que os pesos do YOLO são obtidos) — não é necessário nenhum passo manual de exportação ou download:
+    
+    
+    # In your tracker config (e.g. tracktrack.yaml)
+    with_reid: True
+    model: yolo26n-reid.onnx # downloaded on first use; swap n→s/m/l/x for a larger encoder
+
+Modelo| tamanho  
+(pixels)| parâmetros  
+(M)| FLOPs  
+(B)  
+---|---|---|---  
+[YOLO26n-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-reid.onnx)| 448| 2.8| 2.0  
+[YOLO26s-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-reid.onnx)| 448| 7.5| 6.6  
+[YOLO26m-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m-reid.onnx)| 448| 12.4| 20.1  
+[YOLO26l-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l-reid.onnx)| 448| 15.3| 25.2  
+[YOLO26x-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-reid.onnx)| 448| 32.7| 55.9  
+  
+ReID é apenas para rastreamento
+
+Atualmente, apenas codificadores ReID ONNX para o ramo de aparência do rastreador estão disponíveis. Os modos de ReID `train`, `val` e `predict`, bem como as receitas dedicadas de exportação de ReID, ainda estão em desenvolvimento.
+
+Para um melhor desempenho com um modelo de classificação separado, exporte-o para um backend mais rápido como o TensorRT:
+
+Exportando um modelo de ReID para TensorRT
+    
+    
+    from torch import nn
+    
+    from ultralytics import YOLO
+    
+    # Load the classification model
+    model = YOLO("yolo26n-cls.pt")
+    
+    # Add average pooling layer
+    head = model.model.model[-1]
+    pool = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(start_dim=1))
+    pool.f, pool.i = head.f, head.i
+    model.model.model[-1] = pool
+    
+    # Export to TensorRT
+    model.export(format="engine", half=True, dynamic=True, batch=32)
+
+Uma vez exportado, aponte para o caminho do modelo TensorRT na sua configuração de rastreador.
+
+## Link to this sectionDetalhes do rastreador#
+
+Expanda as seções abaixo para ver o design, os parâmetros específicos e as dicas de ajuste de cada rastreador.
+
+#### Link to this sectionBoT-SORT#
+
+[BoT-SORT](https://github.com/NirAharon/BoT-SORT) (Aharon et al., 2022) é o rastreador padrão. Ele estende o ByteTrack com compensação de movimento da câmera e ReID opcional:
+
+  * **Compensação de Movimento da Câmera (CMC):** uma transformação afim estimada a cada quadro (fluxo óptico esparso por padrão; ORB / ECC também estão disponíveis) é aplicada aos estados de Kalman antes da correspondência de IoU.
+  * **ReID Opcional:** embeddings de aparência podem ser fundidos na matriz de custo. Desabilitado por padrão; habilite com `with_reid: True`.
+
+
+
+**Melhor para:** rastreamento de propósito geral, especialmente com câmeras em movimento. Adicione ReID apenas quando multidões semelhantes causarem trocas de ID.
+
+**Argumentos específicos do BoT-SORT:**
+
+Parâmetro| Valores Válidos ou Intervalos| Descrição  
+---|---|---  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| Backend de compensação de movimento da câmera. `sparseOptFlow` é o padrão. `none` desabilita a CMC.  
+`with_reid`| `True`, `False`| Habilita a correspondência baseada em aparência. Desativado por padrão.  
+`model`| `auto` ou caminho para um modelo de ReID| Modelo de ReID. `auto` usa recursos nativos do YOLO quando disponíveis; caso contrário, passe um caminho `.torchscript` / `.onnx` / `.engine`.  
+`proximity_thresh`| `0.0-1.0`| IoU mínima antes que os recursos de aparência sejam considerados.  
+`appearance_thresh`| `0.0-1.0`| Similaridade de cosseno mínima necessária para uma correspondência de ReID. Aumente para reduzir trocas de identidade.  
+  
+**Dicas de ajuste:**
+
+  * **Câmera estática:** defina `gmc_method: none` para economizar alguns ms/quadro.
+  * **Movimento intenso da câmera:** mantenha `sparseOptFlow`; `ecc` é mais preciso, porém mais lento.
+  * **Multidões semelhantes:** ative `with_reid: True` e aumente o `appearance_thresh` (ex.: `0.85+`).
+
+
+
+#### Link to this sectionByteTrack#
+
+[ByteTrack](https://github.com/FoundationVision/ByteTrack) (Zhang et al., ECCV 2022) é a base leve. Ele usa Kalman linear + IoU com uma associação de dois estágios:
+
+  * **Estágio 1:** faz a correspondência de detecções de alta pontuação com trilhas ativas.
+  * **Estágio 2:** tenta novamente a correspondência de trilhas não correspondidas com detecções de baixa pontuação para recuperar através de uma breve oclusão parcial.
+
+
+
+Não há modelo de aparência nem compensação de movimento da câmera.
+
+**Melhor para:** câmeras estáticas ou quase estáticas onde o custo do detector domina e você deseja o mínimo de sobrecarga de rastreador.
+
+**Argumentos específicos do ByteTrack:** Nenhum além dos argumentos compartilhados do rastreador.
+
+**Dicas de ajuste:**
+
+  * **Detector com ruído:** diminua `track_low_thresh` para que o segundo estágio tenha mais candidatos.
+  * **Detector de alta recuperação:** aumente `track_high_thresh` para reduzir IDs fragmentados.
+  * **Flicker de ID frequente:** aumente `track_buffer` para que trilhas brevemente perdidas sobrevivam.
+
+
+
+#### Link to this sectionOC-SORT#
+
+[OC-SORT](https://arxiv.org/abs/2203.14360) (Cao et al., CVPR 2023) é uma extensão centrada na observação do SORT. Ele mantém o design leve do SORT (sem recursos de aparência) e adiciona três correções:
+
+  * **Reatualização Centrada na Observação (ORU):** reproduz uma trajetória virtual entre a última observação e a detecção atual, executando novamente a atualização de Kalman para reparar a velocidade com desvio.
+  * **Momento Centrado na Observação (OCM):** penaliza detecções que se movem na direção errada através de um termo de consistência de velocidade.
+  * **Recuperação Centrada na Observação (OCR):** verifica novamente detecções não correspondidas contra trilhas perdidas recentemente usando sua última observação em vez do estado previsto.
+
+
+
+**Melhor para:** movimento não linear sem o custo de um modelo de ReID.
+
+**Argumentos específicos do OC-SORT:**
+
+Parâmetro| Valores Válidos ou Intervalos| Descrição  
+---|---|---  
+`delta_t`| `>=1`| Janela temporal (quadros) para o cálculo da direção da velocidade no OCM. Valores maiores suavizam mais.  
+`inertia`| `0.0-1.0`| Peso do custo de consistência da velocidade. Valores mais altos penalizam mudanças repentinas de direção.  
+`use_byte`| `True`, `False`| Habilita uma segunda passagem de associação estilo ByteTrack sobre detecções de baixa confiança.  
+  
+**Dicas de ajuste:**
+
+  * **Movimento não linear:** aumente `inertia` (ex.: `0.3-0.4`).
+  * **Detecções esparsas:** habilite `use_byte: True`.
+  * **Oclusões longas:** aumente `track_buffer` para que o OCR tenha mais trilhas perdidas para reanexar.
+
+
+
+#### Link to this sectionDeep OC-SORT#
+
+[Deep OC-SORT](https://arxiv.org/abs/2302.11813) aumenta o OC-SORT com informações de aparência e compensação de movimento da câmera:
+
+  * **Fusão adaptativa de aparência:** embeddings de detecção são fundidos na matriz de custo com peso modulado pela confiança da detecção e sobreposição.
+  * **EMA de aparência dinâmica:** embeddings de trilha são atualizados com um EMA cujo fator de suavização se adapta à confiança da detecção.
+  * **Compensação de Movimento da Câmera:** estados de Kalman são deformados quadro a quadro via fluxo óptico esparso, ORB ou ECC.
+
+
+
+**Melhor para:** cenas lotadas ou com câmera em movimento onde trocas de ID entre objetos visualmente diferentes mas espacialmente próximos são comuns.
+
+**Argumentos específicos do Deep OC-SORT:**
+
+Parâmetro| Valores Válidos ou Intervalos| Descrição  
+---|---|---  
+`with_reid`| `True`, `False`| Habilita a correspondência baseada em aparência. Desativado por padrão.  
+`model`| `auto`, arquivo de modelo de ReID exportado| Modelo de ReID. `auto` reutiliza recursos nativos do YOLO; caso contrário, passe um arquivo exportado (`.torchscript`, `.onnx`, `.engine`, …).  
+`proximity_thresh`| `0.0-1.0`| IoU mínima antes que os recursos de aparência sejam considerados.  
+`appearance_thresh`| `0.0-1.0`| Similaridade de cosseno mínima necessária para uma correspondência de ReID.  
+`alpha_fixed_emb`| `0.0-1.0`| Fator EMA base para atualizações de embedding de trilha. Valores mais altos preservam o embedding antigo por mais tempo.  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| Método de compensação de movimento global.  
+`delta_t`| `>=1`| Janela temporal (quadros) para o cálculo da direção da velocidade no OCM (herdado do OC-SORT).  
+`inertia`| `0.0-1.0`| Peso do custo de consistência da velocidade (herdado do OC-SORT).  
+`use_byte`| `True`, `False`| Habilita uma segunda associação estilo ByteTrack sobre detecções de baixa confiança (herdado do OC-SORT).  
+  
+**Dicas de ajuste:**
+
+  * **Trocas de identidade em multidões:** aumente `appearance_thresh` (ex.: `0.92-0.95`) e diminua `alpha_fixed_emb` para que os embeddings se adaptem mais lentamente.
+  * **Câmera em movimento:** defina `gmc_method: sparseOptFlow` (o Deep OC-SORT tem como padrão `none`).
+  * **Menor latência:** mantenha `with_reid: False` (padrão) apenas para movimento + CMC; habilite ReID apenas quando as trocas de ID dominarem os erros.
+
+
+
+#### Link to this sectionFastTracker#
+
+[FastTracker](https://arxiv.org/abs/2508.14370) é uma variante do ByteTrack consciente de oclusão sem modelo de aparência:
+
+  * **Detecção de oclusão:** marca trilhas como ocluídas quando a cobertura por outras trilhas ativas excede `occ_cover_thresh`.
+  * **Rollback de Kalman na oclusão:** reverte o estado de Kalman para um quadro pré-oclusão usando histórico de buffer circular.
+  * **Amortecimento de movimento e expansão de busca:** a velocidade é amortecida e a bbox prevista é ampliada enquanto ocluída.
+  * **Supressão de Init-IoU:** evita que novas trilhas surjam sobre trilhas ativas.
+
+
+
+**Melhor para:** pipelines de detecção em tempo real com sobreposição frequente de alvo-em-alvo (multidões, filas, esportes).
+
+**Argumentos específicos do FastTracker:**
+
+Parâmetro| Valores Válidos ou Intervalos| Descrição  
+---|---|---  
+`reset_velocity_offset_occ`| `>=0`| Quadros de histórico para restaurar a velocidade de Kalman no início da oclusão.  
+`reset_pos_offset_occ`| `>=0`| Quadros de histórico para restaurar a posição de Kalman no início da oclusão.  
+`enlarge_bbox_occ`| `>=1.0`| Escalonamento de altura aplicado à bbox prevista enquanto ocluída (a largura escala via proporção XYAH).  
+`dampen_motion_occ`| `0.0-1.0`| Multiplicador de velocidade enquanto ocluída. Valores mais baixos fazem a trilha "desacelerar" através da oclusão.  
+`active_occ_to_lost_thresh`| `>=1`| Máximo de quadros ocluídos consecutivos antes que uma trilha ativa seja movida para perdida.  
+`occ_cover_thresh`| `0.0-1.0`| Fração da área de um rastreamento coberta por outro rastreamento ativo para declarar oclusão.  
+`occ_reappear_window`| `>=0`| Quadros em que um rastreamento perdido e recentemente ocluído permanece preferencialmente encontrável.  
+`init_iou_suppress`| `0.0-1.0`| Suprime a inicialização de um novo rastreamento se o seu IoU com qualquer rastreamento ativo exceder este valor. Defina como `1.0` para desativar.  
+  
+**Dicas de ajuste:**
+
+  * **Oclusões parciais frequentes:** reduza `occ_cover_thresh` (por exemplo, `0.5-0.6`).
+  * **IDs duplicados em torno de sobreposição:** reduza `init_iou_suppress` (por exemplo, `0.5`).
+  * **Oclusões longas:** aumente `occ_reappear_window` e `track_buffer` simultaneamente.
+  * **Alvos de movimento rápido:** aumente `dampen_motion_occ` (mais próximo de `1.0`) e reduza `enlarge_bbox_occ`.
+
+
+
+#### Link to this sectionTrackTrack#
+
+[TrackTrack](https://openaccess.thecvf.com/content/CVPR2025/papers/Shim_Focusing_on_Tracks_for_Online_Multi-Object_Tracking_CVPR_2025_paper.pdf) (Shim et al., CVPR 2025) raciocina a partir da perspectiva de cada rastreamento com associação iterativa multicanal:
+
+  * **Associação baseada na perspectiva do rastreamento (TPA):** combina HMIoU, distância de ReID de cosseno, distância de projeção de confiança e distância de ângulo de canto. A atribuição é resolvida iterativamente com um limite de relaxamento.
+  * **Inicialização com reconhecimento de rastreamento (TAI):** suprime gerações duplicadas antes que um novo ID seja criado.
+
+
+
+**Melhor para:** cenas lotadas com oclusão frequente onde IDs duplicados são um problema.
+
+**Argumentos específicos do TrackTrack:**
+
+Parâmetro| Valores Válidos ou Intervalos| Descrição  
+---|---|---  
+`iou_weight`| `0.0-1.0`| Peso da distância HMIoU na matriz de custo multicanal.  
+`reid_weight`| `0.0-1.0`| Peso da distância de ReID de cosseno. Recorre ao HMIoU se o ReID estiver desativado.  
+`conf_weight`| `0.0-1.0`| Peso da distância de projeção de confiança.  
+`angle_weight`| `0.0-1.0`| Peso da distância de ângulo de canto.  
+`penalty_p`| `0.0-1.0`| Penalidade de custo para detecções de baixa confiança.  
+`penalty_q`| `0.0-1.0`| Penalidade de custo para detecções recuperadas por NMS secundário.  
+`reduce_step`| `0.0-1.0`| Relaxamento do limite de correspondência por iteração.  
+`tai_thr`| `0.0-1.0`| Limite de IoU para NMS de inicialização com reconhecimento de rastreamento.  
+`min_track_len`| `>=0`| Atualizações bem-sucedidas mínimas antes que um novo rastreamento seja confirmado.  
+`lost_match_thr`| `0.0-1.0`| Portão de custo mais flexível para passagem relaxada de reatribuição de perdidos; `0` desativa.  
+`with_reid`| `True`, `False`| Ative a correspondência de aparência ReID de cosseno (usa recursos nativos do YOLO). Desativado por padrão.  
+`model`| `auto`, arquivo ReID| Modelo ReID; `auto` usa recursos nativos do YOLO, caso contrário, um arquivo ReID exportado.  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| Método de compensação de movimento global.  
+  
+**Dicas de ajuste:**
+
+  * **Pedestres lotados:** reduza `tai_thr` (por exemplo, `0.45`) para suprimir mais gerações duplicadas; aumente `track_buffer` para oclusões mais longas.
+  * **Movimento rápido da câmera:** mantenha `gmc_method: sparseOptFlow` ativado.
+  * **Objetos pequenos/rápidos:** aumente ligeiramente `angle_weight` e reduza `min_track_len`.
+  * **Ative o ReID apenas quando necessário:** ele aumenta o custo de inferência; para oclusões curtas, o custo multicanal padrão geralmente é suficiente.
+
+
+
+## Link to this sectionExemplos em Python#
+
+  
+
+
+  
+**Watch:** How to Build Interactive Object Tracking with Ultralytics YOLO | Click to Crop & Display ⚡ 
+
+### Link to this sectionLoop de persistência de rastreamentos#
+
+Aqui está um script em Python usando [OpenCV](https://www.ultralytics.com/glossary/opencv) (`cv2`) e YOLO26 para executar o rastreamento de objetos em quadros de vídeo. Este script pressupõe que os pacotes necessários (`opencv-python` e `ultralytics`) já estejam instalados. O argumento `persist=True` informa ao rastreador que a imagem ou quadro atual é o próximo em uma sequência e que deve esperar rastreamentos da imagem anterior na imagem atual.
+
+Loop for de streaming com rastreamento
+    
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Open the video file
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    
+    # Loop through the video frames
+    while cap.isOpened():
+        # Read a frame from the video
+        success, frame = cap.read()
+    
+        if success:
+            # Run YOLO26 tracking on the frame, persisting tracks between frames
+            results = model.track(frame, persist=True)
+    
+            # Visualize the results on the frame
+            annotated_frame = results[0].plot()
+    
+            # Display the annotated frame
+            cv2.imshow("YOLO26 Tracking", annotated_frame)
+    
+            # Break the loop if 'q' is pressed
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            # Break the loop if the end of the video is reached
+            break
+    
+    # Release the video capture object and close the display window
+    cap.release()
+    cv2.destroyAllWindows()
+
+Observe a mudança de `model(frame)` para `model.track(frame)`, o que habilita o rastreamento de objetos em vez de uma simples detecção. Este script modificado executará o rastreador em cada quadro do vídeo, visualizará os resultados e os exibirá em uma janela. O loop pode ser encerrado pressionando 'q'.
+
+### Link to this sectionPlotando rastreamentos ao longo do tempo#
+
+Visualizar rastreamentos de objetos ao longo de quadros consecutivos pode fornecer insights valiosos sobre os padrões de movimento e o comportamento dos objetos detectados dentro de um vídeo. Com o Ultralytics YOLO26, plotar esses rastreamentos é um processo contínuo e eficiente.
+
+No exemplo a seguir, demonstramos como utilizar os recursos de rastreamento do YOLO26 para plotar o movimento de objetos detectados em vários quadros de vídeo. Este script envolve abrir um arquivo de vídeo, lê-lo quadro a quadro e utilizar o modelo YOLO para identificar e rastrear vários objetos. Ao reter os pontos centrais das caixas delimitadoras detectadas e conectá-los, podemos desenhar linhas que representam os caminhos seguidos pelos objetos rastreados.
+
+Plotando rastreamentos em vários quadros de vídeo
+    
+    
+    from collections import defaultdict
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Open the video file
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    
+    # Store the track history
+    track_history = defaultdict(lambda: [])
+    
+    # Loop through the video frames
+    while cap.isOpened():
+        # Read a frame from the video
+        success, frame = cap.read()
+    
+        if success:
+            # Run YOLO26 tracking on the frame, persisting tracks between frames
+            result = model.track(frame, persist=True)[0]
+    
+            # Get the boxes and track IDs
+            if result.boxes and result.boxes.is_track:
+                boxes = result.boxes.xywh.cpu()
+                track_ids = result.boxes.id.int().cpu().tolist()
+    
+                # Visualize the result on the frame
+                frame = result.plot()
+    
+                # Plot the tracks
+                for box, track_id in zip(boxes, track_ids):
+                    x, y, w, h = box
+                    track = track_history[track_id]
+                    track.append((float(x), float(y)))  # x, y center point
+                    if len(track) > 30:  # retain 30 tracks for 30 frames
+                        track.pop(0)
+    
+                    # Draw the tracking lines
+                    points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                    cv2.polylines(frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+    
+            # Display the annotated frame
+            cv2.imshow("YOLO26 Tracking", frame)
+    
+            # Break the loop if 'q' is pressed
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            # Break the loop if the end of the video is reached
+            break
+    
+    # Release the video capture object and close the display window
+    cap.release()
+    cv2.destroyAllWindows()
+
+### Link to this sectionRastreamento multithread#
+
+O rastreamento multithread oferece a capacidade de executar o rastreamento de objetos em vários fluxos de vídeo simultaneamente. Isso é particularmente útil ao lidar com múltiplas entradas de vídeo, como de várias câmeras de vigilância, onde o processamento simultâneo pode melhorar muito a eficiência e o desempenho.
+
+No script Python fornecido, usamos o módulo `threading` do Python para executar várias instâncias do rastreador simultaneamente. Cada thread é responsável por executar o rastreador em um arquivo de vídeo, e todas as threads funcionam simultaneamente em segundo plano.
+
+Para garantir que cada thread receba os parâmetros corretos (o arquivo de vídeo, o modelo a ser usado e o índice do arquivo), definimos uma função `run_tracker_in_thread` que aceita esses parâmetros e contém o loop principal de rastreamento. Esta função lê o vídeo quadro a quadro, executa o rastreador e exibe os resultados.
+
+Dois modelos diferentes são usados neste exemplo: `yolo26n.pt` e `yolo26n-seg.pt`, cada um rastreando objetos em um arquivo de vídeo diferente. Os arquivos de vídeo são especificados em `SOURCES`.
+
+O parâmetro `daemon=True` em `threading.Thread` significa que essas threads serão fechadas assim que o programa principal terminar. Em seguida, iniciamos as threads com `start()` e usamos `join()` para fazer a thread principal esperar até que ambas as threads do rastreador terminem.
+
+Finalmente, após todas as threads concluírem sua tarefa, as janelas que exibem os resultados são fechadas usando `cv2.destroyAllWindows()`.
+
+Implementação de rastreamento multithread
+    
+    
+    import threading
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Define model names and video sources
+    MODEL_NAMES = ["yolo26n.pt", "yolo26n-seg.pt"]
+    SOURCES = ["path/to/video.mp4", "0"]  # local video, 0 for webcam
+    
+    def run_tracker_in_thread(model_name, filename):
+        """Run YOLO tracker in its own thread for concurrent processing.
+    
+        Args:
+            model_name (str): The YOLO26 model object.
+            filename (str): The path to the video file or the identifier for the webcam/external camera source.
+        """
+        model = YOLO(model_name)
+        results = model.track(filename, save=True, stream=True)
+        for r in results:
+            pass
+    
+    # Create and start tracker threads using a for loop
+    tracker_threads = []
+    for video_file, model_name in zip(SOURCES, MODEL_NAMES):
+        thread = threading.Thread(target=run_tracker_in_thread, args=(model_name, video_file), daemon=True)
+        tracker_threads.append(thread)
+        thread.start()
+    
+    # Wait for all tracker threads to finish
+    for thread in tracker_threads:
+        thread.join()
+    
+    # Clean up and close windows
+    cv2.destroyAllWindows()
+
+Este exemplo pode ser facilmente estendido para lidar com mais arquivos de vídeo e modelos criando mais threads e aplicando a mesma metodologia.
+
+## Link to this sectionContribua com novos rastreadores#
+
+Você é proficiente em rastreamento de múltiplos objetos e implementou ou adaptou com sucesso um algoritmo de rastreamento com o Ultralytics YOLO? Convidamos você a contribuir para nossa seção de Rastreadores em [ultralytics/cfg/trackers](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers)! Suas aplicações e soluções do mundo real podem ser inestimáveis para usuários que trabalham em tarefas de rastreamento.
+
+Ao contribuir para esta seção, você ajuda a expandir o escopo de soluções de rastreamento disponíveis na estrutura do Ultralytics YOLO, adicionando outra camada de funcionalidade e utilidade para a comunidade.
+
+Para iniciar sua contribuição, consulte nosso [Guia de Contribuição](/pt/help/contributing) para obter instruções abrangentes sobre como enviar um Pull Request (PR) 🛠️. Estamos animados para ver o que você trará!
+
+Juntos, vamos melhorar as capacidades de rastreamento do ecossistema Ultralytics YOLO 🙏!
+
+## Link to this sectionFAQ#
+
+### Link to this sectionO que é rastreamento de múltiplos objetos e como o Ultralytics YOLO o suporta?#
+
+O rastreamento de múltiplos objetos em análise de vídeo envolve identificar objetos e manter um ID exclusivo para cada objeto detectado ao longo dos quadros de vídeo. O Ultralytics YOLO suporta isso fornecendo rastreamento em tempo real junto com IDs de objetos, facilitando tarefas como vigilância de segurança e análise esportiva. O sistema usa rastreadores como [BoT-SORT](https://github.com/NirAharon/BoT-SORT), [ByteTrack](https://github.com/FoundationVision/ByteTrack), OC-SORT, Deep OC-SORT, FastTracker e TrackTrack, que podem ser configurados via arquivos YAML.
+
+### Link to this sectionComo configuro um rastreador personalizado para o Ultralytics YOLO?#
+
+Você pode configurar um rastreador personalizado copiando um arquivo de configuração de rastreador existente (por exemplo, `custom_tracker.yaml`) do [diretório de configuração do rastreador Ultralytics](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers) e modificando os parâmetros conforme necessário, exceto para o `tracker_type`. Use este arquivo em seu modelo de rastreamento da seguinte forma:
+
+Exemplo
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", tracker="custom_tracker.yaml")
+
+### Link to this sectionComo posso executar o rastreamento de objetos em vários fluxos de vídeo simultaneamente?#
+
+Para executar o rastreamento de objetos em vários fluxos de vídeo simultaneamente, você pode usar o módulo `threading` do Python. Cada thread lidará com um fluxo de vídeo separado. Aqui está um exemplo de como você pode configurar isso:
+
+Rastreamento multithread
+    
+    
+    import threading
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Define model names and video sources
+    MODEL_NAMES = ["yolo26n.pt", "yolo26n-seg.pt"]
+    SOURCES = ["path/to/video.mp4", "0"]  # local video, 0 for webcam
+    
+    def run_tracker_in_thread(model_name, filename):
+        """Run YOLO tracker in its own thread for concurrent processing.
+    
+        Args:
+            model_name (str): The YOLO26 model object.
+            filename (str): The path to the video file or the identifier for the webcam/external camera source.
+        """
+        model = YOLO(model_name)
+        results = model.track(filename, save=True, stream=True)
+        for r in results:
+            pass
+    
+    # Create and start tracker threads using a for loop
+    tracker_threads = []
+    for video_file, model_name in zip(SOURCES, MODEL_NAMES):
+        thread = threading.Thread(target=run_tracker_in_thread, args=(model_name, video_file), daemon=True)
+        tracker_threads.append(thread)
+        thread.start()
+    
+    # Wait for all tracker threads to finish
+    for thread in tracker_threads:
+        thread.join()
+    
+    # Clean up and close windows
+    cv2.destroyAllWindows()
+
+### Link to this sectionQuais são as aplicações do mundo real do rastreamento de múltiplos objetos com o Ultralytics YOLO?#
+
+O rastreamento de múltiplos objetos com o Ultralytics YOLO tem inúmeras aplicações, incluindo:
+
+  * **Transporte:** Rastreamento de veículos para gestão de tráfego e [direção autônoma](https://www.ultralytics.com/blog/ai-in-self-driving-cars).
+  * **Varejo:** Rastreamento de pessoas para análises em loja e segurança.
+  * **Aquicultura:** Rastreamento de peixes para monitoramento de ambientes aquáticos.
+  * **Análise Esportiva:** Rastreamento de jogadores e equipamentos para análise de desempenho.
+  * **Sistemas de Segurança:** [Monitoramento de atividades suspeitas](https://www.ultralytics.com/blog/security-alarm-system-projects-with-ultralytics-yolov8) e criação de [alarmes de segurança](https://docs.ultralytics.com/guides/security-alarm-system).
+
+
+
+Essas aplicações se beneficiam da capacidade do Ultralytics YOLO de processar vídeos com alta taxa de quadros em tempo real com precisão excepcional.
+
+### Link to this sectionComo posso visualizar rastreamentos de objetos em vários quadros de vídeo com o Ultralytics YOLO?#
+
+Para visualizar rastreamentos de objetos em vários quadros de vídeo, você pode usar os recursos de rastreamento do modelo YOLO junto com o OpenCV para desenhar os caminhos dos objetos detectados. Aqui está um exemplo de script que demonstra isso:
+
+Plotando rastreamentos em vários quadros de vídeo
+    
+    
+    from collections import defaultdict
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    track_history = defaultdict(lambda: [])
+    
+    while cap.isOpened():
+        success, frame = cap.read()
+        if success:
+            results = model.track(frame, persist=True)
+            boxes = results[0].boxes.xywh.cpu()
+            track_ids = results[0].boxes.id.int().cpu().tolist()
+            annotated_frame = results[0].plot()
+            for box, track_id in zip(boxes, track_ids):
+                x, y, w, h = box
+                track = track_history[track_id]
+                track.append((float(x), float(y)))
+                if len(track) > 30:
+                    track.pop(0)
+                points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                cv2.polylines(annotated_frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+            cv2.imshow("YOLO26 Tracking", annotated_frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+Este script plotará as linhas de rastreamento mostrando os caminhos de movimento dos objetos rastreados ao longo do tempo, fornecendo insights valiosos sobre o comportamento e padrões dos objetos.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/track.md)
+
+[GLglenn-jocher30](https://github.com/glenn-jocher)[RIRizwanMunawar4](https://github.com/RizwanMunawar)[ONonuralpszr2](https://github.com/onuralpszr)[RAraimbekovm2](https://github.com/raimbekovm)[Y-Y-T-G2](https://github.com/Y-T-G)RORonald Eddy Jr1[PDpderrenger1](https://github.com/pderrenger)[LALaughing-q1](https://github.com/Laughing-q)[ANankanpy1](https://github.com/ankanpy)[MAMatthewNoyce1](https://github.com/MatthewNoyce)[IVIvorZhu3311](https://github.com/IvorZhu331)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+Criado 12 de nov. de 2023Atualizado semana passada
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

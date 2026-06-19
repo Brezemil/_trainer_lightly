@@ -1,0 +1,175 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/similarity-search
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/similarity-search.md)
+
+# Link to this section如何使用 OpenAI CLIP 和 Meta FAISS 构建语义图像搜索#
+
+本指南将带你了解如何使用 [OpenAI CLIP](https://openai.com/index/clip/)、[Meta FAISS](https://github.com/facebookresearch/faiss) 和 [Flask](https://flask.palletsprojects.com/en/stable/) 构建一个 **语义图像搜索** 引擎。通过结合 CLIP 的视觉语言 [embeddings](https://developers.openai.com/api/docs/guides/embeddings) 与 FAISS 的高效最近邻搜索，你可以构建一个能够通过自然语言查询检索相关图像的 Web 界面，无需任何标签或类别。
+
+  
+
+
+  
+**Watch:** How Similarity Search Works | Visual Search Using OpenAI CLIP, META FAISS and Ultralytics Package 🎉 
+
+![带有语义搜索结果概览的 Flask 网页](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/flask-ui.avif)
+
+Ultralytics Python 包将整个流程封装在两个类中，因此你可以在几行代码内启动一个可工作的搜索应用或以编程方式运行查询。本指南涵盖了为什么语义搜索很有用、它是如何工作的、运行网页应用、以编程方式搜索以及配置参数。
+
+## Link to this section为什么使用语义图像搜索？#
+
+使用 CLIP 和 FAISS 构建你自己的语义图像搜索系统具有几个引人注目的优势：
+
+  * **零样本能力：** 你不需要在你的数据集上进行训练。CLIP 的 [零样本学习](https://www.ultralytics.com/glossary/zero-shot-learning) 让你能够使用自由格式的自然语言查询任何图像集合，从而节省时间和资源。
+  * **类人的理解力：** 与关键词搜索不同，CLIP 可以理解语义上下文，并从抽象、情感或关系查询中检索图像，例如“自然中快乐的孩子”或“夜间充满未来感的城市天际线”。
+  * **无需标签或元数据：** 这种方法仅需要原始图像。CLIP 无需任何手动标注即可生成 embeddings。
+  * **灵活且可扩展的搜索：** FAISS 即使在大型数据集上也能提供快速的最近邻搜索，在数千或数百万个 embeddings 中实现实时响应。
+  * **跨领域应用：** 无论你是构建个人照片存档、创意灵感工具、产品搜索引擎还是艺术推荐系统，同一个技术栈都可以在最小程度的调整下进行适配。
+
+
+
+## Link to this section语义图像搜索的工作原理#
+
+该流程结合了三个组件，每个组件负责将图像和文本转换为排名结果的一个阶段：
+
+  * **CLIP** 使用视觉编码器（例如 ResNet 或 ViT）处理图像，使用文本编码器（基于 Transformer）处理语言，将两者投影到同一个多模态 embedding 空间中。这允许使用 [余弦相似度](https://en.wikipedia.org/wiki/Cosine_similarity) 直接比较文本和图像。
+  * **FAISS** (Facebook AI Similarity Search) 构建了一个图像 embeddings 索引，并能够针对给定查询实现快速、可扩展的检索。
+  * **Flask** 提供了一个简单的网页界面，用于提交自然语言查询并显示索引中语义匹配的图像。
+
+
+
+![OpenAI CLIP 图像检索流程](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/clip-image-retrieval.avif)
+
+因为图像和文本都处于同一个向量空间中，所以检索是零样本的：你不需要标签或类别，只需要图像数据和一个好的提示词。
+
+![Meta FAISS embedding 向量构建流程](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/faiss-indexing-workflow.avif)
+
+## Link to this section运行语义搜索网页应用#
+
+`SearchApp` 类会启动完整的 Flask 界面。首次运行时，它会下载示例图像集，构建 FAISS 索引，并提供一个页面，你可以在其中输入查询并查看排名结果。
+
+图像路径警告
+
+如果你使用自己的图像，请确保提供图像目录的绝对路径。否则，由于 Flask 的文件服务限制，图像可能无法在网页上显示。
+    
+    
+    from ultralytics import solutions
+    
+    app = solutions.SearchApp(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    app.run(debug=False)  # You can also use `debug=True` argument for testing
+
+## Link to this section以编程方式搜索图像#
+
+`VisualAISearch` 类执行所有后端操作，无需 Web 层：
+
+  * 从本地图像加载或构建 FAISS 索引。
+  * 使用 CLIP 提取图像和文本 [embeddings](https://developers.openai.com/api/docs/guides/embeddings)。
+  * 使用余弦相似度执行相似度搜索。
+
+
+
+调用搜索器并传入自然语言查询，即可返回按相似度排名的匹配图像文件名列表：
+    
+    
+    from ultralytics import solutions
+    
+    searcher = solutions.VisualAISearch(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    results = searcher("a dog sitting on a bench")
+    
+    # Ranked Results:
+    #     - 000000546829.jpg | Similarity: 0.3269
+    #     - 000000549220.jpg | Similarity: 0.2899
+    #     - 000000517069.jpg | Similarity: 0.2761
+    #     - 000000029393.jpg | Similarity: 0.2742
+    #     - 000000534270.jpg | Similarity: 0.2680
+
+## Link to this section配置 VisualAISearch 参数#
+
+下表列出了 `VisualAISearch` 的可用参数：
+
+参数| 类型| 默认值| 描述  
+---|---|---|---  
+`data`| `str`| `'images'`| 用于相似度搜索的图像目录路径。  
+  
+参数| 类型| 默认值| 描述  
+---|---|---|---  
+`device`| `str`| `None`| 指定推理设备（例如 `cpu`、`cuda:0` 或 `0`）。允许用户在 CPU、特定的 GPU 或其他计算设备之间进行选择以执行模型。  
+  
+在云端管理你的数据
+
+要在生产规模下搜索图像集合而无需管理本地文件，你可以在使用 CLIP 和 FAISS 建立索引之前，在 [Ultralytics Platform](/zh/platform/data) 中组织和管理你的图像版本。
+
+## Link to this section结论#
+
+借助 CLIP、FAISS 和 Ultralytics Python 包，你只需几行代码即可建立零样本语义图像搜索引擎，无论是作为 Flask 网页应用还是作为编程搜索后端。接下来，将 `data` 指向你自己的图像目录进行索引，然后探索其他 [Ultralytics Solutions](/zh/solutions) 以在你的计算机视觉工作流程之上进行构建。
+
+## Link to this section常见问题解答#
+
+### Link to this sectionCLIP 是如何同时理解图像和文本的？#
+
+[CLIP](https://github.com/openai/CLIP) (Contrastive Language Image Pretraining) 是 [OpenAI](https://openai.com/) 开发的一种模型，它学习连接视觉和语言信息。它是在海量图像及其自然语言说明的数据集上进行训练的。这种训练使它能够将图像和文本映射到共享的 embedding 空间，因此你可以使用向量相似度直接比较它们。
+
+### Link to this section为什么 CLIP 在 AI 任务中被认为如此强大？#
+
+CLIP 的出色之处在于其泛化能力。它不是仅针对特定标签或任务进行训练，而是从自然语言本身学习。这使它能够处理像“骑摩托艇的人”或“超现实梦境”这样的灵活查询，从而在分类到创意语义搜索等各种任务中发挥作用，无需重新训练。
+
+### Link to this section在这个项目中，FAISS 到底做了什么（语义搜索）？#
+
+[FAISS](https://engineering.fb.com/2017/03/29/data-infrastructure/faiss-a-library-for-efficient-similarity-search/) (Facebook AI Similarity Search) 是一个工具包，可以帮助你非常高效地搜索高维向量。一旦 CLIP 将你的图像转换为 embeddings，FAISS 就能快速轻松地找到最接近文本查询的匹配项，非常适合实时图像检索。
+
+### Link to this section如果 CLIP 和 FAISS 是来自 OpenAI 和 Meta 的，为什么要使用 [Ultralytics](https://www.ultralytics.com/) [Python 包](https://github.com/ultralytics/ultralytics/)？#
+
+虽然 CLIP 和 FAISS 分别由 OpenAI 和 Meta 开发，但 [Ultralytics Python 包](https://pypi.org/project/ultralytics/) 将两者封装在一个完整的语义图像搜索流程中，只需几行代码即可正常运行：
+    
+    
+    from ultralytics import solutions
+    
+    searcher = solutions.VisualAISearch(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    results = searcher("a dog sitting on a bench")
+
+这种高阶实现处理了：
+
+  * 基于 CLIP 的图像和文本 embedding 生成。
+  * FAISS 索引的创建和管理。
+  * 使用余弦相似度进行高效的语义搜索。
+  * 基于目录的图像加载和 [可视化](https://www.ultralytics.com/glossary/data-visualization)。
+
+
+
+### Link to this section我可以自定义此应用的前端吗？#
+
+可以。当前的设置使用 Flask 和基础 HTML 前端，但你可以用你自己的 HTML 替换它，或者用 React、Vue 或其他前端框架构建更动态的 UI。Flask 可以作为你自定义界面的后端 API。
+
+### Link to this section是否可以搜索视频而不是静态图像？#
+
+不能直接搜索。一个简单的变通方法是从视频中提取单个帧（例如，每秒提取一帧），将它们视为独立的图像，然后将它们输入系统。这样，搜索引擎就可以语义化地索引你视频中的视觉片段。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/similarity-search.md)
+
+[GLglenn-jocher4](https://github.com/glenn-jocher)[RIRizwanMunawar3](https://github.com/RizwanMunawar)[RAraimbekovm1](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)
+
+已创建 2025年5月4日已更新 5天前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

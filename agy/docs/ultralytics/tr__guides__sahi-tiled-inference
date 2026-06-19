@@ -1,0 +1,305 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/sahi-tiled-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+# Link to this sectionUltralytics Dokümanları: Dilimlenmiş Çıkarım için YOLO26 ve SAHI Kullanımı#
+
+[![Open SAHI for Sliced Inference In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/notebooks/blob/main/notebooks/how-to-use-ultralytics-yolo-with-sahi.ipynb)
+
+YOLO26'nın [SAHI](https://github.com/obss/sahi) (Slicing Aided Hyper Inference - Dilimleme Destekli Hiper Çıkarım) ile nasıl kullanılacağına dair Ultralytics dokümantasyonuna hoş geldin. Bu kapsamlı rehber, SAHI'yi YOLO26 ile birlikte uygulaman için gereken tüm temel bilgileri sağlamayı amaçlıyor. SAHI'nin ne olduğuna, büyük ölçekli uygulamalar için dilimlenmiş çıkarımın neden kritik olduğuna ve bu işlevlerin gelişmiş [nesne algılama](https://www.ultralytics.com/glossary/object-detection) performansı için YOLO26 ile nasıl entegre edileceğine derinlemesine bakacağız.
+
+![SAHI tiled inference for small objects](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sahi-sliced-inference-overview.avif)
+
+## Link to this sectionSAHI'ye Giriş#
+
+SAHI (Slicing Aided Hyper Inference), büyük ölçekli ve yüksek çözünürlüklü görüntülerde nesne algılama algoritmalarını optimize etmek için tasarlanmış yenilikçi bir kütüphanedir. Temel işlevi, görüntüleri yönetilebilir dilimlere ayırmak, her dilimde nesne algılama çalıştırmak ve ardından sonuçları tekrar birleştirmektir. SAHI, YOLO serisi de dahil olmak üzere bir dizi nesne algılama modeliyle uyumludur; böylece hesaplama kaynaklarının optimize edilmiş kullanımını sağlarken esneklik sunar.
+
+  
+
+
+  
+**Watch:** How to use SAHI with Ultralytics YOLO26 to Detect Small Objects | Slicing Aided Hyper Inference 🚀 
+
+### Link to this sectionSAHI'nin Temel Özellikleri#
+
+  * **Sorunsuz Entegrasyon** : SAHI, YOLO modelleriyle zahmetsizce entegre olur; yani çok fazla kod değişikliği yapmadan dilimlemeye ve algılamaya başlayabilirsin.
+  * **Kaynak Verimliliği** : Büyük görüntüleri daha küçük parçalara ayırarak SAHI bellek kullanımını optimize eder ve sınırlı kaynaklara sahip donanımlarda yüksek kaliteli algılama yapmanı sağlar.
+  * **Yüksek[Doğruluk](https://www.ultralytics.com/glossary/accuracy)**: SAHI, birleştirme işlemi sırasında çakışan algılama kutularını birleştirmek için akıllı algoritmalar kullanarak algılama doğruluğunu korur.
+
+
+
+## Link to this sectionDilimlenmiş Çıkarım Nedir?#
+
+Dilimlenmiş Çıkarım; büyük veya yüksek çözünürlüklü bir görüntüyü daha küçük parçalara (dilimlere) bölme, bu dilimler üzerinde nesne algılama gerçekleştirme ve ardından orijinal görüntüdeki nesne konumlarını yeniden oluşturmak için dilimleri tekrar birleştirme pratiğini ifade eder. Bu teknik, hesaplama kaynaklarının sınırlı olduğu durumlarda veya aksi takdirde bellek sorunlarına yol açabilecek aşırı yüksek çözünürlüklü görüntülerle çalışırken çok değerlidir.
+
+### Link to this sectionDilimlenmiş Çıkarımın Avantajları#
+
+  * **Azaltılmış Hesaplama Yükü** : Daha küçük görüntü dilimlerinin işlenmesi daha hızlıdır ve daha az bellek tüketirler, bu da düşük seviyeli donanımlarda daha sorunsuz bir çalışma sağlar.
+
+  * **Korunan Algılama Kalitesi** : Her dilim bağımsız olarak ele alındığından, dilimler ilgilenilen nesneleri yakalayacak kadar büyük olduğu sürece nesne algılama kalitesinde bir düşüş olmaz.
+
+  * **Geliştirilmiş Ölçeklenebilirlik** : Bu teknik, nesne algılamanın farklı boyut ve çözünürlükteki görüntülerde daha kolay ölçeklendirilmesini sağlar, bu da onu uydu görüntülerinden tıbbi teşhislere kadar çok çeşitli uygulamalar için ideal hale getirir.
+
+
+
+
+YOLO26 without SAHI| YOLO26 with SAHI  
+---|---  
+![YOLO26 without SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-without-sahi.avif)| ![YOLO26 with SAHI](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-with-sahi.avif)  
+  
+## Link to this sectionKurulum ve Hazırlık#
+
+### Link to this sectionKurulum#
+
+Başlamak için SAHI ve Ultralytics'in en son sürümlerini yükle:
+    
+    
+    pip install -U ultralytics sahi
+
+### Link to this sectionModülleri İçe Aktar ve Kaynakları İndir#
+
+İşte bazı test görüntülerini nasıl indireceğin:
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+## Link to this sectionYOLO26 ile Standart Çıkarım#
+
+### Link to this sectionModeli Örneklendir#
+
+Nesne algılama için bir YOLO26 modelini şu şekilde örneklendirebilirsin:
+    
+    
+    from sahi import AutoDetectionModel
+    
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        confidence_threshold=0.3,
+        device="cpu",  # or 'cuda:0'
+    )
+
+### Link to this sectionStandart Tahmini Gerçekleştir#
+
+Bir görüntü yolu kullanarak standart çıkarımı gerçekleştir.
+    
+    
+    from sahi.predict import get_prediction
+    
+    result = get_prediction("demo_data/small-vehicles1.jpeg", detection_model)
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+
+### Link to this sectionSonuçları Görselleştir#
+
+Tahmin edilen sınırlayıcı kutuları ve maskeleri dışa aktar ve görselleştir:
+    
+    
+    from PIL import Image
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionYOLO26 ile Dilimlenmiş Çıkarım#
+
+Dilim boyutlarını ve çakışma oranlarını belirterek dilimlenmiş çıkarımı gerçekleştir:
+    
+    
+    from PIL import Image
+    from sahi.predict import get_sliced_prediction
+    
+    result = get_sliced_prediction(
+        "demo_data/small-vehicles1.jpeg",
+        detection_model,
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+    
+    # Export results
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    # Open the predicted image
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    # Display the predicted image
+    processed_image.show()
+
+## Link to this sectionTahmin Sonuçlarını İşleme#
+
+SAHI, çeşitli ek açıklama formatlarına dönüştürülebilen bir `PredictionResult` nesnesi sağlar:
+    
+    
+    # Access the object prediction list
+    object_prediction_list = result.object_prediction_list
+    
+    # Convert to COCO annotation, COCO prediction, imantics, and fiftyone formats
+    result.to_coco_annotations()[:3]
+    result.to_coco_predictions(image_id=1)[:3]
+    result.to_imantics_annotations()[:3]
+    result.to_fiftyone_detections()[:3]
+
+## Link to this sectionToplu Tahmin#
+
+Bir görüntü dizininde toplu tahmin için:
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+Artık hem standart hem de dilimlenmiş çıkarım için YOLO26'yı SAHI ile kullanmaya hazırsın.
+
+## Link to this sectionAlıntılar ve Teşekkür#
+
+SAHI'yi araştırma veya geliştirme çalışmalarında kullanıyorsan, lütfen orijinal SAHI makalesini kaynak göster ve yazarları belirt:
+
+Alıntı
+    
+    
+    @article{akyon2022sahi,
+      title={Slicing Aided Hyper Inference and Fine-tuning for Small Object Detection},
+      author={Akyon, Fatih Cagatay and Altinuc, Sinan Onur and Temizel, Alptekin},
+      journal={2022 IEEE International Conference on Image Processing (ICIP)},
+      doi={10.1109/ICIP46576.2022.9897990},
+      pages={966-970},
+      year={2022}
+    }
+
+[Bilgisayarlı görü](https://www.ultralytics.com/glossary/computer-vision-cv) topluluğu için bu paha biçilmez kaynağı oluşturdukları ve sürdürdükleri için SAHI araştırma grubuna teşekkürlerimizi sunarız. SAHI ve yaratıcıları hakkında daha fazla bilgi için [SAHI GitHub deposunu](https://github.com/obss/sahi) ziyaret et.
+
+## Link to this sectionSSS#
+
+### Link to this sectionNesne algılamada dilimlenmiş çıkarım için YOLO26'yı SAHI ile nasıl entegre edebilirim?#
+
+Ultralytics YOLO26'yı dilimlenmiş çıkarım için SAHI (Slicing Aided Hyper Inference) ile entegre etmek, yüksek çözünürlüklü görüntüleri yönetilebilir dilimlere ayırarak nesne algılama görevlerini optimize eder. Bu yaklaşım, bellek kullanımını iyileştirir ve yüksek algılama doğruluğu sağlar. Başlamak için ultralytics ve sahi kütüphanelerini yüklemen gerekir:
+    
+    
+    pip install -U ultralytics sahi
+
+Ardından, test görüntülerini indir:
+    
+    
+    from sahi.utils.file import download_from_url
+    
+    # Download test images
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/small-vehicles1.jpeg",
+        "demo_data/small-vehicles1.jpeg",
+    )
+    download_from_url(
+        "https://raw.githubusercontent.com/obss/sahi/main/demo/demo_data/terrain2.png",
+        "demo_data/terrain2.png",
+    )
+
+Daha ayrıntılı talimatlar için Dilimlenmiş Çıkarım rehberimize bak.
+
+### Link to this sectionBüyük görüntülerde nesne algılama için neden SAHI'yi YOLO26 ile kullanmalıyım?#
+
+Büyük görüntülerde nesne algılama için SAHI'yi Ultralytics YOLO26 ile kullanmanın çeşitli avantajları vardır:
+
+  * **Azaltılmış Hesaplama Yükü** : Daha küçük dilimlerin işlenmesi daha hızlıdır ve daha az bellek tüketirler; bu, sınırlı kaynaklara sahip donanımlarda yüksek kaliteli algılamalar çalıştırmayı mümkün kılar.
+  * **Korunan Algılama Doğruluğu** : SAHI, algılama kalitesini korumak için çakışan kutuları birleştirmek üzere akıllı algoritmalar kullanır.
+  * **Geliştirilmiş Ölçeklenebilirlik** : Nesne algılama görevlerini farklı görüntü boyutları ve çözünürlükleri arasında ölçeklendirerek SAHI, uydu görüntüsü analizi ve tıbbi teşhis gibi çeşitli uygulamalar için ideal hale gelir.
+
+
+
+Dokümantasyonumuzda dilimlenmiş çıkarımın avantajları hakkında daha fazla bilgi edin.
+
+### Link to this sectionYOLO26'yı SAHI ile kullanırken tahmin sonuçlarını görselleştirebilir miyim?#
+
+Evet, YOLO26'yı SAHI ile kullanırken tahmin sonuçlarını görselleştirebilirsin. İşte sonuçları nasıl dışa aktarıp görselleştirebileceğin:
+    
+    
+    from PIL import Image
+    
+    result.export_visuals(export_dir="demo_data/", hide_conf=True)
+    
+    processed_image = Image.open("demo_data/prediction_visual.png")
+    
+    processed_image.show()
+
+Bu komut, görselleştirilen tahminleri belirtilen dizine kaydedecektir ve ardından görüntüyü not defterinde veya uygulamanızda görüntülemek için yükleyebilirsin. Ayrıntılı bir rehber için Standart Çıkarım bölümüne göz at.
+
+### Link to this sectionSAHI, YOLO26 nesne algılamayı iyileştirmek için hangi özellikleri sunuyor?#
+
+SAHI (Slicing Aided Hyper Inference), nesne algılama için Ultralytics YOLO26'yı tamamlayan çeşitli özellikler sunar:
+
+  * **Sorunsuz Entegrasyon** : SAHI, YOLO modelleriyle kolayca entegre olur ve minimum kod ayarı gerektirir.
+  * **Kaynak Verimliliği** : Büyük görüntüleri, bellek kullanımını ve hızı optimize eden daha küçük dilimlere ayırır.
+  * **Yüksek Doğruluk** : SAHI, birleştirme işlemi sırasında çakışan algılama kutularını etkili bir şekilde birleştirerek yüksek algılama doğruluğunu korur.
+
+
+
+Daha derin bir anlayış için SAHI'nin temel özellikleri hakkında bilgi edin.
+
+### Link to this sectionYOLO26 ve SAHI kullanarak büyük ölçekli çıkarım projelerini nasıl yönetirim?#
+
+YOLO26 ve SAHI kullanarak büyük ölçekli çıkarım projelerini yönetmek için şu en iyi uygulamaları izle:
+
+  1. **Gerekli Kütüphaneleri Yükle** : ultralytics ve sahi'nin en son sürümlerine sahip olduğundan emin ol.
+  2. **Dilimlenmiş Çıkarımı Yapılandır** : Özel projen için en uygun dilim boyutlarını ve çakışma oranlarını belirle.
+  3. **Toplu Tahminleri Çalıştır** : Verimliliği artıran, bir görüntü dizininde toplu tahminler gerçekleştirmek için SAHI'nin yeteneklerini kullan.
+
+
+
+Toplu tahmin için örnek:
+    
+    
+    from sahi.predict import predict
+    
+    predict(
+        model_type="ultralytics",
+        model_path="path/to/yolo26n.pt",
+        model_device="cpu",  # or 'cuda:0'
+        model_confidence_threshold=0.4,
+        source="path/to/dir",
+        slice_height=256,
+        slice_width=256,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+
+Daha ayrıntılı adımlar için Toplu Tahmin bölümümüzü ziyaret et.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/sahi-tiled-inference.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar8](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[COCoderUni1](https://github.com/CoderUni)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+Oluşturulma 12 Kas 2023Güncellenme geçen ay
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

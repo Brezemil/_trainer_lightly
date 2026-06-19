@@ -1,0 +1,502 @@
+---
+source_url: https://docs.ultralytics.com/reference/models/yolo/semantic/val
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/reference/models/yolo/semantic/val.md)
+
+# Link to this sectionReference for `ultralytics/models/yolo/semantic/val.py`#
+
+Improvements
+
+This page is sourced from <https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py>. Have an improvement or example to add? Open a [Pull Request](https://docs.ultralytics.com/help/contributing) — thank you! 🙏
+
+  
+
+
+Summary
+
+  * `SemanticSegmentationValidator`
+
+
+
+## Link to this sectionClass `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator`#
+    
+    
+    SemanticSegmentationValidator(self, dataloader = None, save_dir = None, args = None, _callbacks = None)
+
+**Bases:** `DetectionValidator`
+
+Validator for semantic segmentation models.
+
+This validator evaluates semantic segmentation models using mIoU and pixel accuracy metrics.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`dataloader`| `DataLoader, optional`| DataLoader for validation.| `None`  
+`save_dir`| `Path, optional`| Directory to save results.| `None`  
+`args`| `dict, optional`| Arguments for the validator.| `None`  
+`_callbacks`| `dict, optional`| Callback functions.| `None`  
+  
+**Attributes**
+
+Name| Type| Description  
+---|---|---  
+`metrics`| `SemanticMetrics`| Metrics calculator for semantic segmentation.  
+  
+**Methods**
+
+Name| Description  
+---|---  
+`gather_stats`| Reduce semantic confusion matrix to rank 0 during DDP validation.  
+`get_dataset`| Parse the dataset YAML and add background metadata for polygon labels when required.  
+`get_desc`| Return a formatted description of evaluation metrics.  
+`get_stats`| Return validation statistics.  
+`init_metrics`| Initialize metrics with model class names.  
+`plot_predictions`| Plot predicted semantic masks on input images.  
+`postprocess`| Convert logits to class predictions.  
+`preprocess`| Preprocess a batch of images and masks.  
+`print_results`| Print training/validation set metrics per class.  
+`save_pred_masks`| Save semantic predictions as single-channel PNG masks.  
+`update_metrics`| Update metrics with predictions and ground truth.  
+  
+**Examples**
+    
+    
+    >>> from ultralytics.models.yolo.semantic import SemanticSegmentationValidator
+    >>> args = dict(model="yolo26n-sem.pt", data="cityscapes8.yaml")
+    >>> validator = SemanticSegmentationValidator(args=args)
+    >>> validator()
+
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L23-L201)
+    
+    
+    class SemanticSegmentationValidator(DetectionValidator):
+        """Validator for semantic segmentation models.
+    
+        This validator evaluates semantic segmentation models using mIoU and pixel accuracy metrics.
+    
+        Attributes:
+            metrics (SemanticMetrics): Metrics calculator for semantic segmentation.
+    
+        Examples:
+            >>> from ultralytics.models.yolo.semantic import SemanticSegmentationValidator
+            >>> args = dict(model="yolo26n-sem.pt", data="cityscapes8.yaml")
+            >>> validator = SemanticSegmentationValidator(args=args)
+            >>> validator()
+        """
+    
+        def __init__(self, dataloader=None, save_dir=None, args=None, _callbacks=None):
+            """Initialize SemanticSegmentationValidator.
+    
+            Args:
+                dataloader (DataLoader, optional): DataLoader for validation.
+                save_dir (Path, optional): Directory to save results.
+                args (dict, optional): Arguments for the validator.
+                _callbacks (dict, optional): Callback functions.
+            """
+            super().__init__(dataloader, save_dir, args, _callbacks)
+            self.args.task = "semantic"
+            self.dataset = None
+            self.results_dir = None
+            self.metrics = SemanticMetrics()
+            self.image_shapes = {}
+            self._semantic_target_shape = None
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.gather_stats`#
+    
+    
+    def gather_stats(self)
+
+Reduce semantic confusion matrix to rank 0 during DDP validation.
+
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L128-L142)
+    
+    
+    def gather_stats(self):
+        """Reduce semantic confusion matrix to rank 0 during DDP validation."""
+        if RANK == -1 or not dist.is_available() or not dist.is_initialized():
+            return
+        if self.metrics.matrix is None:
+            cm_nc = self.metrics.cm_nc
+            self.metrics.matrix = torch.zeros((cm_nc, cm_nc), device=self.device, dtype=torch.float32)
+        dist.reduce(self.metrics.matrix, dst=0, op=dist.ReduceOp.SUM)
+        # Gather nt_per_image across ranks
+        if RANK == 0:
+            gathered_nt = [None] * dist.get_world_size()
+            dist.gather_object(self.metrics.nt_per_image, gathered_nt, dst=0)
+            self.metrics.nt_per_image = np.sum(gathered_nt, axis=0)
+        elif RANK > 0:
+            dist.gather_object(self.metrics.nt_per_image, None, dst=0)
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.get_dataset`#
+    
+    
+    def get_dataset(self)
+
+Parse the dataset YAML and add background metadata for polygon labels when required.
+
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L188-L190)
+    
+    
+    def get_dataset(self):
+        """Parse the dataset YAML and add background metadata for polygon labels when required."""
+        return add_polygon_background(super().get_dataset())
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.get_desc`#
+    
+    
+    def get_desc(self)
+
+Return a formatted description of evaluation metrics.
+
+**Returns**
+
+Type| Description  
+---|---  
+`str`| Formatted string with metric names.  
+  
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L174-L180)
+    
+    
+    def get_desc(self):
+        """Return a formatted description of evaluation metrics.
+    
+        Returns:
+            (str): Formatted string with metric names.
+        """
+        return ("%22s" + "%11s" * 4) % ("Class", "Images", "Pixels", "mIoU", "PixAcc")
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.get_stats`#
+    
+    
+    def get_stats(self)
+
+Return validation statistics.
+
+**Returns**
+
+Type| Description  
+---|---  
+`dict`| Dictionary of validation metrics.  
+  
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L162-L172)
+    
+    
+    def get_stats(self):
+        """Return validation statistics.
+    
+        Returns:
+            (dict): Dictionary of validation metrics.
+        """
+        self.metrics.process(save_dir=self.save_dir, plot=self.args.plots, on_plot=self.on_plot)
+        if self.metrics.matrix is not None:
+            # Internal layout is [gt, pred]; transpose to [pred, gt] for ConfusionMatrix export format.
+            self.confusion_matrix.matrix = self.metrics.matrix.detach().cpu().numpy().T.astype(float)
+        return self.metrics.results_dict
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.init_metrics`#
+    
+    
+    def init_metrics(self, model)
+
+Initialize metrics with model class names.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`model`| `nn.Module`| Model to validate.| _required_  
+  
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L55-L78)
+    
+    
+    def init_metrics(self, model):
+        """Initialize metrics with model class names.
+    
+        Args:
+            model (nn.Module): Model to validate.
+        """
+        self.names = model.names
+        self.nc = len(self.names)
+        self.metrics = SemanticMetrics(names=self.names)
+        self.seen = 0
+        self.dataset = getattr(self.dataloader, "dataset", None)
+        labels = getattr(self.dataset, "labels", []) if self.dataset is not None else []
+        self.image_shapes = {lb["im_file"]: tuple(lb["shape"]) for lb in labels if "im_file" in lb and "shape" in lb}
+        self.results_dir = None
+        if self.args.save_json:
+            self.results_dir = self.save_dir / "results"
+            self.results_dir.mkdir(parents=True, exist_ok=True)
+        cm_nc = self.metrics.cm_nc
+        if cm_nc == 2 and len(self.names) == 1:  # binary segmentation, expand to include background
+            cm_names = {0: "background", 1: next(iter(self.names.values()))}
+        else:
+            base = list(self.names.values()) + [str(i) for i in range(len(self.names), cm_nc)]
+            cm_names = {i: base[i] for i in range(cm_nc)}
+        self.confusion_matrix = ConfusionMatrix(names=cm_names, task="semantic")
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.plot_predictions`#
+    
+    
+    def plot_predictions(self, batch, preds, ni)
+
+Plot predicted semantic masks on input images.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`batch`| | |  _required_  
+`preds`| | |  _required_  
+`ni`| | |  _required_  
+  
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L192-L201)
+    
+    
+    def plot_predictions(self, batch, preds, ni):
+        """Plot predicted semantic masks on input images."""
+        plot_images(
+            images=batch["img"],
+            labels={"semantic_mask": preds},
+            paths=batch["im_file"],
+            fname=self.save_dir / f"val_batch{ni}_pred.jpg",
+            names=self.names,
+            on_plot=self.on_plot,
+        )
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.postprocess`#
+    
+    
+    def postprocess(self, preds)
+
+Convert logits to class predictions.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`preds`| `torch.Tensor`| Raw model output logits [B, nc, H, W].| _required_  
+  
+**Returns**
+
+Type| Description  
+---|---  
+`torch.Tensor`| Predicted class IDs [B, H, W].  
+  
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L94-L114)
+    
+    
+    def postprocess(self, preds):
+        """Convert logits to class predictions.
+    
+        Args:
+            preds (torch.Tensor): Raw model output logits [B, nc, H, W].
+    
+        Returns:
+            (torch.Tensor): Predicted class IDs [B, H, W].
+        """
+        if isinstance(preds, (tuple, list)):
+            preds = preds[0]
+        if preds.ndim == 3:  # exports with in-graph ArgMax emit [B, H, W] class maps directly
+            if preds.shape[1:] != tuple(self._semantic_target_shape):
+                preds = F.interpolate(
+                    preds.unsqueeze(1).float(), size=self._semantic_target_shape, mode="nearest"
+                ).squeeze(1)
+            return preds.to(torch.int32)
+        pred_hw = preds.shape[2:]
+        if pred_hw[0] != self._semantic_target_shape[0] or pred_hw[1] != self._semantic_target_shape[1]:
+            preds = F.interpolate(preds, size=self._semantic_target_shape, mode="bilinear", align_corners=False)
+        return preds.argmax(dim=1).to(torch.int32) if self.nc > 1 else preds.gt(0).squeeze(1).to(torch.int32)
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.preprocess`#
+    
+    
+    def preprocess(self, batch)
+
+Preprocess a batch of images and masks.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`batch`| `dict`| Batch data containing images and masks.| _required_  
+  
+**Returns**
+
+Type| Description  
+---|---  
+`dict`| Preprocessed batch.  
+  
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L80-L92)
+    
+    
+    def preprocess(self, batch):
+        """Preprocess a batch of images and masks.
+    
+        Args:
+            batch (dict): Batch data containing images and masks.
+    
+        Returns:
+            (dict): Preprocessed batch.
+        """
+        batch = super().preprocess(batch)
+        batch["semantic_mask"] = batch["semantic_mask"].to(self.device, dtype=torch.int32)
+        self._semantic_target_shape = tuple(batch["semantic_mask"].shape[-2:])
+        return batch
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.print_results`#
+    
+    
+    def print_results(self) -> None
+
+Print training/validation set metrics per class.
+
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L182-L186)
+    
+    
+    def print_results(self) -> None:
+        """Print training/validation set metrics per class."""
+        super().print_results()
+        if self.args.save_json and self.results_dir is not None:
+            LOGGER.info(f"Semantic prediction masks saved to {self.results_dir}")
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.save_pred_masks`#
+    
+    
+    def save_pred_masks(self, preds: torch.Tensor, batch: dict[str, Any]) -> None
+
+Save semantic predictions as single-channel PNG masks.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`preds`| `torch.Tensor`| |  _required_  
+`batch`| `dict[str, Any]`| | _required_  
+  
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L144-L160)
+    
+    
+    def save_pred_masks(self, preds: torch.Tensor, batch: dict[str, Any]) -> None:
+        """Save semantic predictions as single-channel PNG masks."""
+        if self.results_dir is None:
+            return
+        im_files = batch.get("im_file", [])
+        if not im_files:
+            return
+        preds = preds.cpu().numpy()
+        if isinstance(self.dataset, SemanticDataset) and self.dataset.label_mapping:
+            preds = self.dataset.convert_label(preds, inverse=True)
+        preds = preds.astype(np.uint8, copy=False)
+        for pred, im_file in zip(preds, im_files):
+            orig_shape = self.image_shapes.get(im_file)
+            if orig_shape and pred.shape != orig_shape:
+                pred = cv2.resize(pred, (orig_shape[1], orig_shape[0]), interpolation=cv2.INTER_NEAREST)
+            save_path = self.results_dir / Path(im_file).with_suffix(".png").name
+            Image.fromarray(pred).save(save_path)
+
+  
+
+
+### Link to this sectionMethod `ultralytics.models.yolo.semantic.val.SemanticSegmentationValidator.update_metrics`#
+    
+    
+    def update_metrics(self, preds, batch)
+
+Update metrics with predictions and ground truth.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`preds`| `torch.Tensor`| Predicted class IDs [B, H, W].| _required_  
+`batch`| `dict`| Batch containing 'semantic_mask'.| _required_  
+  
+Source code in `ultralytics/models/yolo/semantic/val.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/models/yolo/semantic/val.py#L116-L126)
+    
+    
+    def update_metrics(self, preds, batch):
+        """Update metrics with predictions and ground truth.
+    
+        Args:
+            preds (torch.Tensor): Predicted class IDs [B, H, W].
+            batch (dict): Batch containing 'semantic_mask'.
+        """
+        if self.args.save_json:
+            self.save_pred_masks(preds, batch)
+        self.metrics.update_stats(preds, batch["semantic_mask"])
+        self.seen += preds.shape[0]
+
+  
+  
+
+
+Contributors
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/reference/models/yolo/semantic/val.md)
+
+[LALaughing-q1](https://github.com/Laughing-q)
+
+Created 4 weeks agoUpdated 4 weeks ago
+
+On This Page
+
+Explore with AI

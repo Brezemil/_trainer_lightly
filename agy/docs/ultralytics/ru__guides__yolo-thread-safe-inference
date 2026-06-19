@@ -1,0 +1,218 @@
+---
+source_url: https://docs.ultralytics.com/ru/guides/yolo-thread-safe-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+# Link to this sectionПотокобезопасный инференс с моделями YOLO#
+
+Запуск моделей YOLO в многопоточной среде требует тщательного подхода для обеспечения потокобезопасности. Модуль `threading` в Python позволяет запускать несколько потоков одновременно, но при использовании моделей YOLO в этих потоках важно учитывать определенные проблемы безопасности. На этой странице мы расскажем, как реализовать потокобезопасный инференс моделей YOLO.
+
+  
+
+
+  
+**Watch:** How to Perform Thread Safe Inference with Ultralytics YOLO Models in Python | Multi-Threading 🚀 
+
+## Link to this sectionПонимание многопоточности в Python#
+
+Потоки в Python — это форма параллелизма, позволяющая программе выполнять несколько операций одновременно. Однако из-за глобальной блокировки интерпретатора (GIL) в Python только один поток может выполнять байт-код Python в конкретный момент времени.
+
+![Single-thread vs multi-thread inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/single-vs-multi-thread-examples.avif)
+
+Хотя это звучит как ограничение, потоки все равно могут обеспечить параллельное выполнение, особенно для операций, связанных с вводом-выводом (I/O), или при использовании операций, которые освобождают GIL, подобных тем, что выполняются базовыми C-библиотеками YOLO.
+
+## Link to this sectionОпасность совместного использования экземпляров моделей#
+
+Создание экземпляра модели YOLO вне потоков и его совместное использование несколькими потоками может привести к состоянию гонки (race condition), при котором внутреннее состояние модели будет изменяться несогласованно из-за одновременного доступа. Это особенно проблематично, если модель или ее компоненты хранят состояние, не предназначенное для потокобезопасной работы.
+
+### Link to this sectionПример отсутствия потокобезопасности: один экземпляр модели#
+
+При использовании потоков в Python важно распознавать шаблоны, которые могут привести к проблемам с параллелизмом. Вот чего тебе следует избегать: совместного использования одного экземпляра модели YOLO между несколькими потоками.
+    
+    
+    # Unsafe: Sharing a single model instance across threads
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate the model outside the thread
+    shared_model = YOLO("yolo26n.pt")
+    
+    def predict(image_path):
+        """Predicts objects in an image using a preloaded YOLO model, take path string to image as argument."""
+        results = shared_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that share the same model instance
+    Thread(target=predict, args=("image1.jpg",)).start()
+    Thread(target=predict, args=("image2.jpg",)).start()
+
+В приведенном выше примере `shared_model` используется несколькими потоками, что может привести к непредсказуемым результатам, так как метод `predict` может быть вызван одновременно из нескольких потоков.
+
+### Link to this sectionПример отсутствия потокобезопасности: несколько экземпляров модели#
+
+Аналогично, вот небезопасный шаблон с несколькими экземплярами модели YOLO:
+    
+    
+    # Unsafe: Sharing multiple model instances across threads can still lead to issues
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate multiple models outside the thread
+    shared_model_1 = YOLO("yolo26n_1.pt")
+    shared_model_2 = YOLO("yolo26n_2.pt")
+    
+    def predict(model, image_path):
+        """Runs prediction on an image using a specified YOLO model, returning the results."""
+        results = model.predict(image_path)
+        # Process results
+    
+    # Starting threads with individual model instances
+    Thread(target=predict, args=(shared_model_1, "image1.jpg")).start()
+    Thread(target=predict, args=(shared_model_2, "image2.jpg")).start()
+
+Даже при наличии двух отдельных экземпляров модели сохраняется риск проблем с параллелизмом. Если внутренняя реализация `YOLO` не является потокобезопасной, использование отдельных экземпляров может не предотвратить состояние гонки, особенно если эти экземпляры совместно используют какие-либо базовые ресурсы или состояния, которые не являются локальными для потока.
+
+## Link to this sectionПотокобезопасный инференс#
+
+Для выполнения потокобезопасного инференса следует создавать отдельный экземпляр модели YOLO внутри каждого потока. Это гарантирует, что каждый поток имеет свой изолированный экземпляр модели, устраняя риск возникновения состояний гонки.
+
+### Link to this sectionПример потокобезопасности#
+
+Вот как создать экземпляр модели YOLO внутри каждого потока для безопасного параллельного инференса:
+    
+    
+    # Safe: Instantiating a single model inside each thread
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image using a new YOLO model instance in a thread-safe manner; takes image path as input."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that each have their own model instance
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+В этом примере каждый поток создает свой собственный экземпляр `YOLO`. Это предотвращает вмешательство одного потока в состояние модели другого, тем самым обеспечивая безопасное выполнение инференса каждым потоком без непредвиденного взаимодействия с другими потоками.
+
+## Link to this sectionИспользование декоратора ThreadingLocked#
+
+Ultralytics предоставляет декоратор `ThreadingLocked`, который можно использовать для обеспечения потокобезопасного выполнения функций. Этот декоратор использует блокировку (lock), чтобы гарантировать, что только один поток может выполнять декорированную функцию в конкретный момент времени.
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.utils import ThreadingLocked
+    
+    # Create a model instance
+    model = YOLO("yolo26n.pt")
+    
+    # Decorate the predict method to make it thread-safe
+    @ThreadingLocked()
+    def thread_safe_predict(image_path):
+        """Thread-safe prediction using a shared model instance."""
+        results = model.predict(image_path)
+        return results
+    
+    # Now you can safely call this function from multiple threads
+
+Декоратор `ThreadingLocked` особенно полезен, когда тебе нужно совместно использовать экземпляр модели между потоками, но ты хочешь убедиться, что только один поток может получить к нему доступ за раз. Этот подход может сэкономить память по сравнению с созданием нового экземпляра модели для каждого потока, но он может снизить уровень параллелизма, так как потокам придется ждать освобождения блокировки.
+
+## Link to this sectionЗаключение#
+
+При использовании моделей YOLO с модулем `threading` в Python всегда создавай модели внутри того потока, который будет их использовать, чтобы обеспечить потокобезопасность. Эта практика позволяет избежать состояний гонки и гарантирует надежное выполнение задач инференса.
+
+Для более сложных сценариев и дальнейшей оптимизации производительности многопоточного инференса рассмотри возможность использования параллелизма на основе процессов с помощью [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) или применения очереди задач со специализированными рабочими процессами.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionКак мне избежать состояний гонки при использовании моделей YOLO в многопоточной среде Python?#
+
+Чтобы предотвратить состояния гонки при использовании моделей Ultralytics YOLO в многопоточной среде Python, создавай отдельный экземпляр модели YOLO внутри каждого потока. Это гарантирует, что у каждого потока будет свой изолированный экземпляр модели, что предотвратит одновременное изменение состояния модели.
+
+Пример:
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image in a thread-safe manner."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Для получения дополнительной информации об обеспечении потокобезопасности посети страницу Потокобезопасный инференс с моделями YOLO.
+
+### Link to this sectionКаковы лучшие практики для запуска многопоточного инференса моделей YOLO в Python?#
+
+Чтобы безопасно выполнять многопоточный инференс моделей YOLO в Python, следуй этим лучшим практикам:
+
+  1. Создавай экземпляры моделей YOLO внутри каждого потока, а не используй один экземпляр модели совместно в разных потоках.
+  2. Используй модуль `multiprocessing` в Python для параллельной обработки, чтобы избежать проблем, связанных с глобальной блокировкой интерпретатора (GIL).
+  3. Освобождай GIL, используя операции, выполняемые базовыми C-библиотеками YOLO.
+  4. Рассмотри использование декоратора `ThreadingLocked` для совместно используемых экземпляров моделей, если ограничена память.
+
+
+
+Пример для потокобезопасного создания экземпляра модели:
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Runs inference in a thread-safe manner with a new YOLO model instance."""
+        model = YOLO("yolo26n.pt")
+        results = model.predict(image_path)
+        # Process results
+    
+    # Initiate multiple threads
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Для дополнительного контекста обратись к разделу Потокобезопасный инференс.
+
+### Link to this sectionПочему каждый поток должен иметь свой собственный экземпляр модели YOLO?#
+
+Каждый поток должен иметь свой собственный экземпляр модели YOLO для предотвращения состояний гонки. Когда один экземпляр модели совместно используется несколькими потоками, одновременный доступ может привести к непредсказуемому поведению и изменению внутреннего состояния модели. Используя отдельные экземпляры, ты обеспечиваешь изоляцию потоков, делая многопоточные задачи надежными и безопасными.
+
+Для получения подробных инструкций ознакомься с разделами Пример отсутствия потокобезопасности: один экземпляр модели и Пример потокобезопасности.
+
+### Link to this sectionКак глобальная блокировка интерпретатора (GIL) Python влияет на инференс моделей YOLO?#
+
+Глобальная блокировка интерпретатора (GIL) в Python позволяет только одному потоку выполнять байт-код Python одновременно, что может ограничить производительность многопоточных задач, связанных с нагрузкой на CPU. Однако для операций, связанных с вводом-выводом, или процессов, использующих библиотеки, освобождающие GIL, такие как базовые C-библиотеки YOLO, ты все равно можешь достичь параллелизма. Для повышения производительности рассмотри возможность использования параллелизма на основе процессов с помощью модуля `multiprocessing` в Python.
+
+Подробнее о многопоточности в Python см. в разделе Понимание многопоточности в Python.
+
+### Link to this sectionБезопаснее ли использовать параллелизм на основе процессов вместо многопоточности для инференса моделей YOLO?#
+
+Да, использование модуля `multiprocessing` в Python безопаснее и часто эффективнее для параллельного запуска инференса моделей YOLO. Параллелизм на основе процессов создает отдельные пространства памяти, избегая глобальной блокировки интерпретатора (GIL) и снижая риск проблем с параллелизмом. Каждый процесс будет работать независимо, имея свой собственный экземпляр модели YOLO.
+
+Для получения дополнительных сведений о параллелизме на основе процессов при использовании моделей YOLO обратись к странице Потокобезопасный инференс.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+[GLglenn-jocher10](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+Создано 12 нояб. 2023 г.Обновлено 2 недели назад
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

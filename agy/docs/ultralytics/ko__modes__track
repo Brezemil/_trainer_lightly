@@ -1,0 +1,745 @@
+---
+source_url: https://docs.ultralytics.com/ko/modes/track
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/track.md)
+
+# Link to this sectionUltralytics YOLO를 사용한 다중 객체 추적#
+
+![YOLO multi-object tracking with trajectory paths](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/multi-object-tracking-examples.avif)
+
+비디오 분석 분야에서 객체 추적은 프레임 내 객체의 위치와 클래스를 식별할 뿐만 아니라, 비디오가 진행됨에 따라 감지된 각 객체에 고유 ID를 유지하는 중요한 작업입니다. 감시 및 보안부터 실시간 스포츠 분석에 이르기까지 그 응용 분야는 무궁무진합니다.
+
+## Link to this section왜 객체 추적에 Ultralytics YOLO를 선택해야 하나요?#
+
+Ultralytics 트래커의 출력은 표준 [객체 감지](https://www.ultralytics.com/glossary/object-detection)와 일치하면서 객체 ID라는 추가 가치를 제공합니다. 이를 통해 비디오 스트림에서 객체를 쉽게 추적하고 후속 분석을 수행할 수 있습니다. 객체 추적 요구 사항에 Ultralytics YOLO를 고려해야 하는 이유는 다음과 같습니다:
+
+  * **효율성:** [정확도](https://www.ultralytics.com/glossary/accuracy)를 저하시키지 않으면서 실시간으로 비디오 스트림을 처리합니다.
+  * **유연성:** 여러 추적 알고리즘 및 구성을 지원합니다.
+  * **사용 편의성:** 빠른 통합 및 배포를 위한 간단한 Python API와 CLI 옵션을 제공합니다.
+  * **사용자 정의 가능성:** 사용자 정의 학습된 YOLO 모델과 쉽게 사용할 수 있어 도메인별 애플리케이션으로의 통합이 가능합니다.
+
+
+
+  
+
+
+  
+**Watch:** How to Run Multi-Object Tracking with Ultralytics YOLO26 | BoT-SORT & ByteTrack | VisionAI 🚀 
+
+## Link to this section실제 활용 사례#
+
+교통| 소매| 양식업  
+---|---|---  
+![차량 추적](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/vehicle-tracking.avif)| ![사람 추적](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/people-tracking.avif)| ![물고기 추적](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/fish-tracking.avif)  
+차량 추적| 사람 추적| 물고기 추적  
+  
+## Link to this section빠른 시작#
+
+기본 BoT-SORT 트래커를 사용하여 비디오에서 추적을 실행하십시오. `tracker` 인수를 변경하여 다른 트래커로 전환할 수 있습니다.
+
+예시
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Default tracker (BoT-SORT)
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", show=True)
+    
+    # Switch to ByteTrack
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", show=True, tracker="bytetrack.yaml")
+
+비디오 스트림에서 트래커를 실행하려면 YOLO26n, YOLO26n-seg, YOLO26n-pose 또는 YOLO26n-obb와 같은 학습된 Detect, Segment, Pose 또는 OBB 모델을 사용하십시오. [Ultralytics Platform](https://platform.ultralytics.com)을 통해 로컬 또는 클라우드 GPU에서 사용자 지정 모델을 학습시킬 수 있습니다.
+
+예시
+    
+    
+    from ultralytics import YOLO
+    
+    # Load an official or custom model
+    model = YOLO("yolo26n.pt")  # Load an official Detect model
+    model = YOLO("yolo26n-seg.pt")  # Load an official Segment model
+    model = YOLO("yolo26n-pose.pt")  # Load an official Pose model
+    model = YOLO("path/to/best.pt")  # Load a custom-trained model
+    
+    # Perform tracking with the model
+    results = model.track("https://youtu.be/LNwODJXcvt4", show=True)  # Tracking with default tracker
+    results = model.track("https://youtu.be/LNwODJXcvt4", show=True, tracker="bytetrack.yaml")  # with ByteTrack
+
+위 사용법에서 볼 수 있듯이, 비디오나 스트리밍 소스에서 실행되는 모든 Detect, Segment, Pose 모델에 대해 추적 기능을 사용할 수 있습니다.
+
+## Link to this section지원되는 트래커#
+
+Ultralytics YOLO는 6개의 내장 트래커를 제공합니다. YAML 구성 파일을 `tracker` 인수에 전달하여 활성화하십시오.
+
+트래커| 구성 파일| 모션 모델| 외관 / ReID| 카메라 모션 보정| 가림(Occlusion) 처리  
+---|---|---|---|---|---  
+**BoT-SORT**| `botsort.yaml`| 선형 Kalman| 선택 사항 (`with_reid`)| 예 (sparseOptFlow / ECC)| 트랙 버퍼 + ReID 리바인딩  
+**ByteTrack**| `bytetrack.yaml`| 선형 Kalman| 없음| 아니요| 2단계 저신뢰도 복구  
+**OC-SORT**| `ocsort.yaml`| 관찰 중심 Kalman| 없음| 아니요| ORU, OCM, 마지막 관찰로부터의 OCR 재업데이트  
+**Deep OC-SORT**| `deepocsort.yaml`| 관찰 중심 Kalman| 선택 사항 (`with_reid`)| 선택 사항 (`gmc_method`)| OC-SORT + 적응형 외관 EMA  
+**FastTracker**| `fasttrack.yaml`| 선형 Kalman + 롤백| 없음| 아니요| Kalman 롤백 + 가림 시 bbox 확대  
+**TrackTrack**| `tracktrack.yaml`| 선형 Kalman (NSA)| 선택 사항 (HMIoU 폴백)| 예 (sparseOptFlow / ECC)| 반복적 다중 큐 연관 + TAI  
+  
+### Link to this section어떤 트래커를 사용해야 하나요?#
+
+시작점을 선택하려면 이 흐름을 따르십시오:
+
+  1. **가장 빠르고 간단한 기준점이 필요한가요?** → **ByteTrack** (ReID 없음, 카메라 모션 보정 없음, 최소한의 오버헤드).
+  2. **휴대용, 드론 또는 이동식 카메라 영상인가요?** → **BoT-SORT** (기본값; 카메라 모션 보정 및 선택적 ReID 추가).
+  3. **비선형 모션(스포츠, 댄스, 급격한 방향 전환) 및 ReID가 필요 없는 경우?** → **OC-SORT** (외관 비용 없는 관찰 중심 보정).
+  4. **ID 스왑이 주요 문제인 혼잡한 이동식 카메라 장면인가요?** → **Deep OC-SORT** 또는 **TrackTrack** (둘 다 적응형 외관 융합 추가; TrackTrack은 다중 큐 연관 및 중복 ID 억제도 추가).
+  5. **실시간으로 잦은 부분 겹침이 발생하고 ReID 예산이 없는 경우?** → **FastTracker** (Kalman 롤백이 포함된 가림 인식 ByteTrack 변형).
+
+
+
+## Link to this section트래커 전환#
+
+트래커 구성 파일 이름을 `tracker=`에 전달하십시오. 다른 모든 코드는 동일하게 유지됩니다.
+
+예시
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    results = model.track(source="path/to/video.mp4", tracker="bytetrack.yaml")
+    results = model.track(source="path/to/video.mp4", tracker="ocsort.yaml")
+    results = model.track(source="path/to/video.mp4", tracker="tracktrack.yaml")
+
+## Link to this section설정#
+
+### Link to this section추적 인수#
+
+추적 구성은 `conf`, `iou`, `show`와 같은 예측 모드와 속성을 공유합니다. 추가 구성에 대해서는 [Predict](/ko/modes/predict#inference-arguments) 모델 페이지를 참조하십시오.
+
+예시
+    
+    
+    from ultralytics import YOLO
+    
+    # Configure the tracking parameters and run the tracker
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", conf=0.1, iou=0.7, show=True)
+
+### Link to this section사용자 정의 트래커 구성#
+
+Ultralytics also allows you to use a modified tracker configuration file. To do this, simply make a copy of a tracker config file (for example, `custom_tracker.yaml`) from [ultralytics/cfg/trackers](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers) and modify any configurations (except the `tracker_type`) as per your needs.
+
+예시
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the model and run the tracker with a custom configuration file
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", tracker="custom_tracker.yaml")
+
+### Link to this section공유 트래커 인수#
+
+다음 매개변수는 대부분의 트래커 YAML 파일에서 공통으로 사용됩니다. 모든 구성에 모든 매개변수가 나타나지는 않습니다:
+
+트래커 임계값 정보
+
+감지된 신뢰도 점수가 `track_high_thresh` 미만으로 떨어지면 트래커는 해당 객체를 업데이트하지 않으며, 이로 인해 활성 트랙이 생성되지 않습니다.
+
+파라미터| 유효한 값 또는 범위| 설명  
+---|---|---  
+`tracker_type`| `botsort`, `bytetrack`, `ocsort`, `deepocsort`, `fasttrack`, `tracktrack`| 트래커 유형을 지정합니다.  
+`track_high_thresh`| `0.0-1.0`| 첫 번째 연관에 대한 임계값입니다. 감지가 기존 트랙과 얼마나 자신 있게 일치되는지에 영향을 줍니다.  
+`track_low_thresh`| `0.0-1.0`| 저신뢰도 감지에 대한 두 번째 연관 임계값입니다. OC-SORT 및 Deep OC-SORT의 경우 `use_byte: True`일 때만 적용됩니다.  
+`new_track_thresh`| `0.0-1.0`| 감지가 기존 트랙과 일치하지 않을 경우 새 트랙을 초기화하기 위한 임계값입니다.  
+`track_buffer`| `>=0`| 손실된 트랙이 제거되기 전까지 유지되는 프레임 수입니다. 값이 높을수록 가림에 대한 허용치가 높습니다.  
+`match_thresh`| `0.0-1.0`| 트랙 매칭을 위한 임계값입니다. 값이 높을수록 매칭이 더 관대해집니다.  
+`fuse_score`| `True`, `False`| 매칭 전 신뢰도 점수를 IoU 거리와 융합할지 여부입니다.  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| 글로벌 모션 보정 방식입니다. 카메라 움직임을 고려하는 데 도움이 됩니다.  
+`proximity_thresh`| `0.0-1.0`| 유효한 ReID 매칭에 필요한 최소 IoU입니다. 외관 정보를 사용하기 전에 공간적 근접성을 보장합니다.  
+`appearance_thresh`| `0.0-1.0`| ReID에 필요한 최소 외관 유사도입니다.  
+`with_reid`| `True`, `False`| 가림 상태에서도 더 나은 추적을 위해 외관 기반 매칭을 활성화합니다. BoT-SORT, Deep OC-SORT 및 TrackTrack에서 지원됩니다.  
+`model`| `auto` 또는 내보낸 파일 경로| ReID 모델. `auto`는 사용 가능한 경우 기본 YOLO 백본 특징을 사용하며, 그렇지 않으면 `yolo26n-cls.pt`로 대체됩니다. 사용자 정의 인코더를 사용하려면 `.torchscript`, `.onnx`, `.engine`, `.openvino` 등의 파일을 전달하십시오.  
+  
+#### Link to this section트래커별 인수(Arguments)#
+
+각 알고리즘은 공유 매개변수 외에도 추가적인 설정 옵션을 제공합니다. 각 트래커별 섹션에서 설명과 튜닝 조언을 확인하거나, 구성 파일을 직접 참조하십시오:
+
+  * [`botsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/botsort.yaml)
+  * [`bytetrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/bytetrack.yaml)
+  * [`ocsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/ocsort.yaml)
+  * [`deepocsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/deepocsort.yaml)
+  * [`fasttrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/fasttrack.yaml)
+  * [`tracktrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/tracktrack.yaml)
+
+
+
+### Link to this section재식별(Re-Identification, ReID) 활성화#
+
+ReID는 오버헤드를 최소화하기 위해 기본적으로 비활성화되어 있습니다. 트래커 구성 파일에서 `with_reid: True`로 설정하여 활성화하십시오.
+
+**ReID 모델 옵션:**
+
+  * **`model: auto`** — 네이티브 YOLO 탐지기 기능을 사용하여 오버헤드를 최소화합니다. 성능 저하를 최소화하면서 ReID 기능이 필요할 때 이상적입니다. 탐지기가 호환되는 기능을 제공하지 않으면 `yolo26n-cls.pt`로 대체됩니다.
+  * **내보낸 ReID 모델** — 추가적인 추론 단계 비용을 감수하더라도 더 구별력 있는 임베딩이 필요한 경우 `model:`을 내보낸 파일(`.torchscript`, `.onnx`, `.engine`, `.openvino` 등)로 지정하십시오. 인코더는 `AutoBackend`를 통해 로드되므로, Ultralytics가 지원하는 모든 내보내기 형식은 코드 변경 없이 작동합니다.
+
+
+
+즉시 사용 가능한 ONNX 인코더가 모든 모델 크기에 대해 게시되어 있습니다. `model:`을 이 이름 중 하나로 설정하면 트래커가 처음 실행될 때 파일이 자동으로 다운로드됩니다(YOLO 가중치를 가져오는 방식과 동일). 별도의 수동 내보내기나 다운로드 단계는 필요하지 않습니다.
+    
+    
+    # In your tracker config (e.g. tracktrack.yaml)
+    with_reid: True
+    model: yolo26n-reid.onnx # downloaded on first use; swap n→s/m/l/x for a larger encoder
+
+모델| 크기  
+(픽셀)| 파라미터  
+(M)| FLOPs  
+(B)  
+---|---|---|---  
+[YOLO26n-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-reid.onnx)| 448| 2.8| 2.0  
+[YOLO26s-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-reid.onnx)| 448| 7.5| 6.6  
+[YOLO26m-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m-reid.onnx)| 448| 12.4| 20.1  
+[YOLO26l-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l-reid.onnx)| 448| 15.3| 25.2  
+[YOLO26x-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-reid.onnx)| 448| 32.7| 55.9  
+  
+ReID는 트래킹 전용입니다
+
+현재 트래커 외형 브랜치(appearance branch)를 위한 ONNX ReID 인코더만 제공됩니다. ReID `train`, `val`, `predict` 모드 및 전용 ReID 내보내기 레시피는 현재 개발 중입니다.
+
+별도의 분류 모델로 더 나은 성능을 얻으려면, TensorRT와 같이 더 빠른 백엔드로 내보내십시오:
+
+ReID 모델을 TensorRT로 내보내기
+    
+    
+    from torch import nn
+    
+    from ultralytics import YOLO
+    
+    # Load the classification model
+    model = YOLO("yolo26n-cls.pt")
+    
+    # Add average pooling layer
+    head = model.model.model[-1]
+    pool = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(start_dim=1))
+    pool.f, pool.i = head.f, head.i
+    model.model.model[-1] = pool
+    
+    # Export to TensorRT
+    model.export(format="engine", half=True, dynamic=True, batch=32)
+
+내보낸 후, 트래커 구성에서 TensorRT 모델 경로를 지정하십시오.
+
+## Link to this section트래커 세부 정보#
+
+각 트래커의 설계, 특정 매개변수 및 튜닝 팁을 보려면 아래 섹션을 확장하십시오.
+
+#### Link to this sectionBoT-SORT#
+
+[BoT-SORT](https://github.com/NirAharon/BoT-SORT) (Aharon et al., 2022)는 기본 트래커입니다. 이는 ByteTrack을 확장하여 카메라 움직임 보정과 선택적 ReID 기능을 제공합니다:
+
+  * **카메라 움직임 보정 (CMC):** IoU 매칭 전에 각 프레임에서 추정된 아핀 워프(기본값은 희소 광학 흐름(sparse optical flow), ORB/ECC도 사용 가능)가 칼만 필터 상태에 적용됩니다.
+  * **선택적 ReID:** 외형 임베딩을 비용 행렬에 통합할 수 있습니다. 기본적으로 비활성화되어 있으며 `with_reid: True`로 활성화합니다.
+
+
+
+**용도:** 범용 추적, 특히 카메라가 움직이는 환경에 가장 적합합니다. 외형이 비슷한 군중으로 인해 ID 교체가 발생하는 경우에만 ReID를 추가하십시오.
+
+**BoT-SORT 전용 인수:**
+
+파라미터| 유효한 값 또는 범위| 설명  
+---|---|---  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| 카메라 움직임 보정 백엔드입니다. `sparseOptFlow`가 기본값입니다. `none`으로 설정하면 CMC가 비활성화됩니다.  
+`with_reid`| `True`, `False`| 외형 기반 매칭을 활성화합니다. 기본값은 꺼짐입니다.  
+`model`| `auto` 또는 ReID 모델 경로| ReID 모델입니다. `auto`는 사용 가능한 경우 네이티브 YOLO 기능을 사용하며, 그렇지 않으면 `.torchscript` / `.onnx` / `.engine` 경로를 전달하십시오.  
+`proximity_thresh`| `0.0-1.0`| 외형 특징이 고려되기 전의 최소 IoU 값입니다.  
+`appearance_thresh`| `0.0-1.0`| ReID 매칭에 필요한 최소 코사인 유사도입니다. ID 교체를 줄이려면 이 값을 높이십시오.  
+  
+**튜닝 팁:**
+
+  * **정적 카메라:** 프레임당 시간을 단축하려면 `gmc_method: none`으로 설정하십시오.
+  * **격렬한 카메라 움직임:** `sparseOptFlow`를 유지하십시오. `ecc`는 더 정확하지만 느립니다.
+  * **외형이 비슷한 군중:** `with_reid: True`를 켜고 `appearance_thresh`를 높이십시오(예: `0.85+`).
+
+
+
+#### Link to this sectionByteTrack#
+
+[ByteTrack](https://github.com/FoundationVision/ByteTrack) (Zhang et al., ECCV 2022)은 경량 베이스라인 모델입니다. 선형 칼만 필터와 IoU를 사용하여 2단계 연관 방식을 사용합니다:
+
+  * **1단계:** 높은 점수의 탐지 결과를 활성 트랙과 매칭합니다.
+  * **2단계:** 매칭되지 않은 트랙을 낮은 점수의 탐지 결과와 재매칭하여 일시적인 부분 가림(occlusion)을 복구합니다.
+
+
+
+외형 모델이나 카메라 움직임 보정 기능은 없습니다.
+
+**용도:** 탐지 비용이 주를 이루고 트래커 오버헤드를 최소화하려는 정적 또는 거의 정적인 카메라 환경에 가장 적합합니다.
+
+**ByteTrack 전용 인수:** 공유 트래커 인수 외에는 없습니다.
+
+**튜닝 팁:**
+
+  * **노이즈가 많은 탐지기:** 2단계에서 더 많은 후보를 확보하려면 `track_low_thresh`를 낮추십시오.
+  * **고재현율(High-recall) 탐지기:** ID 단편화를 줄이려면 `track_high_thresh`를 높이십시오.
+  * **빈번한 ID 깜박임:** 일시적으로 놓친 트랙이 유지되도록 `track_buffer`를 높이십시오.
+
+
+
+#### Link to this sectionOC-SORT#
+
+[OC-SORT](https://arxiv.org/abs/2203.14360) (Cao et al., CVPR 2023)는 SORT의 관찰 중심(Observation-Centric) 확장 버전입니다. SORT의 경량 설계(외형 특징 없음)를 유지하면서 세 가지 보정 기능을 추가합니다:
+
+  * **관찰 중심 재업데이트 (ORU):** 마지막 관찰과 현재 탐지 사이의 가상 궤적을 재생하여 칼만 업데이트를 다시 실행함으로써 표류된 속도를 복구합니다.
+  * **관찰 중심 모멘텀 (OCM):** 속도 일관성 항을 통해 잘못된 방향으로 이동하는 탐지 결과에 페널티를 부여합니다.
+  * **관찰 중심 복구 (OCR):** 예측된 상태 대신 마지막 관찰 정보를 사용하여 최근 손실된 트랙과 매칭되지 않은 탐지 결과를 재확인합니다.
+
+
+
+**용도:** ReID 모델 비용 없이 비선형 움직임을 추적하는 데 가장 적합합니다.
+
+**OC-SORT 전용 인수:**
+
+파라미터| 유효한 값 또는 범위| 설명  
+---|---|---  
+`delta_t`| `>=1`| OCM에서 속도 방향 계산을 위한 시간 윈도우(프레임 단위)입니다. 값이 클수록 더 부드러워집니다.  
+`inertia`| `0.0-1.0`| 속도 일관성 비용의 가중치입니다. 높은 값은 갑작스러운 방향 변경에 페널티를 줍니다.  
+`use_byte`| `True`, `False`| 낮은 신뢰도의 탐지 결과에 대해 ByteTrack 스타일의 2차 연관 단계를 활성화합니다.  
+  
+**튜닝 팁:**
+
+  * **비선형 움직임:** `inertia`를 높이십시오(예: `0.3-0.4`).
+  * **희소 탐지:** `use_byte: True`를 활성화하십시오.
+  * **긴 가림:** OCR이 재결합할 손실된 트랙을 더 많이 유지할 수 있도록 `track_buffer`를 높이십시오.
+
+
+
+#### Link to this sectionDeep OC-SORT#
+
+[Deep OC-SORT](https://arxiv.org/abs/2302.11813)는 OC-SORT에 외형 정보와 카메라 움직임 보정 기능을 추가한 모델입니다:
+
+  * **적응형 외형 융합:** 탐지 신뢰도와 중첩 정도에 따라 가중치가 조절된 탐지 임베딩이 비용 행렬에 통합됩니다.
+  * **동적 외형 EMA:** 탐지 신뢰도에 따라 평활화 계수가 조절되는 EMA를 사용하여 트랙 임베딩이 업데이트됩니다.
+  * **카메라 움직임 보정:** 칼만 필터 상태는 희소 광학 흐름, ORB 또는 ECC를 통해 프레임 간 워핑됩니다.
+
+
+
+**용도:** 시각적으로는 다르지만 공간적으로 가까운 객체 간의 ID 교체가 빈번한 혼잡하거나 카메라가 움직이는 환경에 가장 적합합니다.
+
+**Deep OC-SORT 전용 인수:**
+
+파라미터| 유효한 값 또는 범위| 설명  
+---|---|---  
+`with_reid`| `True`, `False`| 외형 기반 매칭을 활성화합니다. 기본값은 꺼짐입니다.  
+`model`| `auto`, 내보낸 ReID 모델 파일| ReID 모델입니다. `auto`는 네이티브 YOLO 기능을 재사용하며, 그렇지 않으면 내보낸 파일(`.torchscript`, `.onnx`, `.engine`, …)을 전달하십시오.  
+`proximity_thresh`| `0.0-1.0`| 외형 특징이 고려되기 전의 최소 IoU 값입니다.  
+`appearance_thresh`| `0.0-1.0`| ReID 매칭에 필요한 최소 코사인 유사도입니다.  
+`alpha_fixed_emb`| `0.0-1.0`| 트랙 임베딩 업데이트를 위한 기본 EMA 계수입니다. 높은 값은 이전 임베딩을 더 오래 유지합니다.  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| 전역 움직임 보정 방법입니다.  
+`delta_t`| `>=1`| OCM에서 속도 방향 계산을 위한 시간 윈도우(프레임 단위, OC-SORT에서 상속됨)입니다.  
+`inertia`| `0.0-1.0`| 속도 일관성 비용의 가중치(OC-SORT에서 상속됨)입니다.  
+`use_byte`| `True`, `False`| 낮은 신뢰도의 탐지 결과에 대해 ByteTrack 스타일의 2차 연관 단계를 활성화(OC-SORT에서 상속됨)합니다.  
+  
+**튜닝 팁:**
+
+  * **군중 속 ID 교체:** `appearance_thresh`를 높이고(예: `0.92-0.95`) `alpha_fixed_emb`를 낮추어 임베딩이 더 느리게 적응하도록 하십시오.
+  * **움직이는 카메라:** `gmc_method: sparseOptFlow`로 설정하십시오(Deep OC-SORT는 기본적으로 `none`으로 설정됨).
+  * **낮은 지연 시간:** 움직임 및 CMC만 사용하려면 `with_reid: False`(기본값)를 유지하고, ID 교체가 오류의 주원인이 될 때만 ReID를 활성화하십시오.
+
+
+
+#### Link to this sectionFastTracker#
+
+[FastTracker](https://arxiv.org/abs/2508.14370)는 외형 모델이 없는 가림 인식 ByteTrack 변형 모델입니다:
+
+  * **가림 탐지:** 다른 활성 트랙에 의한 가림 정도가 `occ_cover_thresh`를 초과하면 트랙이 가려진 것으로 표시합니다.
+  * **가림 시 칼만 필터 롤백:** 링 버퍼 기록을 사용하여 칼만 필터 상태를 가림 이전 프레임으로 롤백합니다.
+  * **움직임 감쇠 및 탐색 확장:** 가려진 동안 속도가 감쇠되고 예측된 bbox가 확대됩니다.
+  * **Init-IoU 억제:** 새로운 트랙이 활성 트랙 위에 생성되는 것을 방지합니다.
+
+
+
+**용도:** 타겟 간 겹침이 잦은(군중, 대기줄, 스포츠 등) 실시간 탐지 전용 파이프라인에 가장 적합합니다.
+
+**FastTracker 전용 인수:**
+
+파라미터| 유효한 값 또는 범위| 설명  
+---|---|---  
+`reset_velocity_offset_occ`| `>=0`| 가림 시작 시 칼만 필터 속도를 복구하기 위해 돌아갈 과거 프레임 수입니다.  
+`reset_pos_offset_occ`| `>=0`| 가림 시작 시 칼만 필터 위치를 복구하기 위해 돌아갈 과거 프레임 수입니다.  
+`enlarge_bbox_occ`| `>=1.0`| 가려진 동안 예측된 bbox에 적용되는 높이 스케일링입니다(너비는 XYAH 종횡비를 통해 조정됨).  
+`dampen_motion_occ`| `0.0-1.0`| 가려진 동안의 속도 배수입니다. 값이 낮을수록 가림 구간에서 트랙이 "느려집니다".  
+`active_occ_to_lost_thresh`| `>=1`| 활성 트랙이 손실 상태로 전환되기 전의 최대 연속 가림 프레임 수입니다.  
+`occ_cover_thresh`| `0.0-1.0`| 트랙이 폐색되었음을 선언하기 위해 다른 활성 트랙이 차지하는 트랙 영역의 비율입니다.  
+`occ_reappear_window`| `>=0`| 최근에 폐색되어 소실된 트랙이 우선적으로 재탐색 가능한 상태로 유지되는 프레임 수입니다.  
+`init_iou_suppress`| `0.0-1.0`| 모든 활성 트랙과의 IoU가 이 값을 초과하면 새 트랙 초기화를 억제합니다. 비활성화하려면 `1.0`으로 설정하십시오.  
+  
+**튜닝 팁:**
+
+  * **빈번한 부분 폐색:** `occ_cover_thresh`를 낮추십시오(예: `0.5-0.6`).
+  * **겹침 주변의 중복 ID:** `init_iou_suppress`를 낮추십시오(예: `0.5`).
+  * **장기 폐색:** `occ_reappear_window`와 `track_buffer`를 함께 높이십시오.
+  * **빠르게 움직이는 타겟:** `dampen_motion_occ`를 높이고(`1.0`에 가깝게) `enlarge_bbox_occ`를 낮추십시오.
+
+
+
+#### Link to this sectionTrackTrack#
+
+[TrackTrack](https://openaccess.thecvf.com/content/CVPR2025/papers/Shim_Focusing_on_Tracks_for_Online_Multi-Object_Tracking_CVPR_2025_paper.pdf)(Shim 외, CVPR 2025)은 다중 큐 반복 연관을 통해 각 트랙의 관점에서 추론합니다:
+
+  * **트랙 관점 기반 연관 (TPA):** HMIoU, 코사인 ReID 거리, 신뢰도 투영 거리 및 코너 각도 거리를 결합합니다. 할당은 완화 임계값을 사용하여 반복적으로 해결됩니다.
+  * **트랙 인식 초기화 (TAI):** 새 ID가 생성되기 전에 중복 생성을 억제합니다.
+
+
+
+**용도:** 중복 ID가 문제되는 빈번한 폐색이 있는 혼잡한 장면에 가장 적합합니다.
+
+**TrackTrack 전용 인수:**
+
+파라미터| 유효한 값 또는 범위| 설명  
+---|---|---  
+`iou_weight`| `0.0-1.0`| 다중 큐 비용 행렬에서 HMIoU 거리의 가중치입니다.  
+`reid_weight`| `0.0-1.0`| 코사인 ReID 거리의 가중치입니다. ReID가 비활성화되면 HMIoU로 대체됩니다.  
+`conf_weight`| `0.0-1.0`| 신뢰도 투영 거리의 가중치입니다.  
+`angle_weight`| `0.0-1.0`| 코너 각도 거리의 가중치입니다.  
+`penalty_p`| `0.0-1.0`| 저신뢰도 탐지에 대한 비용 페널티입니다.  
+`penalty_q`| `0.0-1.0`| 보조 NMS에 의해 복구된 탐지에 대한 비용 페널티입니다.  
+`reduce_step`| `0.0-1.0`| 반복당 매칭 임계값 완화 정도입니다.  
+`tai_thr`| `0.0-1.0`| 트랙 인식 초기화 NMS를 위한 IoU 임계값입니다.  
+`min_track_len`| `>=0`| 새 트랙이 확정되기 전까지 필요한 최소 성공 업데이트 횟수입니다.  
+`lost_match_thr`| `0.0-1.0`| 완화된 손실-재결합 패스를 위한 느슨한 비용 게이트입니다. `0`은 비활성화합니다.  
+`with_reid`| `True`, `False`| 코사인 ReID 외형 매칭을 활성화합니다(기본 YOLO 기능 사용). 기본값은 꺼짐입니다.  
+`model`| `auto`, ReID 파일| ReID 모델입니다. `auto`는 기본 YOLO 기능을 사용하며, 그렇지 않으면 내보낸 ReID 파일을 사용합니다.  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| 전역 움직임 보정 방법입니다.  
+  
+**튜닝 팁:**
+
+  * **혼잡한 보행자:** 중복 생성을 더 많이 억제하려면 `tai_thr`을 낮추고(예: `0.45`), 장기 폐색을 위해 `track_buffer`를 높이십시오.
+  * **빠른 카메라 움직임:** `gmc_method: sparseOptFlow`를 활성화 상태로 유지하십시오.
+  * **작거나 빠른 객체:** `angle_weight`를 약간 높이고 `min_track_len`을 낮추십시오.
+  * **필요할 때만 ReID 활성화:** 추론 비용이 추가됩니다. 짧은 폐색의 경우 기본 다중 큐 비용으로 충분한 경우가 많습니다.
+
+
+
+## Link to this sectionPython 예제#
+
+  
+
+
+  
+**Watch:** How to Build Interactive Object Tracking with Ultralytics YOLO | Click to Crop & Display ⚡ 
+
+### Link to this section트랙 지속 루프#
+
+다음은 [OpenCV](https://www.ultralytics.com/glossary/opencv) (`cv2`)와 YOLO26을 사용하여 비디오 프레임에서 객체 추적을 실행하는 Python 스크립트입니다. 이 스크립트는 필요한 패키지(`opencv-python` 및 `ultralytics`)가 이미 설치되어 있다고 가정합니다. `persist=True` 인수는 현재 이미지나 프레임이 시퀀스의 다음 단계임을 트래커에 알리고 현재 이미지에서 이전 이미지의 트랙을 찾도록 합니다.
+
+추적 기능을 포함한 스트리밍 for-루프
+    
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Open the video file
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    
+    # Loop through the video frames
+    while cap.isOpened():
+        # Read a frame from the video
+        success, frame = cap.read()
+    
+        if success:
+            # Run YOLO26 tracking on the frame, persisting tracks between frames
+            results = model.track(frame, persist=True)
+    
+            # Visualize the results on the frame
+            annotated_frame = results[0].plot()
+    
+            # Display the annotated frame
+            cv2.imshow("YOLO26 Tracking", annotated_frame)
+    
+            # Break the loop if 'q' is pressed
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            # Break the loop if the end of the video is reached
+            break
+    
+    # Release the video capture object and close the display window
+    cap.release()
+    cv2.destroyAllWindows()
+
+`model(frame)`에서 `model.track(frame)`으로의 변경 사항에 유의하십시오. 이는 단순 탐지 대신 객체 추적을 활성화합니다. 이 수정된 스크립트는 비디오의 각 프레임에서 트래커를 실행하고 결과를 시각화하여 창에 표시합니다. 루프는 'q'를 눌러 종료할 수 있습니다.
+
+### Link to this section시간에 따른 트랙 플로팅#
+
+연속적인 프레임에서 객체 트랙을 시각화하면 비디오 내에서 탐지된 객체의 이동 패턴과 행동에 대한 귀중한 통찰력을 얻을 수 있습니다. Ultralytics YOLO26을 사용하면 이러한 트랙을 플로팅하는 과정이 원활하고 효율적입니다.
+
+다음 예제에서는 YOLO26의 추적 기능을 사용하여 여러 비디오 프레임에 걸쳐 탐지된 객체의 이동을 플로팅하는 방법을 보여줍니다. 이 스크립트는 비디오 파일을 열고 프레임별로 읽으며, YOLO 모델을 활용하여 다양한 객체를 식별하고 추적합니다. 탐지된 바운딩 박스의 중심점을 유지하고 연결함으로써 추적된 객체가 이동한 경로를 나타내는 선을 그릴 수 있습니다.
+
+여러 비디오 프레임에 걸쳐 트랙 플로팅하기
+    
+    
+    from collections import defaultdict
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Open the video file
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    
+    # Store the track history
+    track_history = defaultdict(lambda: [])
+    
+    # Loop through the video frames
+    while cap.isOpened():
+        # Read a frame from the video
+        success, frame = cap.read()
+    
+        if success:
+            # Run YOLO26 tracking on the frame, persisting tracks between frames
+            result = model.track(frame, persist=True)[0]
+    
+            # Get the boxes and track IDs
+            if result.boxes and result.boxes.is_track:
+                boxes = result.boxes.xywh.cpu()
+                track_ids = result.boxes.id.int().cpu().tolist()
+    
+                # Visualize the result on the frame
+                frame = result.plot()
+    
+                # Plot the tracks
+                for box, track_id in zip(boxes, track_ids):
+                    x, y, w, h = box
+                    track = track_history[track_id]
+                    track.append((float(x), float(y)))  # x, y center point
+                    if len(track) > 30:  # retain 30 tracks for 30 frames
+                        track.pop(0)
+    
+                    # Draw the tracking lines
+                    points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                    cv2.polylines(frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+    
+            # Display the annotated frame
+            cv2.imshow("YOLO26 Tracking", frame)
+    
+            # Break the loop if 'q' is pressed
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            # Break the loop if the end of the video is reached
+            break
+    
+    # Release the video capture object and close the display window
+    cap.release()
+    cv2.destroyAllWindows()
+
+### Link to this section멀티스레드 추적#
+
+멀티스레드 추적은 여러 비디오 스트림에서 동시에 객체 추적을 실행할 수 있는 기능을 제공합니다. 이는 여러 감시 카메라와 같은 여러 비디오 입력을 처리할 때 특히 유용하며, 병렬 처리를 통해 효율성과 성능을 크게 향상시킬 수 있습니다.
+
+제공된 Python 스크립트에서는 Python의 `threading` 모듈을 사용하여 트래커의 여러 인스턴스를 동시에 실행합니다. 각 스레드는 하나의 비디오 파일에 대해 트래커를 실행하며, 모든 스레드는 백그라운드에서 동시에 실행됩니다.
+
+각 스레드가 올바른 매개변수(비디오 파일, 사용할 모델 및 파일 인덱스)를 수신하도록 하기 위해 이러한 매개변수를 허용하고 메인 추적 루프를 포함하는 `run_tracker_in_thread` 함수를 정의합니다. 이 함수는 비디오를 프레임 단위로 읽고, 트래커를 실행하며, 결과를 표시합니다.
+
+이 예제에서는 `yolo26n.pt`와 `yolo26n-seg.pt`라는 두 가지 다른 모델이 사용되며, 각각 다른 비디오 파일에서 객체를 추적합니다. 비디오 파일은 `SOURCES`에 지정되어 있습니다.
+
+The `daemon=True` parameter in `threading.Thread` means that these threads will be closed as soon as the main program finishes. We then start the threads with `start()` and use `join()` to make the main thread wait until both tracker threads have finished.
+
+마지막으로 모든 스레드가 작업을 완료하면 `cv2.destroyAllWindows()`를 사용하여 결과를 표시하는 창이 닫힙니다.
+
+멀티스레드 추적 구현
+    
+    
+    import threading
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Define model names and video sources
+    MODEL_NAMES = ["yolo26n.pt", "yolo26n-seg.pt"]
+    SOURCES = ["path/to/video.mp4", "0"]  # local video, 0 for webcam
+    
+    def run_tracker_in_thread(model_name, filename):
+        """Run YOLO tracker in its own thread for concurrent processing.
+    
+        Args:
+            model_name (str): The YOLO26 model object.
+            filename (str): The path to the video file or the identifier for the webcam/external camera source.
+        """
+        model = YOLO(model_name)
+        results = model.track(filename, save=True, stream=True)
+        for r in results:
+            pass
+    
+    # Create and start tracker threads using a for loop
+    tracker_threads = []
+    for video_file, model_name in zip(SOURCES, MODEL_NAMES):
+        thread = threading.Thread(target=run_tracker_in_thread, args=(model_name, video_file), daemon=True)
+        tracker_threads.append(thread)
+        thread.start()
+    
+    # Wait for all tracker threads to finish
+    for thread in tracker_threads:
+        thread.join()
+    
+    # Clean up and close windows
+    cv2.destroyAllWindows()
+
+이 예제는 더 많은 스레드를 생성하고 동일한 방법론을 적용하여 더 많은 비디오 파일과 모델을 처리하도록 쉽게 확장할 수 있습니다.
+
+## Link to this section새로운 트래커 기여하기#
+
+다중 객체 추적에 능숙하며 Ultralytics YOLO로 추적 알고리즘을 성공적으로 구현하거나 적응시켰습니까? [ultralytics/cfg/trackers](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers)의 Trackers 섹션에 기여해 주시기 바랍니다! 귀하의 실제 애플리케이션과 솔루션은 추적 작업을 수행하는 사용자에게 매우 가치 있을 것입니다.
+
+이 섹션에 기여함으로써 귀하는 Ultralytics YOLO 프레임워크 내에서 사용 가능한 추적 솔루션의 범위를 확장하고 커뮤니티를 위한 또 다른 기능과 유용성을 더하게 됩니다.
+
+기여를 시작하려면 Pull Request (PR) 제출에 대한 포괄적인 지침이 포함된 [기여 가이드](/ko/help/contributing)를 참조하십시오 🛠️. 귀하가 어떤 기여를 할지 기대됩니다!
+
+함께 Ultralytics YOLO 생태계의 추적 기능을 향상시켜 봅시다 🙏!
+
+## Link to this sectionFAQ#
+
+### Link to this section다중 객체 추적이란 무엇이며 Ultralytics YOLO는 이를 어떻게 지원합니까?#
+
+비디오 분석에서의 다중 객체 추적은 객체를 식별하고 비디오 프레임 전반에 걸쳐 탐지된 각 객체에 대해 고유한 ID를 유지하는 것을 모두 포함합니다. Ultralytics YOLO는 객체 ID와 함께 실시간 추적을 제공하여 보안 감시 및 스포츠 분석과 같은 작업을 지원합니다. 이 시스템은 YAML 파일을 통해 구성할 수 있는 [BoT-SORT](https://github.com/NirAharon/BoT-SORT), [ByteTrack](https://github.com/FoundationVision/ByteTrack), OC-SORT, Deep OC-SORT, FastTracker 및 TrackTrack과 같은 트래커를 사용합니다.
+
+### Link to this sectionUltralytics YOLO용 커스텀 트래커를 어떻게 구성합니까?#
+
+You can configure a custom tracker by copying an existing tracker configuration file (e.g., `custom_tracker.yaml`) from the [Ultralytics tracker configuration directory](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers) and modifying parameters as needed, except for the `tracker_type`. Use this file in your tracking model like so:
+
+예시
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", tracker="custom_tracker.yaml")
+
+### Link to this section여러 비디오 스트림에서 객체 추적을 동시에 실행하려면 어떻게 해야 합니까?#
+
+여러 비디오 스트림에서 객체 추적을 동시에 실행하려면 Python의 `threading` 모듈을 사용할 수 있습니다. 각 스레드는 별도의 비디오 스트림을 처리합니다. 설정 방법의 예는 다음과 같습니다:
+
+멀티스레드 추적
+    
+    
+    import threading
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Define model names and video sources
+    MODEL_NAMES = ["yolo26n.pt", "yolo26n-seg.pt"]
+    SOURCES = ["path/to/video.mp4", "0"]  # local video, 0 for webcam
+    
+    def run_tracker_in_thread(model_name, filename):
+        """Run YOLO tracker in its own thread for concurrent processing.
+    
+        Args:
+            model_name (str): The YOLO26 model object.
+            filename (str): The path to the video file or the identifier for the webcam/external camera source.
+        """
+        model = YOLO(model_name)
+        results = model.track(filename, save=True, stream=True)
+        for r in results:
+            pass
+    
+    # Create and start tracker threads using a for loop
+    tracker_threads = []
+    for video_file, model_name in zip(SOURCES, MODEL_NAMES):
+        thread = threading.Thread(target=run_tracker_in_thread, args=(model_name, video_file), daemon=True)
+        tracker_threads.append(thread)
+        thread.start()
+    
+    # Wait for all tracker threads to finish
+    for thread in tracker_threads:
+        thread.join()
+    
+    # Clean up and close windows
+    cv2.destroyAllWindows()
+
+### Link to this sectionUltralytics YOLO를 사용한 다중 객체 추적의 실제 응용 사례는 무엇입니까?#
+
+Ultralytics YOLO를 사용한 다중 객체 추적에는 다음과 같은 수많은 응용 분야가 있습니다:
+
+  * **교통:** 교통 관리 및 [자율 주행](https://www.ultralytics.com/blog/ai-in-self-driving-cars)을 위한 차량 추적.
+  * **소매:** 매장 내 분석 및 보안을 위한 사람 추적.
+  * **양식:** 수중 환경 모니터링을 위한 물고기 추적.
+  * **스포츠 분석:** 성능 분석을 위한 선수 및 장비 추적.
+  * **보안 시스템:** [의심스러운 활동 모니터링](https://www.ultralytics.com/blog/security-alarm-system-projects-with-ultralytics-yolov8) 및 [보안 경보](https://docs.ultralytics.com/guides/security-alarm-system) 생성.
+
+
+
+이러한 응용 분야는 Ultralytics YOLO가 고프레임 속도 비디오를 실시간으로 탁월한 정확도로 처리하는 기능으로부터 이점을 얻습니다.
+
+### Link to this sectionUltralytics YOLO를 사용하여 여러 비디오 프레임에 걸쳐 객체 트랙을 시각화하려면 어떻게 해야 합니까?#
+
+여러 비디오 프레임에 걸쳐 객체 트랙을 시각화하려면 YOLO 모델의 추적 기능과 OpenCV를 사용하여 탐지된 객체의 경로를 그릴 수 있습니다. 이를 보여주는 예제 스크립트는 다음과 같습니다:
+
+여러 비디오 프레임에 걸쳐 트랙 플로팅하기
+    
+    
+    from collections import defaultdict
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    track_history = defaultdict(lambda: [])
+    
+    while cap.isOpened():
+        success, frame = cap.read()
+        if success:
+            results = model.track(frame, persist=True)
+            boxes = results[0].boxes.xywh.cpu()
+            track_ids = results[0].boxes.id.int().cpu().tolist()
+            annotated_frame = results[0].plot()
+            for box, track_id in zip(boxes, track_ids):
+                x, y, w, h = box
+                track = track_history[track_id]
+                track.append((float(x), float(y)))
+                if len(track) > 30:
+                    track.pop(0)
+                points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                cv2.polylines(annotated_frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+            cv2.imshow("YOLO26 Tracking", annotated_frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+이 스크립트는 시간에 따른 추적된 객체의 이동 경로를 보여주는 추적 선을 플로팅하여 객체 행동 및 패턴에 대한 귀중한 통찰력을 제공합니다.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/track.md)
+
+[GLglenn-jocher30](https://github.com/glenn-jocher)[RIRizwanMunawar4](https://github.com/RizwanMunawar)[ONonuralpszr2](https://github.com/onuralpszr)[RAraimbekovm2](https://github.com/raimbekovm)[Y-Y-T-G2](https://github.com/Y-T-G)RORonald Eddy Jr1[PDpderrenger1](https://github.com/pderrenger)[LALaughing-q1](https://github.com/Laughing-q)[ANankanpy1](https://github.com/ankanpy)[MAMatthewNoyce1](https://github.com/MatthewNoyce)[IVIvorZhu3311](https://github.com/IvorZhu331)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+생성됨 2023년 11월 12일업데이트됨 지난주
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

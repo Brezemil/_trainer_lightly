@@ -1,0 +1,255 @@
+---
+source_url: https://docs.ultralytics.com/ja/integrations/mnn
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/mnn.md)
+
+# Link to this sectionYOLO26モデルのMNNエクスポートとデプロイメント#
+
+## Link to this sectionMNN#
+
+![MNN mobile neural network inference framework](https://mnn-docs.readthedocs.io/en/latest/_images/architecture.png)
+
+[MNN](https://github.com/alibaba/MNN)は、非常に効率的で軽量なディープラーニングフレームワークです。ディープラーニングモデルの推論とトレーニングをサポートしており、オンデバイスでの推論とトレーニングにおいて業界最高レベルのパフォーマンスを実現しています。現在、MNNはAlibaba Incの淘宝（Taobao）、天猫（Tmall）、優酷（Youku）、釘釘（DingTalk）、閑魚（Xianyu）など、30以上のアプリに統合されており、ライブ配信、ショート動画撮影、検索レコメンデーション、画像による商品検索、インタラクティブマーケティング、権利分配、セキュリティリスク管理など、70以上の利用シナリオをカバーしています。さらに、MNNはIoTなどの組み込みデバイスでも使用されています。
+
+  
+
+
+  
+**Watch:** How to Export Ultralytics YOLO26 to MNN Format | Speed up Inference on Mobile Devices📱 
+
+## Link to this sectionMNNへのエクスポート：YOLO26モデルの変換#
+
+[Ultralytics YOLO](/ja/models/yolo26)モデルをMNN形式に変換することで、モデルの互換性とデプロイメントの柔軟性を拡張できます。この変換により、モバイル環境や組み込み環境向けにモデルが最適化され、リソースが制限されたデバイスでも効率的なパフォーマンスを確保できます。
+
+### Link to this sectionインストール#
+
+必要なパッケージをインストールするには、以下を実行してください。
+
+インストール
+    
+    
+    # Install the required package for YOLO26 and MNN
+    pip install ultralytics
+    pip install MNN
+
+### Link to this section使用方法#
+
+すべての[Ultralytics YOLO26モデル](/ja/models)は、すぐにエクスポートできるように設計されており、好みのデプロイメントワークフローに簡単に統合できます。[サポートされているエクスポート形式と設定オプションの全リスト](/ja/modes/export)を確認して、アプリケーションに最適なセットアップを選択してください。
+
+MNN形式は、[Export](/ja/modes/export)、[Predict](/ja/modes/predict)、および[Validate](/ja/modes/val)モードをサポートしています。モデルをエクスポートし、エクスポートされたモデルを読み込んで推論を実行するか、精度を検証してください。
+
+エクスポート
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to MNN format
+    model.export(format="mnn")  # creates 'yolo26n.mnn'
+
+予測
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported MNN model
+    model = YOLO("yolo26n.mnn")
+    
+    # Run inference
+    results = model("https://ultralytics.com/images/bus.jpg")
+
+検証
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported MNN model
+    model = YOLO("yolo26n.mnn")
+    
+    # Validate accuracy on the COCO8 dataset
+    metrics = model.val(data="coco8.yaml")
+
+### Link to this sectionエクスポート引数#
+
+引数| 型| デフォルト| 説明  
+---|---|---|---  
+`format`| `str`| `'mnn'`| エクスポートされたモデルのターゲット形式。さまざまなデプロイメント環境との互換性を定義します。  
+`imgsz`| `int` または `tuple`| `640`| Desired image size for the model input. Can be an integer for square images or a tuple `(height, width)` for specific dimensions.  
+`half`| `bool`| `False`| FP16（半精度）量子化を有効にし、モデルサイズを縮小し、サポートされているハードウェアでの推論を高速化する可能性があります。  
+`int8`| `bool`| `False`| INT8量子化をアクティブにし、モデルをさらに圧縮して、主にエッジデバイス向けに、最小限の[精度](https://www.ultralytics.com/glossary/accuracy)低下で推論を高速化します。  
+`batch`| `int`| `1`| エクスポートされたモデルのバッチ推論サイズ、または `predict` モードでエクスポートされたモデルが同時に処理する画像の最大数を指定します。  
+`device`| `str`| `None`| エクスポートに使用するデバイスを指定します：GPU（`device=0`）、CPU（`device=cpu`）、Appleシリコン用MPS（`device=mps`）。  
+  
+エクスポートプロセスの詳細については、[エクスポートに関するUltralyticsドキュメントページ](/ja/modes/export)をご覧ください。
+
+### Link to this sectionMNN専用推論#
+
+YOLO26の推論と前処理のためにMNNのみに依存する関数が実装されており、あらゆるシナリオで簡単にデプロイできるよう、Python版とC++版の両方が提供されています。
+
+MNN
+    
+    
+    import argparse
+    
+    import MNN
+    import MNN.cv as cv2
+    import MNN.numpy as np
+    
+    def inference(model, img, precision, backend, thread):
+        config = {}
+        config["precision"] = precision
+        config["backend"] = backend
+        config["numThread"] = thread
+        rt = MNN.nn.create_runtime_manager((config,))
+        # net = MNN.nn.load_module_from_file(model, ['images'], ['output0'], runtime_manager=rt)
+        net = MNN.nn.load_module_from_file(model, [], [], runtime_manager=rt)
+        original_image = cv2.imread(img)
+        ih, iw, _ = original_image.shape
+        length = max((ih, iw))
+        scale = length / 640
+        image = np.pad(original_image, [[0, length - ih], [0, length - iw], [0, 0]], "constant")
+        image = cv2.resize(
+            image, (640, 640), 0.0, 0.0, cv2.INTER_LINEAR, -1, [0.0, 0.0, 0.0], [1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0]
+        )
+        image = image[..., ::-1]  # BGR to RGB
+        input_var = image[None]
+        input_var = MNN.expr.convert(input_var, MNN.expr.NC4HW4)
+        output_var = net.forward(input_var)
+        output_var = MNN.expr.convert(output_var, MNN.expr.NCHW)
+        output_var = output_var.squeeze()
+        # output_var shape: [84, 8400]; 84 means: [cx, cy, w, h, prob * 80]
+        cx = output_var[0]
+        cy = output_var[1]
+        w = output_var[2]
+        h = output_var[3]
+        probs = output_var[4:]
+        # [cx, cy, w, h] -> [y0, x0, y1, x1]
+        x0 = cx - w * 0.5
+        y0 = cy - h * 0.5
+        x1 = cx + w * 0.5
+        y1 = cy + h * 0.5
+        boxes = np.stack([x0, y0, x1, y1], axis=1)
+        # ensure ratio is within the valid range [0.0, 1.0]
+        boxes = np.clip(boxes, 0, 1)
+        # get max prob and idx
+        scores = np.max(probs, 0)
+        class_ids = np.argmax(probs, 0)
+        result_ids = MNN.expr.nms(boxes, scores, 100, 0.45, 0.25)
+        print(result_ids.shape)
+        # nms result box, score, ids
+        result_boxes = boxes[result_ids]
+        result_scores = scores[result_ids]
+        result_class_ids = class_ids[result_ids]
+        for i in range(len(result_boxes)):
+            x0, y0, x1, y1 = result_boxes[i].read_as_tuple()
+            y0 = int(y0 * scale)
+            y1 = int(y1 * scale)
+            x0 = int(x0 * scale)
+            x1 = int(x1 * scale)
+            # clamp to the original image size to handle cases where padding was applied
+            x1 = min(iw, x1)
+            y1 = min(ih, y1)
+            print(result_class_ids[i])
+            cv2.rectangle(original_image, (x0, y0), (x1, y1), (0, 0, 255), 2)
+        cv2.imwrite("res.jpg", original_image)
+    
+    if __name__ == "__main__":
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--model", type=str, required=True, help="the yolo26 model path")
+        parser.add_argument("--img", type=str, required=True, help="the input image path")
+        parser.add_argument("--precision", type=str, default="normal", help="inference precision: normal, low, high, lowBF")
+        parser.add_argument(
+            "--backend",
+            type=str,
+            default="CPU",
+            help="inference backend: CPU, OPENCL, OPENGL, NN, VULKAN, METAL, TRT, CUDA, HIAI",
+        )
+        parser.add_argument("--thread", type=int, default=4, help="inference using thread: int")
+        args = parser.parse_args()
+        inference(args.model, args.img, args.precision, args.backend, args.thread)
+
+## Link to this sectionまとめ#
+
+本ガイドでは、Ultralytics YOLO26モデルをMNNにエクスポートし、推論にMNNを使用する方法を紹介しました。MNN形式は[エッジAI](https://www.ultralytics.com/glossary/edge-ai)アプリケーションに対して優れたパフォーマンスを提供し、リソースが制限されたデバイスにコンピュータビジョンモデルをデプロイするのに理想的です。
+
+その他の使用方法については、[MNNドキュメント](https://mnn-docs.readthedocs.io/en/latest)を参照してください。
+
+## Link to this sectionFAQ#
+
+### Link to this sectionUltralytics YOLO26モデルをMNN形式にエクスポートするにはどうすればよいですか？#
+
+Ultralytics YOLO26モデルをMNN形式にエクスポートするには、以下の手順に従ってください。
+
+エクスポート
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Export to MNN format
+    model.export(format="mnn")  # creates 'yolo26n.mnn' with fp32 weight
+    model.export(format="mnn", half=True)  # creates 'yolo26n.mnn' with fp16 weight
+    model.export(format="mnn", int8=True)  # creates 'yolo26n.mnn' with int8 weight
+
+詳細なエクスポートオプションについては、ドキュメントの[Export](/ja/modes/export)ページを確認してください。
+
+### Link to this sectionエクスポートされたYOLO26 MNNモデルで推論を行うにはどうすればよいですか？#
+
+エクスポートされたYOLO26 MNNモデルで推論するには、YOLOクラスの`predict`関数を使用してください。
+
+予測
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 MNN model
+    model = YOLO("yolo26n.mnn")
+    
+    # Run inference
+    results = model("https://ultralytics.com/images/bus.jpg")  # predict with `fp32`
+    results = model("https://ultralytics.com/images/bus.jpg", half=True)  # predict with `fp16` if device support
+    
+    for result in results:
+        result.show()  # display to screen
+        result.save(filename="result.jpg")  # save to disk
+
+### Link to this sectionMNNではどのプラットフォームがサポートされていますか？#
+
+MNNは汎用性が高く、さまざまなプラットフォームをサポートしています：
+
+  * **モバイル** : Android、iOS、Harmony。
+  * **組み込みシステムおよびIoTデバイス** : [Raspberry Pi](/ja/guides/raspberry-pi)やNVIDIA Jetsonのようなデバイス。
+  * **デスクトップおよびサーバー** : Linux、Windows、macOS。
+
+
+
+### Link to this sectionUltralytics YOLO26 MNNモデルをモバイルデバイスにデプロイするにはどうすればよいですか？#
+
+YOLO26モデルをモバイルデバイスにデプロイするには：
+
+  1. **Android用ビルド** : [MNN Android](https://github.com/alibaba/MNN/tree/master/project/android)ガイドに従ってください。
+  2. **iOS用ビルド** : [MNN iOS](https://github.com/alibaba/MNN/tree/master/project/ios)ガイドに従ってください。
+  3. **Harmony用ビルド** : [MNN Harmony](https://github.com/alibaba/MNN/tree/master/project/harmony)ガイドに従ってください。
+
+
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/mnn.md)
+
+[GLglenn-jocher9](https://github.com/glenn-jocher)[LAlakshanthad3](https://github.com/lakshanthad)[JUjules-ai2](https://github.com/jules-ai)[LALaughing-q1](https://github.com/Laughing-q)[RIRizwanMunawar1](https://github.com/RizwanMunawar)[WAwangzhaode1](https://github.com/wangzhaode)
+
+作成日 2024年10月30日更新日 2 週間前
+
+## コメント
+
+このページの内容
+
+AIで探索

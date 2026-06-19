@@ -1,0 +1,536 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/nvidia-dali
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/nvidia-dali.md)
+
+# Link to this section使用 NVIDIA DALI 进行 GPU 加速预处理#
+
+## Link to this section简介#
+
+在生产环境中部署 [Ultralytics YOLO](/zh/models) 模型时，[预处理](https://www.ultralytics.com/glossary/data-preprocessing) 往往成为瓶颈。虽然 [TensorRT](/zh/integrations/tensorrt) 可以在几毫秒内完成模型 [推理](/zh/modes/predict)，但基于 CPU 的预处理（调整大小、填充、归一化）每张图片可能需要 2-10ms，尤其是在高分辨率下。[NVIDIA DALI](https://docs.nvidia.com/deeplearning/dali/user-guide/docs/index.html) (Data Loading Library) 通过将整个预处理流水线迁移到 GPU 来解决这个问题。
+
+本指南将带你构建能够精准复刻 Ultralytics YOLO 预处理的 DALI 流水线，并将其集成到 `model.predict()` 中，用于处理视频流以及通过 [Triton Inference Server](/zh/guides/triton-inference-server) 进行端到端部署。
+
+本指南适合哪些人？
+
+本指南适用于在生产环境中部署 YOLO 模型且 CPU 预处理已成为可衡量的瓶颈的工程师——通常是针对 NVIDIA GPU 上的 [TensorRT](/zh/integrations/tensorrt) 部署、高吞吐量视频流水线或 [Triton Inference Server](/zh/guides/triton-inference-server) 设置。如果你只是使用 `model.predict()` 运行标准推理，并且不存在预处理瓶颈，那么默认的 CPU 流水线即可良好运行。
+
+快速摘要
+
+  * **构建 DALI 流水线？** 使用 `fn.resize(mode="not_larger")` \+ `fn.crop(out_of_bounds_policy="pad")` \+ `fn.crop_mirror_normalize` 即可在 GPU 上复刻 YOLO 的 letterbox 预处理。
+  * **与 Ultralytics 集成？** 将 DALI 的输出作为 `torch.Tensor` 传递给 `model.predict()` —— Ultralytics 会自动跳过图像预处理。
+  * **使用 Triton 部署？** 使用带有 TensorRT 集成模型的 DALI 后端，实现零 CPU 预处理。
+
+
+
+## Link to this section为什么为 YOLO 预处理使用 DALI#
+
+在典型的 YOLO 推理流水线中，预处理步骤在 CPU 上运行：
+
+  1. **解码** 图像 (JPEG/PNG)
+  2. **调整大小** 同时保持纵横比
+  3. **填充** 至目标尺寸 (letterbox)
+  4. **归一化** 像素值，从 `[0, 255]` 变为 `[0, 1]`
+  5. **转换** 布局，从 HWC 转为 CHW
+
+
+
+有了 DALI，所有这些操作都在 GPU 上运行，消除了 CPU 瓶颈。在以下情况下这尤为重要：
+
+场景| 为什么 DALI 有帮助  
+---|---  
+**极速 GPU 推理**|  带有亚毫秒级推理的 [TensorRT](/zh/integrations/tensorrt) 引擎使得 CPU 预处理成为主要成本  
+**高分辨率输入**|  1080p 和 4K 视频流需要昂贵的调整大小操作  
+**大[批次大小](https://www.ultralytics.com/glossary/batch-size)**| 服务器端推理并行处理大量图像  
+**有限的 CPU 核心**|  诸如 [NVIDIA Jetson](/zh/guides/nvidia-jetson) 之类的边缘设备，或每个 GPU CPU 核心数较少的密集型 GPU 服务器  
+  
+## Link to this section前提条件#
+
+仅限 Linux
+
+NVIDIA DALI **仅支持 Linux** 。它在 Windows 或 macOS 上不可用。
+
+安装所需的包：
+    
+    
+    pip install ultralytics
+    pip install --extra-index-url https://pypi.nvidia.com nvidia-dali-cuda130
+
+**要求：**
+
+  * NVIDIA GPU (计算能力 5.0+ / Maxwell 或更新版本)
+  * CUDA 11.0+, 12.0+ 或 13.0+
+  * Python 3.10-3.14
+  * Linux 操作系统
+
+
+
+## Link to this section了解 YOLO 预处理#
+
+Before building a DALI pipeline, it helps to understand exactly what Ultralytics does during preprocessing. The key class is `LetterBox` in [`ultralytics/data/augment.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py):
+    
+    
+    from ultralytics.data.augment import LetterBox
+    
+    letterbox = LetterBox(
+        new_shape=(640, 640),  # Target size
+        center=True,  # Center the image (pad equally on both sides)
+        stride=32,  # Stride alignment
+        padding_value=114,  # Gray padding (114, 114, 114)
+    )
+
+[`ultralytics/engine/predictor.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/engine/predictor.py) 中的完整预处理流水线执行以下步骤：
+
+步骤| 操作| CPU 函数| DALI 等效项  
+---|---|---|---  
+1| Letterbox 调整大小| `cv2.resize`| `fn.resize(mode="not_larger")`  
+2| 居中填充| `cv2.copyMakeBorder`| `fn.crop(out_of_bounds_policy="pad")`  
+3| BGR → RGB| `im[..., ::-1]`| `fn.decoders.image(output_type=types.RGB)`  
+4| HWC → CHW + 归一化 /255| `np.transpose` \+ `tensor / 255`| `fn.crop_mirror_normalize(std=[255,255,255])`  
+  
+Letterbox 操作通过以下方式保持纵横比：
+
+  1. 计算比例：`r = min(target_h / h, target_w / w)`
+  2. 调整大小为 `(round(w * r), round(h * r))`
+  3. 使用灰色 (`114`) 填充剩余空间以达到目标尺寸
+  4. 将图像居中，使填充均匀分布在两侧
+
+
+
+## Link to this section用于 YOLO 的 DALI 流水线#
+
+使用下方的居中流水线作为默认参考。它匹配 Ultralytics `LetterBox(center=True)` 的行为，这也是标准 YOLO 推理所使用的行为。
+
+### Link to this section居中流水线（推荐，匹配 Ultralytics LetterBox）#
+
+此版本完全复刻了默认的 Ultralytics 预处理（带居中填充），与 `LetterBox(center=True)` 相匹配：
+
+带居中填充的 DALI 流水线（推荐）
+    
+    
+    import nvidia.dali as dali
+    import nvidia.dali.fn as fn
+    import nvidia.dali.types as types
+    
+    @dali.pipeline_def(batch_size=8, num_threads=4, device_id=0)
+    def yolo_dali_pipeline_centered(image_dir, target_size=640):
+        """DALI pipeline replicating YOLO preprocessing with centered padding.
+    
+        Matches Ultralytics LetterBox(center=True) behavior exactly.
+        """
+        # Read and decode images on GPU
+        jpegs, _ = fn.readers.file(file_root=image_dir, random_shuffle=False, name="Reader")
+        images = fn.decoders.image(jpegs, device="mixed", output_type=types.RGB)
+    
+        # Aspect-ratio-preserving resize
+        resized = fn.resize(
+            images,
+            resize_x=target_size,
+            resize_y=target_size,
+            mode="not_larger",
+            interp_type=types.INTERP_LINEAR,
+            antialias=False,  # Match cv2.INTER_LINEAR (no antialiasing)
+        )
+    
+        # Centered padding using fn.crop with out_of_bounds_policy
+        # When crop size > image size, fn.crop centers the image and pads symmetrically
+        padded = fn.crop(
+            resized,
+            crop=(target_size, target_size),
+            out_of_bounds_policy="pad",
+            fill_values=114,  # YOLO padding value
+        )
+    
+        # Normalize and convert layout
+        output = fn.crop_mirror_normalize(
+            padded,
+            dtype=types.FLOAT,
+            output_layout="CHW",
+            mean=[0.0, 0.0, 0.0],
+            std=[255.0, 255.0, 255.0],
+        )
+        return output
+
+`fn.pad` 何时足够？
+
+如果你不需要与 `LetterBox(center=True)` 完全一致，可以通过使用 `fn.pad(...)` 而不是 `fn.crop(..., out_of_bounds_policy="pad")` 来简化填充步骤。该变体仅在**右侧和底部** 边缘进行填充，这对自定义部署流水线来说是可以接受的，但它不会完全匹配 Ultralytics 默认的居中 letterbox 行为。
+
+为什么要使用 `fn.crop` 进行居中填充？
+
+DALI's `fn.pad` operator only adds padding to the **right and bottom** edges. To get centered padding (matching Ultralytics `LetterBox(center=True)`), use `fn.crop` with `out_of_bounds_policy="pad"`. With the default `crop_pos_x=0.5` and `crop_pos_y=0.5`, the image is automatically centered with symmetric padding.
+
+抗锯齿不匹配
+
+DALI's `fn.resize` enables antialiasing by default (`antialias=True`), while OpenCV's `cv2.resize` with `INTER_LINEAR` does **not** apply antialiasing. Always set `antialias=False` in DALI to match the CPU pipeline. Omitting this causes subtle numerical differences that can affect [model accuracy](https://www.ultralytics.com/glossary/accuracy).
+
+### Link to this section运行流水线#
+
+构建并运行 DALI 流水线
+    
+    
+    # Build and run the pipeline
+    pipe = yolo_dali_pipeline_centered(image_dir="/path/to/images", target_size=640)
+    pipe.build()
+    
+    # Get a batch of preprocessed images
+    (output,) = pipe.run()
+    
+    # Convert to numpy or PyTorch tensors
+    batch_np = output.as_cpu().as_array()  # Shape: (batch_size, 3, 640, 640)
+    print(f"Output shape: {batch_np.shape}, dtype: {batch_np.dtype}")
+    print(f"Value range: [{batch_np.min():.4f}, {batch_np.max():.4f}]")
+
+## Link to this section将 DALI 与 Ultralytics Predict 结合使用#
+
+你可以将预处理过的 [PyTorch](https://www.ultralytics.com/glossary/pytorch) 张量直接传递给 `model.predict()`。当传入 `torch.Tensor` 时，Ultralytics 会**跳过图像预处理** （letterbox、BGR→RGB、HWC→CHW 和 /255 归一化），仅在将其发送到模型之前执行设备传输和数据类型转换。
+
+由于此时 Ultralytics 无法访问原始图像尺寸，因此返回的检测框坐标位于 640×640 的 letterbox 空间中。要将其映射回原始图像坐标，请使用 [`scale_boxes`](/reference/utils/ops)，它处理了 `LetterBox` 使用的精确舍入逻辑：
+    
+    
+    from ultralytics.utils.ops import scale_boxes
+    
+    # boxes: tensor of shape (N, 4) in xyxy format, in 640x640 letterboxed coords
+    # Scale boxes from letterboxed (640, 640) back to original (orig_h, orig_w)
+    boxes = scale_boxes((640, 640), boxes, (orig_h, orig_w))
+
+这适用于所有外部预处理路径——直接张量输入、视频流和 Triton 部署。
+
+DALI + Ultralytics predict
+    
+    
+    from nvidia.dali.plugin.pytorch import DALIGenericIterator
+    
+    from ultralytics import YOLO
+    
+    # Load model
+    model = YOLO("yolo26n.pt")
+    
+    # Create DALI iterator
+    pipe = yolo_dali_pipeline_centered(image_dir="/path/to/images", target_size=640)
+    pipe.build()
+    dali_iter = DALIGenericIterator(pipe, ["images"], reader_name="Reader")
+    
+    # Run inference with DALI-preprocessed tensors
+    for batch in dali_iter:
+        images = batch[0]["images"]  # Already on GPU, shape (B, 3, 640, 640)
+        results = model.predict(images, verbose=False)
+        for result in results:
+            print(f"Detected {len(result.boxes)} objects")
+
+零预处理开销
+
+当你将 `torch.Tensor` 传递给 `model.predict()` 时，图像预处理步骤花费的时间约为 ~0.004ms（基本为零），而 CPU 预处理则需要 ~1-10ms。张量必须采用 BCHW 格式、float32（或 float16），并归一化到 `[0, 1]`。Ultralytics 仍会自动处理设备传输和数据类型转换。
+
+## Link to this section带有视频流的 DALI#
+
+对于实时视频处理，使用 `fn.external_source` 从任何源（[OpenCV](https://www.ultralytics.com/glossary/opencv)、GStreamer 或自定义采集库）馈送帧：
+
+用于视频流预处理的 DALI 流水线
+    
+    
+    import nvidia.dali as dali
+    import nvidia.dali.fn as fn
+    import nvidia.dali.types as types
+    
+    @dali.pipeline_def(batch_size=1, num_threads=4, device_id=0)
+    def yolo_video_pipeline(target_size=640):
+        """DALI pipeline for processing video frames from external source."""
+        # External source for feeding frames from OpenCV, GStreamer, etc.
+        frames = fn.external_source(device="cpu", name="input")
+        frames = fn.reshape(frames, layout="HWC")
+    
+        # Move to GPU and preprocess
+        frames_gpu = frames.gpu()
+        resized = fn.resize(
+            frames_gpu,
+            resize_x=target_size,
+            resize_y=target_size,
+            mode="not_larger",
+            interp_type=types.INTERP_LINEAR,
+            antialias=False,
+        )
+        padded = fn.crop(
+            resized,
+            crop=(target_size, target_size),
+            out_of_bounds_policy="pad",
+            fill_values=114,
+        )
+        output = fn.crop_mirror_normalize(
+            padded,
+            dtype=types.FLOAT,
+            output_layout="CHW",
+            mean=[0.0, 0.0, 0.0],
+            std=[255.0, 255.0, 255.0],
+        )
+        return output
+
+## Link to this section带有 DALI 的 Triton Inference Server#
+
+For production deployment, combine DALI preprocessing with [TensorRT](/zh/integrations/tensorrt) inference in [Triton Inference Server](/zh/guides/triton-inference-server) using an ensemble model. This eliminates CPU preprocessing entirely — raw JPEG bytes go in, detections come out, with everything processed on the GPU.
+
+### Link to this section模型仓库结构#
+    
+    
+    model_repository/
+    ├── dali_preprocessing/
+    │   ├── 1/
+    │   │   └── model.dali
+    │   └── config.pbtxt
+    ├── yolo_trt/
+    │   ├── 1/
+    │   │   └── model.plan
+    │   └── config.pbtxt
+    └── ensemble_dali_yolo/
+        ├── 1/                  # Empty directory (required by Triton)
+        └── config.pbtxt
+
+### Link to this section步骤 1：创建 DALI 流水线#
+
+序列化 DALI 流水线以供 Triton DALI 后端使用：
+
+为 Triton 序列化 DALI 流水线
+    
+    
+    import nvidia.dali as dali
+    import nvidia.dali.fn as fn
+    import nvidia.dali.types as types
+    
+    @dali.pipeline_def(batch_size=8, num_threads=4, device_id=0)
+    def triton_dali_pipeline():
+        """DALI preprocessing pipeline for Triton deployment."""
+        # Input: raw encoded image bytes from Triton
+        images = fn.external_source(device="cpu", name="DALI_INPUT_0")
+        images = fn.decoders.image(images, device="mixed", output_type=types.RGB)
+    
+        resized = fn.resize(
+            images,
+            resize_x=640,
+            resize_y=640,
+            mode="not_larger",
+            interp_type=types.INTERP_LINEAR,
+            antialias=False,
+        )
+        padded = fn.crop(
+            resized,
+            crop=(640, 640),
+            out_of_bounds_policy="pad",
+            fill_values=114,
+        )
+        output = fn.crop_mirror_normalize(
+            padded,
+            dtype=types.FLOAT,
+            output_layout="CHW",
+            mean=[0.0, 0.0, 0.0],
+            std=[255.0, 255.0, 255.0],
+        )
+        return output
+    
+    # Serialize pipeline to model repository
+    pipe = triton_dali_pipeline()
+    pipe.serialize(filename="model_repository/dali_preprocessing/1/model.dali")
+
+### Link to this section步骤 2：将 YOLO 导出到 TensorRT#
+
+将 YOLO 模型导出到 TensorRT 引擎
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    model.export(format="engine", imgsz=640, half=True, batch=8)
+    # Copy the .engine file to model_repository/yolo_trt/1/model.plan
+
+### Link to this section步骤 3：配置 Triton#
+
+**dali_preprocessing/config.pbtxt:**
+    
+    
+    name: "dali_preprocessing"
+    backend: "dali"
+    max_batch_size: 8
+    input [
+      {
+        name: "DALI_INPUT_0"
+        data_type: TYPE_UINT8
+        dims: [ -1 ]
+      }
+    ]
+    output [
+      {
+        name: "DALI_OUTPUT_0"
+        data_type: TYPE_FP32
+        dims: [ 3, 640, 640 ]
+      }
+    ]
+
+**yolo_trt/config.pbtxt:**
+    
+    
+    name: "yolo_trt"
+    platform: "tensorrt_plan"
+    max_batch_size: 8
+    input [
+      {
+        name: "images"
+        data_type: TYPE_FP32
+        dims: [ 3, 640, 640 ]
+      }
+    ]
+    output [
+      {
+        name: "output0"
+        data_type: TYPE_FP32
+        dims: [ 300, 6 ]
+      }
+    ]
+
+**ensemble_dali_yolo/config.pbtxt:**
+    
+    
+    name: "ensemble_dali_yolo"
+    platform: "ensemble"
+    max_batch_size: 8
+    input [
+      {
+        name: "INPUT"
+        data_type: TYPE_UINT8
+        dims: [ -1 ]
+      }
+    ]
+    output [
+      {
+        name: "OUTPUT"
+        data_type: TYPE_FP32
+        dims: [ 300, 6 ]
+      }
+    ]
+    ensemble_scheduling {
+      step [
+        {
+          model_name: "dali_preprocessing"
+          model_version: -1
+          input_map {
+            key: "DALI_INPUT_0"
+            value: "INPUT"
+          }
+          output_map {
+            key: "DALI_OUTPUT_0"
+            value: "preprocessed_image"
+          }
+        },
+        {
+          model_name: "yolo_trt"
+          model_version: -1
+          input_map {
+            key: "images"
+            value: "preprocessed_image"
+          }
+          output_map {
+            key: "output0"
+            value: "OUTPUT"
+          }
+        }
+      ]
+    }
+
+集成映射的工作原理
+
+集成模型通过**虚拟张量名称** 连接各个模型。DALI 步骤中的 `output_map` 值 `"preprocessed_image"` 与 TensorRT 步骤中的 `input_map` 值 `"preprocessed_image"` 相匹配。这些是任意名称，用于将一个步骤的输出链接到下一个步骤的输入——它们不需要与任何模型的内部张量名称相匹配。
+
+### Link to this section步骤 4：发送推理请求#
+
+为什么使用 `tritonclient` 而不是 `YOLO('http://...')`？
+
+Ultralytics 拥有[内置 Triton 支持](/zh/guides/triton-inference-server#running-inference)，可以自动处理预处理和后处理。然而，它无法与 DALI 集成模型配合使用，因为 `YOLO()` 发送的是预处理过的 float32 张量，而集成模型期望接收原始 JPEG 字节数据。请直接为 DALI 集成模型使用 `tritonclient`，并为无需 DALI 的标准部署使用[内置集成](/zh/guides/triton-inference-server)。
+
+将图像发送到 Triton 集成模型
+    
+    
+    import numpy as np
+    import tritonclient.http as httpclient
+    
+    client = httpclient.InferenceServerClient(url="localhost:8000")
+    
+    # Load image as raw bytes (JPEG/PNG encoded)
+    image_data = np.fromfile("image.jpg", dtype="uint8")
+    image_data = np.expand_dims(image_data, axis=0)  # Add batch dimension
+    
+    # Create input
+    input_tensor = httpclient.InferInput("INPUT", image_data.shape, "UINT8")
+    input_tensor.set_data_from_numpy(image_data)
+    
+    # Run inference through the ensemble
+    result = client.infer(model_name="ensemble_dali_yolo", inputs=[input_tensor])
+    detections = result.as_numpy("OUTPUT")  # Shape: (1, 300, 6) -> [x1, y1, x2, y2, conf, class_id]
+    
+    # Filter by confidence (no NMS needed — YOLO26 is end-to-end)
+    detections = detections[0]  # First image
+    detections = detections[detections[:, 4] > 0.25]  # Confidence threshold
+    print(f"Detected {len(detections)} objects")
+
+批量处理 JPEG 图像
+
+当向 Triton 发送一批 JPEG 图像时，请将所有编码后的字节数组填充至相同长度（即批处理中最大字节数）。Triton 要求输入张量的批次形状必须一致。
+
+## Link to this section支持的任务#
+
+DALI 预处理适用于所有使用标准 `LetterBox` 流水线的 YOLO 任务：
+
+任务| 已支持| 注意事项  
+---|---|---  
+[检测](/zh/tasks/detect)| ✅| 标准 letterbox 预处理  
+[实例分割](/zh/tasks/segment)| ✅| 与检测任务相同的预处理  
+[语义分割](/zh/tasks/semantic)| ✅| 与检测任务相同的图像预处理  
+[姿态估计](/zh/tasks/pose)| ✅| 与检测任务相同的预处理  
+[旋转目标检测 (OBB)](/zh/tasks/obb)| ✅| 与检测任务相同的预处理  
+[分类](/zh/tasks/classify)| ❌| 使用 torchvision 变换（中心裁剪），而非 letterbox  
+  
+## Link to this section局限性#
+
+  * **仅限 Linux** ：DALI 不支持 Windows 或 macOS
+  * **需要 NVIDIA GPU** ：没有仅支持 CPU 的备选方案
+  * **静态流水线** ：流水线结构在构建时定义，无法动态更改
+  * **`fn.pad` 仅支持右侧/底部填充**：若需居中填充，请配合使用 `fn.crop` 并设置 `out_of_bounds_policy="pad"`
+  * **不支持 rect 模式** ：DALI 流水线输出固定尺寸（例如 640×640）。不支持生成可变尺寸输出（例如 384×640）的 `auto=True` rect 模式。请注意，虽然 [TensorRT](/zh/integrations/tensorrt) 支持动态输入形状，但固定尺寸的 DALI 流水线与固定尺寸的引擎搭配使用时，能获得更高的吞吐量
+  * **Memory with multiple instances** : Using `instance_group` with `count` > 1 in Triton can cause high memory usage. Use the default instance group for the DALI model
+
+
+
+## Link to this section常见问题解答#
+
+### Link to this sectionDALI 预处理与 CPU 预处理速度相比如何？#
+
+其优势取决于你的流水线。当 [TensorRT](/zh/integrations/tensorrt) 的 GPU 推理已经很快时，2-10ms 的 CPU 预处理可能成为主要瓶颈。DALI 通过在 GPU 上运行预处理消除了这一瓶颈。对于高分辨率输入（1080p、4K）、大[批次大小](https://www.ultralytics.com/glossary/batch-size)以及每个 GPU 配置 CPU 核心数有限的系统，性能提升最为显著。
+
+### Link to this section我可以将 DALI 与 PyTorch 模型（不仅仅是 TensorRT）一起使用吗？#
+
+可以。使用 `DALIGenericIterator` 获取预处理后的 `torch.Tensor` 输出，然后将其传递给 `model.predict()`。然而，对于 [TensorRT](/zh/integrations/tensorrt) 模型，由于推理已经非常快且 CPU 预处理成为瓶颈，DALI 的性能提升效果最为明显。
+
+### Link to this section在填充方面，`fn.pad` 和 `fn.crop` 有什么区别？#
+
+`fn.pad` adds padding only to the **right and bottom** edges. `fn.crop` with `out_of_bounds_policy="pad"` centers the image and adds padding symmetrically on all sides, matching Ultralytics `LetterBox(center=True)` behavior.
+
+### Link to this sectionDALI 产生的处理结果与 CPU 预处理像素完全一致吗？#
+
+Nearly identical. Set `antialias=False` in `fn.resize` to match OpenCV's `cv2.INTER_LINEAR`. Minor floating-point differences (< 0.001) may occur due to GPU vs CPU arithmetic, but these have no measurable impact on detection [accuracy](https://www.ultralytics.com/glossary/accuracy).
+
+### Link to this section可以将 CV-CUDA 作为 DALI 的替代方案吗？#
+
+[CV-CUDA](https://github.com/CVCUDA/CV-CUDA) 是另一种用于 GPU 加速视觉处理的 NVIDIA 库。它提供算子级控制（类似于 [OpenCV](https://www.ultralytics.com/glossary/opencv)，但在 GPU 上运行），而不是 DALI 的流水线方法。CV-CUDA 的 `cvcuda.copymakeborder()` 支持显式的各边填充，使居中 letterbox 变得简单。建议在流水线工作流（特别是配合 [Triton](/zh/guides/triton-inference-server)）中使用 DALI，并在需要自定义推理代码进行细粒度算子级控制时选择 CV-CUDA。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/nvidia-dali.md)
+
+[RAraimbekovm2](https://github.com/raimbekovm)[GLglenn-jocher1](https://github.com/glenn-jocher)[ONonuralpszr1](https://github.com/onuralpszr)
+
+已创建 上个月已更新 昨天
+
+## 评论
+
+本页内容
+
+使用 AI 探索

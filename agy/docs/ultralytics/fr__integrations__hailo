@@ -1,0 +1,602 @@
+---
+source_url: https://docs.ultralytics.com/fr/integrations/hailo
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/hailo.md)
+
+# Link to this sectionExportation Hailo pour les modèles YOLO d'Ultralytics#
+
+Pas un format d'exportation direct d'Ultralytics
+
+Le format HEF de Hailo **n'est pas officiellement pris en charge** en tant que cible directe de `model.export(format="hailo")` dans Ultralytics. Le flux de travail ci-dessous exporte d'abord vers ONNX, puis utilise la chaîne d'outils externe Dataflow Compiler de Hailo pour produire un fichier `.hef`. Pour obtenir un meilleur rapport performance par watt que les anciens déploiements Hailo HEF, utilise plutôt les nouveaux formats d'exportation directs d'Ultralytics tels que [Axelera AI](/fr/integrations/axelera) ou [DeepX](/fr/integrations/deepx).
+
+La chaîne d'outils [Hailo](https://hailo.ai/) utilise des fichiers HEF pour les plateformes embarquées, y compris le [Raspberry Pi AI Kit](https://www.raspberrypi.com/products/ai-kit/) et le [AI HAT+](https://www.raspberrypi.com/documentation/accessories/ai-hat-plus.html), les caméras industrielles, les passerelles de périphérie et les PC IA.
+
+Ce guide détaille l'exportation des modèles de détection [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) vers le format **HEF (Hailo Executable Format)** de Hailo en utilisant le SDK **Hailo Dataflow Compiler (DFC)**. Le flux de travail part d'un modèle YOLO `.pt`, exporte vers [ONNX](/fr/integrations/onnx), compile avec les outils Hailo et produit un fichier `.hef` prêt pour les accélérateurs Hailo-8, Hailo-8L et Hailo-15.
+
+## Link to this sectionQuand utiliser Hailo HEF#
+
+Le HEF est l'artefact compilé consommé par HailoRT sur les appareils cibles Hailo. N'utilise ce guide que si ton matériel de déploiement nécessite spécifiquement Hailo HEF. Si tu es encore en train de choisir ton matériel de périphérie ou tes cibles d'exportation, commence par les nouveaux formats d'exportation directs d'Ultralytics tels que [Axelera AI](/fr/integrations/axelera) ou [DeepX](/fr/integrations/deepx), qui offrent un flux de travail `model.export(...)` pris en charge et de meilleures options de performance par watt que les anciens déploiements Hailo.
+
+Le rôle du HEF dans le déploiement est similaire à celui de formats spécifiques au matériel tels que [RKNN](/fr/integrations/rockchip-rknn) pour les NPU Rockchip, [IMX500](/fr/integrations/sony-imx500) pour les caméras IA Raspberry Pi, et [Qualcomm QNN](/fr/integrations/qnn) pour les NPU Snapdragon, mais il n'est actuellement pas généré directement par Ultralytics.
+
+Ce flux de travail est pertinent quand tu as besoin de :
+
+  * **Compatibilité avec Raspberry Pi AI Kit** : Hailo-8L est utilisé dans le Raspberry Pi AI Kit et le AI HAT+ officiels.
+  * **Post-traitement HailoRT** : HailoRT peut inclure la [non-maximum suppression](https://www.ultralytics.com/glossary/non-maximum-suppression-nms) YOLO dans le pipeline d'inférence compilé.
+  * **Compilation INT8** : Le Hailo DFC quantifie le modèle avec des images de calibration représentatives pour produire un graphe INT8 pour le matériel Hailo. Apprends-en plus sur la [quantification de modèle](https://www.ultralytics.com/glossary/model-quantization).
+
+
+
+## Link to this sectionFormat d'exportation Hailo HEF#
+
+Le HEF est un exécutable spécifique au matériel généré par le Hailo Dataflow Compiler. Il contient le graphe du modèle quantifié, l'allocation mémoire, l'ordonnancement et un post-traitement optionnel configuré pour une architecture Hailo cible. Contrairement aux formats standard du [mode Export](/fr/modes/export) de YOLO qui sont produits directement par `model.export(format=...)`, la compilation HEF utilise actuellement un flux en deux étapes :
+
+  1. Exporter YOLO vers [ONNX](/fr/integrations/onnx) avec Ultralytics.
+  2. Utiliser les outils Hailo DFC pour analyser, optimiser, quantifier et compiler le modèle ONNX en HEF.
+
+
+
+Le flux de travail complet se décompose dans le pipeline suivant :
+    
+    
+    YOLO (.pt) -> ONNX -> HAR (parse) -> HAR (optimize/quantize) -> HEF (compile)
+
+  1. **Exporter vers ONNX** en utilisant le [mode Export](/fr/modes/export) d'Ultralytics
+  2. **Analyser** le modèle ONNX dans le format intermédiaire HAR de Hailo
+  3. **Charger un script de modèle** (`.alls`) avec des directives de normalisation et de post-traitement
+  4. **Calibrer et quantifier** en utilisant des images représentatives
+  5. **Compiler** vers un fichier HEF déployable
+
+
+
+## Link to this sectionTâches prises en charge#
+
+Ce guide se concentre sur les modèles de **détection d'objets** Ultralytics YOLO, car le script de modèle Hailo et la configuration NMS sont spécifiques à la tête de détection.
+
+Tâche| Pris en charge  
+---|---  
+[Détection d'objets](/fr/tasks/detect)| ✅ Oui  
+[Segmentation d'instance](/fr/tasks/segment)| ❌ Non  
+[Segmentation sémantique](/fr/tasks/semantic)| ❌ Non  
+[Estimation de pose](/fr/tasks/pose)| ❌ Non  
+[Détection OBB](/fr/tasks/obb)| ❌ Non  
+[Classification](/fr/tasks/classify)| ❌ Non  
+  
+Pour les déploiements de segmentation d'instance, segmentation sémantique, pose, OBB et classification, compare d'autres formats de périphérie dans le tableau du [mode Export](/fr/modes/export) ou utilise un pipeline ONNX générique si ton runtime cible prend en charge la tâche.
+
+### Link to this sectionNotes de compatibilité#
+
+La compatibilité de l'exportation Hailo dépend de la tête du modèle, de la taille de l'image d'entrée, du nombre de classes, de l'architecture Hailo, du script de modèle (`.alls`) et de la configuration NMS. Les fichiers statiques du [Hailo Model Zoo](https://github.com/hailo-ai/hailo_model_zoo) sont des références utiles, mais ils ne constituent pas des modèles universels. Par exemple, un JSON NMS créé pour un modèle YOLO11n à 80 classes COCO n'est pas correct pour un modèle personnalisé à 3 classes ou pour un `imgsz` fixe différent.
+
+Portée| Support attendu| Notes  
+---|---|---  
+Détection YOLOv8 / YOLO11, modèles standards| ✅ Bon| Tête de détection découplée partagée ; `.alls`, nœuds finaux et configuration NMS doivent toujours correspondre au graphe exporté et à `imgsz` fixe.  
+Détection personnalisée YOLOv8 / YOLO11| ✅ Possible| Nécessite une configuration NMS par modèle générée à partir du nombre de classes, des strides et de la disposition de la tête de détection ; le JSON statique du Model Zoo ne correspondra pas.  
+Détection YOLOv9| ⚠️ À valider| Modèle de tête de détection similaire, mais la compilation et l'analyse de sortie doivent être testées avant de le considérer comme pris en charge.  
+Détection de bout en bout YOLOv10 / YOLO26| ❌ Non supporté| Les exportations de bout en bout / sans NMS ne correspondent pas au chemin de post-traitement NMS de Hailo ; utilise une tête de détection traditionnelle si tu effectues des tests manuels.  
+Tailles d'image dynamiques ou arbitraires| ❌ Non supporté| La compilation Hailo utilise une forme d'entrée fixe ; `.alls` et les paramètres NMS doivent correspondre au `imgsz` exporté.  
+  
+## Link to this sectionInstallation#
+
+### Link to this sectionÉtape 1 : Installer Ultralytics#
+    
+    
+    pip install ultralytics
+
+### Link to this sectionÉtape 2 : Installer le SDK Hailo DFC#
+
+Le Hailo DFC est requis pour l'analyse, l'optimisation et la compilation. Télécharge le fichier Python wheel depuis la [Hailo Developer Zone](https://hailo.ai/developer-zone/) (inscription gratuite requise) et installe-le :
+    
+    
+    pip install /path/to/hailo_sdk_client-*.whl
+
+Remarque
+
+Le SDK Hailo DFC nécessite une machine **Linux x86_64**. L'exportation et la compilation ne peuvent pas être effectuées sur des appareils ARM tels que Raspberry Pi. Copie le fichier `.hef` résultant sur ton appareil alimenté par Hailo pour le déploiement avec HailoRT.
+
+## Link to this sectionExemple d'exportation HEF pour YOLO11n#
+
+Le script ci-dessous compile un modèle de détection YOLO11n de `.pt` à `.hef` avec une taille d'entrée fixe de 640 pixels. Il exporte vers ONNX en utilisant Ultralytics, puis compile avec Hailo DFC en utilisant COCO128 comme petit jeu de données de calibration.
+
+Avant d'exécuter le script, télécharge le fichier de configuration NMS YOLO11n correspondant depuis le [Hailo Model Zoo](https://github.com/hailo-ai/hailo_model_zoo) ou crée ton propre JSON NMS Hailo pour le modèle. Réutilise ce script comme point de départ connu pour YOLO11n ; les modèles personnalisés nécessitent des nœuds finaux correspondants, des directives `.alls` et des paramètres NMS.
+
+Pipeline complet
+    
+    
+    import random
+    
+    import numpy as np
+    from hailo_sdk_client import ClientRunner
+    from PIL import Image
+    
+    from ultralytics import YOLO
+    from ultralytics.data.utils import check_det_dataset
+    from ultralytics.utils import DATASETS_DIR
+    
+    # Configuration
+    MODEL = "yolo11n"
+    HW_ARCH = "hailo8"  # hailo8 | hailo8l | hailo15h
+    IMGSZ = 640
+    CALIB_IMAGES = 128
+    NMS_CONFIG = "yolo11n_nms_config.json"  # Download or generate for your exact model.
+    
+    # YOLO11 detection head end nodes. See "Supported Models and End Nodes" for YOLOv8 and other families.
+    END_NODES = [
+        "/model.23/cv2.0/cv2.0.2/Conv",
+        "/model.23/cv3.0/cv3.0.2/Conv",
+        "/model.23/cv2.1/cv2.1.2/Conv",
+        "/model.23/cv3.1/cv3.1.2/Conv",
+        "/model.23/cv2.2/cv2.2.2/Conv",
+        "/model.23/cv3.2/cv3.2.2/Conv",
+    ]
+    
+    # Step 1: Export to ONNX
+    model = YOLO(f"{MODEL}.pt")
+    model.export(format="onnx", imgsz=IMGSZ, opset=11)  # creates an ONNX file named after MODEL
+    
+    # Step 2: Parse ONNX with Hailo DFC
+    # The DFC prints the detected end nodes after parsing; use them if unsure.
+    runner = ClientRunner(hw_arch=HW_ARCH)
+    runner.translate_onnx_model(f"{MODEL}.onnx", end_node_names=END_NODES)
+    
+    # Step 3: Load model script (normalization + HailoRT NMS)
+    # The conv layer names are generated by DFC and can change for other model sizes/families.
+    alls = (
+        "normalization1 = normalization([0.0, 0.0, 0.0], [255.0, 255.0, 255.0])\n"
+        "change_output_activation(conv54, sigmoid)\n"
+        "change_output_activation(conv65, sigmoid)\n"
+        "change_output_activation(conv80, sigmoid)\n"
+        f'nms_postprocess("{NMS_CONFIG}", meta_arch=yolov8, engine=cpu)\n'
+        "allocator_param(width_splitter_defuse=disabled)"
+    )
+    runner.load_model_script(alls)
+    
+    # Step 4: Build calibration dataset (auto-downloads COCO128)
+    check_det_dataset("coco128.yaml")
+    calib_dir = DATASETS_DIR / "coco128" / "images" / "train2017"
+    image_files = list(calib_dir.glob("*.jpg")) + list(calib_dir.glob("*.png"))
+    if not image_files:
+        raise FileNotFoundError(f"No calibration images found in {calib_dir}")
+    
+    calibset = np.zeros((CALIB_IMAGES, IMGSZ, IMGSZ, 3), dtype=np.float32)
+    for i in range(CALIB_IMAGES):
+        img = Image.open(random.choice(image_files)).convert("RGB").resize((IMGSZ, IMGSZ))
+        calibset[i] = np.array(img, dtype=np.float32)
+    
+    # Step 5: Optimize and quantize
+    runner.optimize(calibset)
+    runner.save_har(f"{MODEL}.o.har")  # optional intermediate HAR
+    
+    # Step 6: Compile to HEF
+    hef = runner.compile()
+    with open(f"{MODEL}.hef", "wb") as f:
+        f.write(hef)
+    
+    print(f"Compiled HEF saved to: {MODEL}.hef")
+
+Le fichier HEF résultant, tel que `yolo11n.hef`, est prêt à être déployé sur un appareil Hailo compatible. Si tu compiles pour le Raspberry Pi AI Kit, règle `HW_ARCH = "hailo8l"` avant d'exécuter l'étape de compilation.
+
+## Link to this sectionDécomposition étape par étape#
+
+### Link to this sectionÉtape 1 : Exporter vers ONNX#
+
+Ultralytics exporte ton modèle entraîné au format ONNX, que le Hailo DFC ingère en entrée. Règle `opset=11` pour une large compatibilité avec DFC.
+    
+    
+    from ultralytics import YOLO
+    
+    MODEL = "yolo11n"
+    model = YOLO(f"{MODEL}.pt")
+    model.export(format="onnx", imgsz=640, opset=11)
+
+### Link to this sectionÉtape 2 : Analyser le modèle ONNX#
+
+L'appel `translate_onnx_model` convertit le graphe ONNX en représentation HAR intermédiaire de Hailo. La liste `end_node_names` indique au DFC où couper le graphe avant le NMS afin que Hailo puisse attacher son propre post-traitement matériel.
+    
+    
+    from hailo_sdk_client import ClientRunner
+    
+    runner = ClientRunner(hw_arch="hailo8")
+    runner.translate_onnx_model(f"{MODEL}.onnx", end_node_names=END_NODES)
+
+Trouver les nœuds finaux
+
+Le DFC imprime une suggestion après l'analyse :
+
+`[info] In order to use HailoRT post-processing capabilities, these end node names should be used: ... `
+
+Copie ces noms de nœuds si tu n'es pas sûr de ceux à utiliser, ou si tu travailles avec une architecture personnalisée ou moins courante.
+
+### Link to this sectionÉtape 3 : Charger le script de modèle#
+
+Le script de modèle (`.alls`) configure la normalisation d'entrée, l'activation de sortie et le post-traitement NMS. Le paramètre `meta_arch=yolov8` s'applique à la fois à YOLOv8 et à YOLO11 car ils partagent la même disposition de tête de détection.
+    
+    
+    MODEL = "yolo11n"
+    NMS_CONFIG = "yolo11n_nms_config.json"
+    alls = (
+        "normalization1 = normalization([0.0, 0.0, 0.0], [255.0, 255.0, 255.0])\n"
+        "change_output_activation(conv54, sigmoid)\n"
+        "change_output_activation(conv65, sigmoid)\n"
+        "change_output_activation(conv80, sigmoid)\n"
+        f'nms_postprocess("{NMS_CONFIG}", meta_arch=yolov8, engine=cpu)\n'
+        "allocator_param(width_splitter_defuse=disabled)"
+    )
+    runner.load_model_script(alls)
+
+Remarque
+
+Les noms de couche `change_output_activation` (`conv54`, `conv65`, `conv80`) sont attribués par le DFC lors de l'analyse et sont **spécifiques au modèle**. Si tu compiles une taille ou une architecture de modèle différente, vérifie la sortie du DFC pour les noms corrects, ou utilise un fichier `.alls` prédéfini depuis le [Hailo Model Zoo](https://github.com/hailo-ai/hailo_model_zoo).
+
+Le fichier `NMS_CONFIG` est également spécifique au modèle. Utilise la configuration qui correspond à ton modèle exporté, ou pars de la configuration du [Hailo Model Zoo](https://github.com/hailo-ai/hailo_model_zoo) pour la variante YOLO la plus proche.
+
+`engine=cpu` exécute le NMS via HailoRT sur le CPU hôte. N'utilise `engine=nn_core` que pour les combinaisons modèle/script que Hailo documente comme étant prises en charge par le matériel cible et la version du SDK.
+
+Supprime la ligne `nms_postprocess` si tu préfères exécuter le NMS entièrement dans ton code d'application. Si tu fais cela, mets à jour l'analyseur d'inférence car le HEF sortira des tenseurs de tête de détection bruts au lieu de détections NMS groupées.
+
+### Link to this sectionÉtape 4 : Construire le jeu de données de calibration#
+
+La quantification INT8 nécessite un ensemble représentatif d'images. Le script ci-dessous utilise COCO128, qu'Ultralytics télécharge automatiquement via `check_det_dataset` :
+    
+    
+    from ultralytics.data.utils import check_det_dataset
+    from ultralytics.utils import DATASETS_DIR
+    
+    check_det_dataset("coco128.yaml")  # downloads to DATASETS_DIR if not present
+    calib_dir = DATASETS_DIR / "coco128" / "images" / "train2017"
+
+Astuce
+
+Utilise au moins 64 images pour la calibration. Plus d'images améliorent généralement la qualité de la quantification. Pour de meilleurs résultats, utilise des images de ton domaine de déploiement plutôt que COCO128.
+
+### Link to this sectionÉtape 5 : Optimiser et quantifier#
+    
+    
+    runner.optimize(calibset)
+    runner.save_har(f"{MODEL}.o.har")  # optional intermediate checkpoint
+
+Cette étape applique un réglage fin tenant compte de la quantification et une analyse du bruit des couches. Un GPU est fortement recommandé ; sans lui, cette étape peut prendre plusieurs heures.
+
+### Link to this sectionÉtape 6 : Compiler en HEF#
+    
+    
+    hef = runner.compile()
+    with open(f"{MODEL}.hef", "wb") as f:
+        f.write(hef)
+
+## Link to this sectionModèles pris en charge et nœuds finaux#
+
+Pour les modèles de détection, `end_node_names` identifie les sorties de la tête de détection ONNX que Hailo doit compiler avant d'attacher son post-traitement NMS. Ces noms varient selon l'architecture et peuvent changer lorsque le graphe exporté change.
+
+### Link to this sectionYOLO11 et YOLOv8#
+
+YOLO11 et YOLOv8 partagent la même tête de détection découplée. L'index de couche diffère d'un entre les deux familles :
+
+Famille de modèles| Couche de tête de détection| Modèle de nœud final  
+---|---|---  
+YOLO11 (tous)| `model.23`| `/model.23/cv2.0/cv2.0.2/Conv` (6 nœuds)  
+YOLOv8 (tous)| `model.22`| `/model.22/cv2.0/cv2.0.2/Conv` (6 nœuds)  
+  
+**Nœuds finaux YOLO11** (toutes tailles : n, s, m, l, x) :
+    
+    
+    END_NODES = [
+        "/model.23/cv2.0/cv2.0.2/Conv",
+        "/model.23/cv3.0/cv3.0.2/Conv",
+        "/model.23/cv2.1/cv2.1.2/Conv",
+        "/model.23/cv3.1/cv3.1.2/Conv",
+        "/model.23/cv2.2/cv2.2.2/Conv",
+        "/model.23/cv3.2/cv3.2.2/Conv",
+    ]
+
+**Nœuds finaux YOLOv8** (toutes tailles : n, s, m, l, x) :
+    
+    
+    END_NODES = [
+        "/model.22/cv2.0/cv2.0.2/Conv",
+        "/model.22/cv3.0/cv3.0.2/Conv",
+        "/model.22/cv2.1/cv2.1.2/Conv",
+        "/model.22/cv3.1/cv3.1.2/Conv",
+        "/model.22/cv2.2/cv2.2.2/Conv",
+        "/model.22/cv3.2/cv3.2.2/Conv",
+    ]
+
+### Link to this sectionAutres architectures#
+
+Pour d'autres architectures de détection, exécute l'étape d'analyse sans `end_node_names` en premier, lis les nœuds suggérés depuis la sortie du journal DFC, puis relance avec ces nœuds :
+    
+    
+    # First pass: let the DFC suggest end nodes
+    runner = ClientRunner(hw_arch=HW_ARCH)
+    runner.translate_onnx_model(f"{MODEL}.onnx")
+    # Check the printed log for: "[info] In order to use HailoRT post-processing..."
+
+Des scripts `.alls` prédéfinis et des fichiers de configuration NMS pour de nombreuses variantes YOLO sont disponibles dans le [Hailo Model Zoo](https://github.com/hailo-ai/hailo_model_zoo).
+
+## Link to this sectionArchitectures matérielles prises en charge#
+
+Architecture| Appareil| Calcul de crête (Spécification fournisseur)| Cas d'utilisation courant  
+---|---|---|---  
+`hailo8`| Hailo-8| 26 TOPS| Carte accélératrice Hailo  
+`hailo8l`| Hailo-8L| 13 TOPS| Kit IA Raspberry Pi  
+`hailo15h`| Hailo-15H| 20 TOPS| Appareils cibles Hailo-15  
+  
+Définis `HW_ARCH` dans le script pour correspondre à ton appareil cible avant la compilation.
+
+## Link to this sectionExécution de l'inférence sur le matériel Hailo#
+
+Une fois que tu as le fichier `.hef`, copie-le sur ton appareil équipé de Hailo et exécute l'inférence à l'aide de l'API Python **HailoRT** (package `hailo_platform`). Contrairement aux étapes d'exportation DFC, l'inférence s'exécute directement sur l'appareil en périphérie.
+
+Remarque
+
+Le code d'inférence ci-dessous s'exécute **sur l'appareil équipé de Hailo** (par exemple, Raspberry Pi + Kit IA), et non sur la machine x86 utilisée pour la compilation.
+
+### Link to this sectionÉtape 1 : Installer HailoRT sur l'appareil#
+
+Sur l'appareil cible, installe HailoRT et les liaisons Python. Pour les utilisateurs du Kit IA et de l'AI HAT+ de Raspberry Pi, le [guide officiel du logiciel IA de Raspberry Pi](https://www.raspberrypi.com/documentation/computers/ai.html) installe HailoRT, le pilote de l'appareil et les liaisons Python avec :
+    
+    
+    sudo apt install dkms
+    sudo apt install hailo-all
+
+Pour les appareils Hailo autres que Raspberry Pi, installe le package HailoRT qui correspond à ton appareil, ton pilote et ta version de SDK depuis la [zone des développeurs Hailo](https://hailo.ai/developer-zone/).
+
+Les appareils AI HAT+ 2 utilisent un package Raspberry Pi différent (`hailo-h10-all`) et un flux de travail Hailo-10H. Suis le guide logiciel IA de Raspberry Pi pour cette génération de matériel.
+
+### Link to this sectionÉtape 2 : Vérification rapide#
+
+Avant d'exécuter l'inférence Python, confirme que l'appareil Hailo est reconnu :
+    
+    
+    hailortcli fw-control identify
+
+Tu devrais voir le type d'appareil, la version du firmware et le numéro de série affichés.
+
+### Link to this sectionÉtape 3 : Exécuter l'inférence#
+
+Le script ci-dessous exécute la détection d'objets sur une image unique en utilisant le fichier HEF compilé et l'API Python `hailo_platform`. Il gère le prétraitement, l'inférence et le dessin des boîtes englobantes à partir de la sortie NMS de HailoRT.
+
+Script d'inférence
+    
+    
+    import numpy as np
+    from hailo_platform import (
+        HEF,
+        ConfigureParams,
+        FormatType,
+        HailoStreamInterface,
+        InferVStreams,
+        InputVStreamParams,
+        OutputVStreamParams,
+        VDevice,
+    )
+    from PIL import Image, ImageDraw
+    
+    # Configuration
+    MODEL = "yolo11n"
+    HEF_PATH = f"{MODEL}.hef"  # path to your compiled HEF file
+    SOURCE = "bus.jpg"  # image path
+    IMGSZ = 640
+    CONF = 0.25
+    
+    COCO_NAMES = [
+        "person",
+        "bicycle",
+        "car",
+        "motorcycle",
+        "airplane",
+        "bus",
+        "train",
+        "truck",
+        "boat",
+        "traffic light",
+        "fire hydrant",
+        "stop sign",
+        "parking meter",
+        "bench",
+        "bird",
+        "cat",
+        "dog",
+        "horse",
+        "sheep",
+        "cow",
+        "elephant",
+        "bear",
+        "zebra",
+        "giraffe",
+        "backpack",
+        "umbrella",
+        "handbag",
+        "tie",
+        "suitcase",
+        "frisbee",
+        "skis",
+        "snowboard",
+        "sports ball",
+        "kite",
+        "baseball bat",
+        "baseball glove",
+        "skateboard",
+        "surfboard",
+        "tennis racket",
+        "bottle",
+        "wine glass",
+        "cup",
+        "fork",
+        "knife",
+        "spoon",
+        "bowl",
+        "banana",
+        "apple",
+        "sandwich",
+        "orange",
+        "broccoli",
+        "carrot",
+        "hot dog",
+        "pizza",
+        "donut",
+        "cake",
+        "chair",
+        "couch",
+        "potted plant",
+        "bed",
+        "dining table",
+        "toilet",
+        "tv",
+        "laptop",
+        "mouse",
+        "remote",
+        "keyboard",
+        "cell phone",
+        "microwave",
+        "oven",
+        "toaster",
+        "sink",
+        "refrigerator",
+        "book",
+        "clock",
+        "vase",
+        "scissors",
+        "teddy bear",
+        "hair drier",
+        "toothbrush",
+    ]
+    
+    # Load HEF and connect to device
+    hef = HEF(HEF_PATH)
+    params = VDevice.create_params()
+    target = VDevice(params)
+    
+    configure_params = ConfigureParams.create_from_hef(hef, interface=HailoStreamInterface.PCIe)
+    network_groups = target.configure(hef, configure_params)
+    network_group = network_groups[0]
+    network_group_params = network_group.create_params()
+    
+    # Setup I/O virtual streams
+    input_vstreams_params = InputVStreamParams.make(network_group, quantized=False, format_type=FormatType.FLOAT32)
+    output_vstreams_params = OutputVStreamParams.make(network_group, quantized=False, format_type=FormatType.FLOAT32)
+    
+    # Preprocess
+    orig = Image.open(SOURCE).convert("RGB")
+    ow, oh = orig.size
+    resized = orig.resize((IMGSZ, IMGSZ))
+    input_data = np.expand_dims(np.array(resized, dtype=np.float32), axis=0)  # (1,640,640,3)
+    input_name = hef.get_input_vstream_infos()[0].name
+    
+    # Inference
+    with InferVStreams(network_group, input_vstreams_params, output_vstreams_params) as pipeline:
+        with network_group.activate(network_group_params):
+            pipeline.send({input_name: input_data})
+            raw = pipeline.recv()
+    
+    # Parse HailoRT NMS output and draw results
+    # When compiled with nms_postprocess the HEF outputs detections grouped by
+    # class: shape (batch, num_classes, max_dets, 5) where 5 = [y1,x1,y2,x2,score]
+    draw = ImageDraw.Draw(orig)
+    output_key = next(iter(raw.keys()))
+    batch_dets = raw[output_key][0]  # shape: (num_classes, max_dets, 5)
+    
+    for cls_idx, cls_dets in enumerate(batch_dets):
+        for det in cls_dets:
+            score = float(det[4])
+            if score < CONF:
+                continue
+            y1, x1, y2, x2 = det[:4]
+            # Scale from model coords (0-640) back to original image size
+            x1 = int(x1 * ow / IMGSZ)
+            y1 = int(y1 * oh / IMGSZ)
+            x2 = int(x2 * ow / IMGSZ)
+            y2 = int(y2 * oh / IMGSZ)
+            label = f"{COCO_NAMES[cls_idx]} {score:.2f}"
+            draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+            draw.text((x1 + 2, y1 + 2), label, fill="red")
+    
+    orig.save("output.jpg")
+    print("Saved output.jpg")
+
+Astuce
+
+Le format de sortie de détection suppose que le HEF a été compilé avec `nms_postprocess` dans le script `.alls`. Si tu as compilé **sans** NMS, les sorties brutes sont les 6 tenseurs de tête de détection et tu dois exécuter le NMS séparément dans ton application.
+
+### Link to this sectionKit IA et AI HAT+ de Raspberry Pi#
+
+Le Kit IA de Raspberry Pi et l'AI HAT+ de 13 TOPS utilisent Hailo-8L. Pour utiliser l'un ou l'autre appareil :
+
+  1. Définit `HW_ARCH = "hailo8l"` avant de compiler ton HEF sur la machine x86.
+  2. Copie le `.hef` sur ton Raspberry Pi.
+  3. Installe HailoRT en suivant le [guide officiel du logiciel IA de Raspberry Pi](https://www.raspberrypi.com/documentation/computers/ai.html).
+  4. Exécute le script d'inférence ci-dessus.
+
+
+
+Pour l'inférence basée sur caméra sur Raspberry Pi, les [exemples Hailo de picamera2](https://github.com/raspberrypi/picamera2/tree/main/examples/hailo) fournissent des scripts prêts à l'emploi pour la détection en direct avec le module caméra. Tu peux aussi comparer les chemins de déploiement Raspberry Pi dans le [guide Coral Edge TPU sur Raspberry Pi](/fr/guides/coral-edge-tpu-on-raspberry-pi) et le [guide d'intégration Sony IMX500](/fr/integrations/sony-imx500).
+
+### Link to this sectionInférence vidéo avec TAPPAS#
+
+Pour les pipelines vidéo à haut débit, [TAPPAS](https://github.com/hailo-ai/hailo-apps-core) fournit des éléments GStreamer qui diffusent la vidéo à travers la puce Hailo en temps réel :
+    
+    
+    MODEL=yolo11n
+    gst-launch-1.0 filesrc location=video.mp4 ! decodebin ! \
+      hailonet hef-path=${MODEL}.hef ! \
+      hailofilter function-name=yolov8 ! \
+      hailooverlay ! autovideosink
+
+Consulte la [documentation TAPPAS](https://github.com/hailo-ai/hailo-apps-core) pour les options complètes de configuration de pipeline.
+
+## Link to this sectionRésumé#
+
+Ce guide a couvert le flux de travail complet pour exporter des modèles de détection Ultralytics YOLO vers le format Hailo HEF :
+
+  1. Exporter vers ONNX avec Ultralytics (`model.export(format="onnx")`).
+  2. Analyser le modèle ONNX avec le DFC Hailo et spécifier les nœuds de fin de tête de détection.
+  3. Configurer la normalisation et le NMS via un script de modèle.
+  4. Quantifier avec un ensemble de données de calibration (COCO128 via Ultralytics).
+  5. Compiler vers un fichier `.hef` prêt pour Hailo-8, Hailo-8L ou Hailo-15.
+
+
+
+Pour plus de détails, consulte la [zone des développeurs Hailo](https://hailo.ai/developer-zone/), la [documentation Hailo](https://hailo.ai/developer-zone/documentation/) et le [Hailo Model Zoo](https://github.com/hailo-ai/hailo_model_zoo). Pour d'autres cibles d'exportation Ultralytics, consulte les guides associés [ONNX](/fr/integrations/onnx), [OpenVINO](/fr/integrations/openvino), [TensorRT](/fr/integrations/tensorrt), [NCNN](/fr/integrations/ncnn), [TFLite Edge TPU](/fr/integrations/edge-tpu), [RKNN](/fr/integrations/rockchip-rknn), [Sony IMX500](/fr/integrations/sony-imx500) et [Qualcomm QNN](/fr/integrations/qnn). Pour comparer la vitesse et la précision du modèle exporté entre les formats, utilise le [mode Benchmark](/fr/modes/benchmark). Pour la liste complète des formats et options, visite la documentation du [mode Export](/fr/modes/export) et la [page du guide des intégrations](/fr/integrations).
+
+## Link to this sectionFAQ#
+
+### Link to this sectionQuels appareils Hailo sont pris en charge ?#
+
+Le DFC Hailo prend en charge Hailo-8 (`hailo8`), Hailo-8L (`hailo8l`) et Hailo-15H (`hailo15h`). Consulte le tableau Architectures matérielles prises en charge pour la valeur `HW_ARCH` correspondante.
+
+### Link to this sectionQuels modèles Ultralytics peuvent être exportés ?#
+
+Ce guide se concentre sur les modèles de détection. Consulte Tâches prises en charge pour la portée au niveau des tâches, Notes de compatibilité pour les limites de compatibilité des modèles, et Modèles pris en charge et nœuds de fin pour des exemples de nœuds de fin YOLO11 et YOLOv8.
+
+### Link to this sectionPourquoi le script de modèle utilise-t-il `meta_arch=yolov8` pour YOLO11 ?#
+
+YOLO11 utilise la même architecture de tête de détection découplée que YOLOv8. Le DFC Hailo utilise `meta_arch=yolov8` pour la configuration NMS pour les deux familles de modèles.
+
+### Link to this sectionAi-je besoin d'un GPU pour l'étape d'optimisation ?#
+
+Un GPU est fortement recommandé pour le réglage fin conscient de la quantification dans `runner.optimize()`. Sans lui, le processus fonctionne toujours mais est nettement plus lent (plusieurs heures contre environ 10 à 20 minutes avec un GPU).
+
+### Link to this sectionComment trouver les bons nœuds de fin pour mon modèle ?#
+
+Exécute `runner.translate_onnx_model(...)` sans spécifier `end_node_names`, puis utilise les nœuds de tête de détection suggérés imprimés par le DFC. Consulte Autres architectures pour l'exemple de commande.
+
+### Link to this sectionOù puis-je obtenir le SDK DFC Hailo et les fichiers de configuration NMS ?#
+
+Le roue Python du SDK DFC Hailo est disponible dans la [zone des développeurs Hailo](https://hailo.ai/developer-zone/), tandis que les scripts `.alls` prédéfinis et les fichiers de configuration NMS sont disponibles dans le [Hailo Model Zoo](https://github.com/hailo-ai/hailo_model_zoo).
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/hailo.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[AMambitious-octopus1](https://github.com/ambitious-octopus)
+
+Créé il y a 3 semainesMis à jour il y a 5 jours
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

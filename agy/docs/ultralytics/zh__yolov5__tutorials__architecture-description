@@ -1,0 +1,244 @@
+---
+source_url: https://docs.ultralytics.com/zh/yolov5/tutorials/architecture-description
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/architecture-description.md)
+
+# Link to this sectionUltralytics YOLOv5 架构#
+
+YOLOv5 (v6.0/6.1) 是由 Ultralytics 开发的一种强大的目标检测算法。本文将深入探讨 YOLOv5 的架构、[数据增强](https://www.ultralytics.com/glossary/data-augmentation)策略、训练方法和损失计算技术。全面了解这些内容将有助于你提升目标检测在监控、自动驾驶和[图像识别](https://www.ultralytics.com/glossary/image-recognition)等各个领域的实际应用水平。
+
+## Link to this section模型结构#
+
+YOLOv5 的架构由三个主要部分组成：
+
+  * **Backbone (主干网络)** ：这是网络的主体。对于 YOLOv5，主干网络采用 `CSPDarknet53` 结构设计，这是对之前版本中使用的 Darknet 架构进行的改进。
+  * **Neck (颈部网络)** ：这部分连接主干网络和头部网络。在 YOLOv5 中，使用了 `SPPF` (Spatial Pyramid Pooling - Fast) 和 `PANet` (Path Aggregation Network) 结构。
+  * **Head (头部网络)** ：这部分负责生成最终输出。YOLOv5 为此使用了 `YOLOv3 Head`。
+
+
+
+模型的结构如下图所示。模型结构的详细信息可以在 [`models/yolov5l.yaml`](https://github.com/ultralytics/yolov5/blob/master/models/yolov5l.yaml) 中找到。
+
+![显示主干、颈部和头部网络的 YOLOv5 架构](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-model-structure.avif)
+
+与前代产品相比，YOLOv5 引入了一些显著的改进：
+
+  1. 早期版本中的 `Focus` 结构被 `6x6 Conv2d` 结构所取代。这一改变提高了效率 [#4825](https://github.com/ultralytics/yolov5/issues/4825)。
+  2. `SPP` 结构被 `SPPF` 取代。这一改动在保持相同输出的同时，将处理速度提高了两倍以上。
+
+
+
+要测试 `SPP` 和 `SPPF` 的速度，可以使用以下代码：
+
+SPP vs SPPF speed profiling example (click to open)
+    
+    
+    import time
+    
+    import torch
+    import torch.nn as nn
+    
+    class SPP(nn.Module):
+        def __init__(self):
+            """Initializes an SPP module with three different sizes of max pooling layers."""
+            super().__init__()
+            self.maxpool1 = nn.MaxPool2d(5, 1, padding=2)
+            self.maxpool2 = nn.MaxPool2d(9, 1, padding=4)
+            self.maxpool3 = nn.MaxPool2d(13, 1, padding=6)
+    
+        def forward(self, x):
+            """Applies three max pooling layers on input `x` and concatenates results along channel dimension."""
+            o1 = self.maxpool1(x)
+            o2 = self.maxpool2(x)
+            o3 = self.maxpool3(x)
+            return torch.cat([x, o1, o2, o3], dim=1)
+    
+    class SPPF(nn.Module):
+        def __init__(self):
+            """Initializes an SPPF module with a specific configuration of MaxPool2d layer."""
+            super().__init__()
+            self.maxpool = nn.MaxPool2d(5, 1, padding=2)
+    
+        def forward(self, x):
+            """Applies sequential max pooling and concatenates results with input tensor."""
+            o1 = self.maxpool(x)
+            o2 = self.maxpool(o1)
+            o3 = self.maxpool(o2)
+            return torch.cat([x, o1, o2, o3], dim=1)
+    
+    def main():
+        """Compares outputs and performance of SPP and SPPF on a random tensor (8, 32, 16, 16)."""
+        input_tensor = torch.rand(8, 32, 16, 16)
+        spp = SPP()
+        sppf = SPPF()
+        output1 = spp(input_tensor)
+        output2 = sppf(input_tensor)
+    
+        print(torch.equal(output1, output2))
+    
+        t_start = time.time()
+        for _ in range(100):
+            spp(input_tensor)
+        print(f"SPP time: {time.time() - t_start}")
+    
+        t_start = time.time()
+        for _ in range(100):
+            sppf(input_tensor)
+        print(f"SPPF time: {time.time() - t_start}")
+    
+    if __name__ == "__main__":
+        main()
+
+结果：
+    
+    
+    True
+    SPP time: 0.5373051166534424
+    SPPF time: 0.20780706405639648
+
+## Link to this section数据增强技术#
+
+YOLOv5 采用各种数据增强技术来提高模型的泛化能力并减少[过拟合](https://www.ultralytics.com/glossary/overfitting)。这些技术包括：
+
+  * **Mosaic 数据增强** ：一种将四张训练图像合并为一张的图像处理技术，旨在鼓励[目标检测](https://www.ultralytics.com/glossary/object-detection)模型更好地处理各种对象比例和位移。
+
+![结合四张图像的 YOLOv5 Mosaic 数据增强](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/mosaic-augmentation.avif)
+
+  * **Copy-Paste 数据增强** ：一种创新的数据增强方法，它从图像中复制随机补丁并将其粘贴到另一张随机选择的图像上，从而有效地生成新的训练样本。
+
+![用于实例分割的 YOLOv5 Copy-Paste 数据增强](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/copy-paste.avif)
+
+  * **随机仿射变换** ：这包括对图像进行随机旋转、缩放、平移和剪切。
+
+![用于训练的 YOLOv5 随机仿射变换](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/random-affine-transformations.avif)
+
+  * **MixUp 数据增强** ：一种通过获取两张图像及其相关标签的线性组合来创建合成图像的方法。
+
+![混合两张图像的 YOLOv5 MixUp 数据增强](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/mixup.avif)
+
+  * **Albumentations** ：一个强大的图像增强库，支持多种增强技术。了解更多关于[使用 Albumentations 增强](https://www.ultralytics.com/blog/using-albumentations-augmentations-to-diversify-your-data)的信息。
+
+  * **HSV 数据增强** ：对图像的色调 (Hue)、饱和度 (Saturation) 和明度 (Value) 进行随机更改。
+
+![YOLOv5 HSV 色彩空间增强示例](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/hsv-augmentation.avif)
+
+  * **随机水平翻转** ：一种随机水平翻转图像的增强方法。
+
+![YOLOv5 随机水平翻转增强](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/random-horizontal-flip.avif)
+
+
+
+
+## Link to this section训练策略#
+
+YOLOv5 应用了多种先进的训练策略来提高模型的性能。它们包括：
+
+  * **多尺度训练** ：在训练过程中，输入图像会在其原始大小的 0.5 到 1.5 倍范围内进行随机缩放。
+  * **AutoAnchor** ：该策略可以优化先验锚框，以匹配自定义数据中真实标签框的统计特征。
+  * **预热 (Warmup) 和余弦 LR 调度器** ：一种调整[学习率](https://www.ultralytics.com/glossary/learning-rate)以提高模型性能的方法。
+  * **指数移动平均 (EMA)** ：一种使用过去步骤参数平均值来稳定训练过程并减少泛化误差的策略。
+  * **[混合精度](https://www.ultralytics.com/glossary/mixed-precision)训练**：一种以半[精度](https://www.ultralytics.com/glossary/precision)格式执行操作的方法，可减少内存使用并提高计算速度。
+  * **超参数进化** ：一种自动调整超参数以达到最佳性能的策略。了解更多关于[超参数调优](https://docs.ultralytics.com/guides/hyperparameter-tuning)的信息。
+
+
+
+## Link to this section其他功能#
+
+### Link to this section4.1 计算损失#
+
+YOLOv5 中的损失由三个单独的损失分量组合而成计算得出：
+
+  * **类别损失 (BCE Loss)** ：二元交叉熵损失，用于衡量分类任务的误差。
+  * **目标损失 (BCE Loss)** ：另一种二元交叉熵损失，用于计算在特定网格单元中是否存在目标检测的误差。
+  * **定位损失 (CIoU Loss)** ：完全 IoU 损失，用于衡量在网格单元内定位目标的误差。
+
+
+
+整体[损失函数](https://www.ultralytics.com/glossary/loss-function)表示为：
+
+![YOLOv5 总损失函数公式](https://latex.codecogs.com/svg.image?Loss=%5Clambda_1L_%7Bcls%7D+%5Clambda_2L_%7Bobj%7D+%5Clambda_3L_%7Bloc%7D)
+
+### Link to this section4.2 平衡损失#
+
+三个预测层 (`P3`、`P4`、`P5`) 的目标损失权重不同。平衡权重分别为 `[4.0, 1.0, 0.4]`。这种方法确保了不同尺度的预测能够对总损失做出适当的贡献。
+
+![YOLOv5 目标损失平衡公式](https://latex.codecogs.com/svg.image?L_%7Bobj%7D=4.0%5Ccdot&space;L_%7Bobj%7D%5E%7Bsmall%7D+1.0%5Ccdot&space;L_%7Bobj%7D%5E%7Bmedium%7D+0.4%5Ccdot&space;L_%7Bobj%7D%5E%7Blarge%7D)
+
+### Link to this section4.3 消除网格敏感性#
+
+与 YOLO 的早期版本相比，YOLOv5 架构对框预测策略进行了一些重要更改。在 YOLOv2 和 YOLOv3 中，框坐标直接使用最后一层的激活进行预测。
+
+![边界框 x 坐标预测公式](https://latex.codecogs.com/svg.image?b_x=%5Csigma\(t_x\)+c_x) ![边界框 y 坐标预测公式](https://latex.codecogs.com/svg.image?b_y=%5Csigma\(t_y\)+c_y) ![边界框宽度预测公式](https://latex.codecogs.com/svg.image?b_w=p_w%5Ccdot&space;e%5E%7Bt_w%7D) ![边界框高度预测公式](https://latex.codecogs.com/svg.image?b_h=p_h%5Ccdot&space;e%5E%7Bt_h%7D)
+
+![YOLOv5 grid computation](https://user-images.githubusercontent.com/31005897/158508027-8bf63c28-8290-467b-8a3e-4ad09235001a.png#pic_center)
+
+然而，在 YOLOv5 中，预测框坐标的公式已经更新，以减少网格敏感性并防止模型预测无界的框尺寸。
+
+计算预测[边界框](https://www.ultralytics.com/glossary/bounding-box)的修正公式如下：
+
+![YOLOv5 修正边界框 x 坐标公式](https://latex.codecogs.com/svg.image?b_x=\(2%5Ccdot%5Csigma\(t_x\)-0.5\)+c_x) ![YOLOv5 修正边界框 y 坐标公式](https://latex.codecogs.com/svg.image?b_y=\(2%5Ccdot%5Csigma\(t_y\)-0.5\)+c_y) ![YOLOv5 修正边界框宽度公式](https://latex.codecogs.com/svg.image?b_w=p_w%5Ccdot\(2%5Ccdot%5Csigma\(t_w\)\)%5E2) ![YOLOv5 修正边界框高度公式](https://latex.codecogs.com/svg.image?b_h=p_h%5Ccdot\(2%5Ccdot%5Csigma\(t_h\)\)%5E2)
+
+比较缩放前后的中心点偏移。中心点偏移范围从 (0, 1) 调整为 (-0.5, 1.5)。因此，偏移量可以轻松达到 0 或 1。
+
+![YOLOv5 grid scaling](https://user-images.githubusercontent.com/31005897/158508052-c24bc5e8-05c1-4154-ac97-2e1ec71f582e.png#pic_center)
+
+比较调整前后的高度和宽度缩放比例（相对于锚框）。原始的 yolo/darknet 框方程有一个严重的缺陷。宽度和高度是完全无界的，因为它们只是 out=exp(in)，这很危险，因为它可能导致梯度失控、不稳定、NaN 损失，并最终导致完全失去训练。请[参阅此问题](https://github.com/ultralytics/yolov5/issues/471#issuecomment-662009779)了解更多详情。
+
+![YOLOv5 unbounded scaling](https://user-images.githubusercontent.com/31005897/158508089-5ac0c7a3-6358-44b7-863e-a6e45babb842.png#pic_center)
+
+### Link to this section4.4 构建目标#
+
+YOLOv5 中的构建目标过程对于训练效率和模型[准确性](https://www.ultralytics.com/glossary/accuracy)至关重要。它涉及将真实标签框分配给输出映射中的适当网格单元，并将它们与适当的锚框进行匹配。
+
+此过程遵循以下步骤：
+
+  * 计算真实标签框尺寸与每个锚框模板尺寸的比率。
+
+
+
+![真实标签到锚框宽度比率公式](https://latex.codecogs.com/svg.image?r_w=w_%7Bgt%7D/w_%7Bat%7D)
+
+![真实标签到锚框高度比率公式](https://latex.codecogs.com/svg.image?r_h=h_%7Bgt%7D/h_%7Bat%7D)
+
+![最大宽度比率公式](https://latex.codecogs.com/svg.image?r_w%5E%7Bmax%7D=max\(r_w,1/r_w\))
+
+![最大高度比率公式](https://latex.codecogs.com/svg.image?r_h%5E%7Bmax%7D=max\(r_h,1/r_h\))
+
+![整体最大比率公式](https://latex.codecogs.com/svg.image?r%5E%7Bmax%7D=max\(r_w%5E%7Bmax%7D,r_h%5E%7Bmax%7D\))
+
+![锚框匹配阈值公式](https://latex.codecogs.com/svg.image?r%5E%7Bmax%7D%3C%7B%5Crm&space;anchor_t%7D)
+
+![YOLOv5 IoU computation](https://user-images.githubusercontent.com/31005897/158508119-fbb2e483-7b8c-4975-8e1f-f510d367f8ff.png#pic_center)
+
+  * 如果计算出的比率在阈值内，则将真实标签框与相应的锚框匹配。
+
+![YOLOv5 grid overlap](https://user-images.githubusercontent.com/31005897/158508771-b6e7cab4-8de6-47f9-9abf-cdf14c275dfe.png#pic_center)
+
+  * 将匹配的锚框分配给适当的单元格，请记住，由于修正的中心点偏移，一个真实标签框可以分配给多个锚框，因为中心点偏移范围从 (0, 1) 调整为 (-0.5, 1.5)，这使得额外的匹配成为可能。
+
+![YOLOv5 anchor selection](https://user-images.githubusercontent.com/31005897/158508139-9db4e8c2-cf96-47e0-bc80-35d11512f296.png#pic_center)
+
+通过这种方式，构建目标过程确保了每个真实标签对象在训练过程中得到正确分配和匹配，使 YOLOv5 能够更有效地学习目标检测任务。
+
+## Link to this section结论#
+
+YOLOv5 代表了实时目标检测演进中的重要一步。其架构选择、训练策略和工程改进相对于早期的 YOLO 版本提供了强大的性能和效率。
+
+YOLOv5 的主要增强功能包括使用动态架构、广泛的数据增强技术、创新的训练策略，以及在计算损失和构建目标过程中的重要调整。所有这些创新都显著提高了目标检测的准确性和效率，同时保留了 YOLO 模型标志性的高速特性。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/architecture-description.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+已创建 3天前已更新 3天前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

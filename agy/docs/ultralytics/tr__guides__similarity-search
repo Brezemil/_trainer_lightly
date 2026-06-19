@@ -1,0 +1,175 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/similarity-search
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/similarity-search.md)
+
+# Link to this sectionOpenAI CLIP ve Meta FAISS ile Anlamsal Görsel Arama Nasıl Oluşturulur#
+
+Bu rehber, [OpenAI CLIP](https://openai.com/index/clip/), [Meta FAISS](https://github.com/facebookresearch/faiss) ve [Flask](https://flask.palletsprojects.com/en/stable/) kullanarak nasıl bir **anlamsal görsel arama** motoru oluşturacağını adım adım gösteriyor. CLIP'in görsel-dil [embedding](https://developers.openai.com/api/docs/guides/embeddings) modellerini FAISS'in verimli en yakın komşu arama yöntemiyle birleştirerek, etiket veya kategori gerektirmeden doğal dildeki sorgulardan ilgili görselleri getiren bir web arayüzü oluşturabilirsin.
+
+  
+
+
+  
+**Watch:** How Similarity Search Works | Visual Search Using OpenAI CLIP, META FAISS and Ultralytics Package 🎉 
+
+![Anlamsal arama sonuçlarını gösteren Flask web sayfası](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/flask-ui.avif)
+
+Ultralytics Python paketi, bu işlem hattının tamamını iki sınıf ile sarmalar; böylece birkaç satır kodla çalışan bir arama uygulaması başlatabilir veya programatik olarak sorgular çalıştırabilirsin. Bu rehber; anlamsal aramanın neden faydalı olduğu, nasıl çalıştığı, web uygulamasının çalıştırılması, programatik olarak arama yapma ve parametrelerin yapılandırılması konularını kapsamaktadır.
+
+## Link to this sectionAnlamsal Görsel Arama Neden Kullanılır?#
+
+CLIP ve FAISS ile kendi anlamsal görsel arama sistemini oluşturmanın birçok avantajı vardır:
+
+  * **Zero-shot yetenekleri:** Veri setini eğitmen gerekmez. CLIP'in [zero-shot öğrenme](https://www.ultralytics.com/glossary/zero-shot-learning) özelliği, herhangi bir görsel koleksiyonunu serbest biçimli doğal dille sorgulamanı sağlayarak zamandan ve kaynaklardan tasarruf etmene yardımcı olur.
+  * **İnsan benzeri anlama:** Anahtar kelime aramasının aksine, CLIP anlamsal bağlamı anlar ve "doğada mutlu bir çocuk" veya "gece fütüristik bir şehir silüeti" gibi soyut, duygusal veya ilişkisel sorgulardan görseller getirebilir.
+  * **Etiket veya meta veri gerekmez:** Bu yaklaşım yalnızca ham görsellere ihtiyaç duyar. CLIP, herhangi bir manuel açıklama gerektirmeden embedding'ler üretir.
+  * **Esnek ve ölçeklenebilir arama:** FAISS, büyük veri setlerinde bile binlerce veya milyonlarca embedding üzerinde gerçek zamanlı yanıt vererek hızlı en yakın komşu araması sağlar.
+  * **Çapraz alan uygulamaları:** Kişisel bir fotoğraf arşivi, yaratıcı bir ilham aracı, ürün arama motoru veya sanat öneri sistemi geliştiriyor olsan da, aynı teknoloji yığını minimum değişiklikle uyum sağlar.
+
+
+
+## Link to this sectionAnlamsal Görsel Arama Nasıl Çalışır?#
+
+İşlem hattı, görselleri ve metni sıralanmış sonuçlara dönüştürmenin her aşamasını yöneten üç bileşeni birleştirir:
+
+  * **CLIP** , görseller için bir görme kodlayıcı (ör. ResNet veya ViT) ve dil için bir metin kodlayıcı (Transformer tabanlı) kullanarak her ikisini de aynı çok modlu embedding uzayına yansıtır. Bu, [kosinüs benzerliği](https://en.wikipedia.org/wiki/Cosine_similarity) kullanarak metin ve görseller arasında doğrudan karşılaştırma yapılmasına olanak tanır.
+  * **FAISS** (Facebook AI Similarity Search), görsel embedding'lerinin bir dizinini oluşturur ve belirli bir sorguya en yakın vektörlerin hızlı ve ölçeklenebilir şekilde getirilmesini sağlar.
+  * **Flask** , doğal dilde sorgular göndermek ve dizinden anlamsal olarak eşleşen görselleri görüntülemek için basit bir web arayüzü sunar.
+
+
+
+![OpenAI Clip görsel getirme iş akışı](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/clip-image-retrieval.avif)
+
+Hem görseller hem de metin aynı vektör uzayında yer aldığından, arama zero-shot'tır: etiketlere veya kategorilere ihtiyacın yoktur, sadece görsel verisine ve iyi bir isteme (prompt) sahip olman yeterlidir.
+
+![Meta FAISS embedding vektörleri oluşturma iş akışı](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/faiss-indexing-workflow.avif)
+
+## Link to this sectionAnlamsal Arama Web Uygulamasını Çalıştır#
+
+`SearchApp` sınıfı, tüm Flask arayüzünü başlatır. İlk çalıştırmada örnek bir görsel seti indirir, FAISS dizinini oluşturur ve bir sorgu yazıp sıralanmış sonuçları görüntüleyebileceğin bir sayfa sunar.
+
+Görsel Yolu Uyarısı
+
+Kendi görsellerini kullanıyorsan, görsel dizinine mutlaka mutlak bir yol sağladığından emin ol. Aksi takdirde, Flask'ın dosya sunma sınırlamaları nedeniyle görseller web sayfasında görünmeyebilir.
+    
+    
+    from ultralytics import solutions
+    
+    app = solutions.SearchApp(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    app.run(debug=False)  # You can also use `debug=True` argument for testing
+
+## Link to this sectionProgramatik Olarak Görsel Ara#
+
+`VisualAISearch` sınıfı, tüm arka uç işlemlerini web katmanı olmadan gerçekleştirir:
+
+  * Yerel görsellerden bir FAISS dizini yükler veya oluşturur.
+  * CLIP kullanarak görsel ve metin [embedding](https://developers.openai.com/api/docs/guides/embeddings) modellerini çıkarır.
+  * Kosinüs benzerliğini kullanarak benzerlik araması yapar.
+
+
+
+Arayıcıyı doğal dilde bir sorguyla çağırarak, benzerliğe göre sıralanmış eşleşen görsel dosya isimlerinin bir listesini alabilirsin:
+    
+    
+    from ultralytics import solutions
+    
+    searcher = solutions.VisualAISearch(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    results = searcher("a dog sitting on a bench")
+    
+    # Ranked Results:
+    #     - 000000546829.jpg | Similarity: 0.3269
+    #     - 000000549220.jpg | Similarity: 0.2899
+    #     - 000000517069.jpg | Similarity: 0.2761
+    #     - 000000029393.jpg | Similarity: 0.2742
+    #     - 000000534270.jpg | Similarity: 0.2680
+
+## Link to this sectionVisualAISearch Parametrelerini Yapılandır#
+
+Aşağıdaki tablo, `VisualAISearch` için mevcut parametreleri özetlemektedir:
+
+Argüman| Tip| Varsayılan| Açıklama  
+---|---|---|---  
+`data`| `str`| `'images'`| Benzerlik araması için kullanılan görüntü dizinine giden yol.  
+  
+Argüman| Tip| Varsayılan| Açıklama  
+---|---|---|---  
+`device`| `str`| `None`| Çıkarım için cihazı belirtir (örn. `cpu`, `cuda:0` veya `0`). Kullanıcıların model yürütme için CPU, belirli bir GPU veya diğer işlem cihazları arasında seçim yapmasına olanak tanır.  
+  
+Verilerini bulutta yönet
+
+Yerel dosyaları yönetmeden üretim ölçeğinde görsel koleksiyonlarını aramak için, CLIP ve FAISS ile dizine eklemeden önce görsellerini [Ultralytics Platformu](/tr/platform/data) üzerinde düzenleyebilir ve sürümleyebilirsin.
+
+## Link to this sectionSonuç#
+
+CLIP, FAISS ve Ultralytics Python paketiyle, sadece birkaç satır kodla, ister Flask web uygulaması olarak ister programatik bir arama arka ucu olarak sıfırdan bir anlamsal görsel arama motoru kurabilirsin. Buradan, `data` kısmını dizine eklenecek görsel dizinine yönlendir ve ardından bilgisayarlı görü iş akışlarını geliştirmek için diğer [Ultralytics Çözümlerini](/tr/solutions) keşfet.
+
+## Link to this sectionSSS#
+
+### Link to this sectionCLIP hem görselleri hem de metni nasıl anlıyor?#
+
+[CLIP](https://github.com/openai/CLIP) (Contrastive Language Image Pretraining), [OpenAI](https://openai.com/) tarafından geliştirilen ve görsel ile dilsel bilgileri birbirine bağlamayı öğrenen bir modeldir. Doğal dildeki açıklamalarla eşleştirilmiş devasa bir görsel veri seti üzerinde eğitilmiştir. Bu eğitim, hem görselleri hem de metni paylaşılan bir embedding uzayına eşlemesini sağlar, böylece bunları vektör benzerliği kullanarak doğrudan karşılaştırabilirsin.
+
+### Link to this sectionCLIP neden yapay zeka görevleri için bu kadar güçlü kabul ediliyor?#
+
+CLIP'i öne çıkaran şey genelleme yeteneğidir. Sadece belirli etiketler veya görevler için eğitilmek yerine, doğal dilin kendisinden öğrenir. Bu, "jet ski süren bir adam" veya "sürreal bir rüya manzarası" gibi esnek sorguları işlemesine olanak tanır ve yeniden eğitim gerektirmeden sınıflandırmadan yaratıcı anlamsal aramaya kadar her şey için kullanışlı olmasını sağlar.
+
+### Link to this sectionBu projede (Anlamsal Arama) FAISS tam olarak ne yapıyor?#
+
+[FAISS](https://engineering.fb.com/2017/03/29/data-infrastructure/faiss-a-library-for-efficient-similarity-search/) (Facebook AI Similarity Search), yüksek boyutlu vektörler arasında çok verimli bir şekilde arama yapmana yardımcı olan bir araç takımıdır. CLIP görsellerini embedding'lere dönüştürdükten sonra, FAISS bir metin sorgusuna en yakın eşleşmeleri bulmayı hızlı ve kolay hale getirir; gerçek zamanlı görsel getirme için mükemmeldir.
+
+### Link to this sectionCLIP ve FAISS, OpenAI ve Meta'dan geliyorsa neden [Ultralytics](https://www.ultralytics.com/) [Python paketini](https://github.com/ultralytics/ultralytics/) kullanmalıyım?#
+
+CLIP ve FAISS sırasıyla OpenAI ve Meta tarafından geliştirilmiş olsa da, [Ultralytics Python paketi](https://pypi.org/project/ultralytics/), her ikisini de sadece birkaç satır kodla çalışan eksiksiz bir anlamsal görsel arama hattı içinde sarmalar:
+    
+    
+    from ultralytics import solutions
+    
+    searcher = solutions.VisualAISearch(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    results = searcher("a dog sitting on a bench")
+
+Bu üst düzey uygulama şunları yönetir:
+
+  * CLIP tabanlı görsel ve metin embedding üretimi.
+  * FAISS dizini oluşturma ve yönetimi.
+  * Kosinüs benzerliği ile verimli anlamsal arama.
+  * Dizin tabanlı görsel yükleme ve [görselleştirme](https://www.ultralytics.com/glossary/data-visualization).
+
+
+
+### Link to this sectionBu uygulamanın ön yüzünü özelleştirebilir miyim?#
+
+Evet. Mevcut kurulum basit bir HTML ön yüzüyle Flask kullanır, ancak bunu kendi HTML'inle değiştirebilir veya React, Vue ya da başka bir ön yüz çerçevesiyle daha dinamik bir kullanıcı arayüzü oluşturabilirsin. Flask, özel arayüzün için arka uç API'si olarak görev yapabilir.
+
+### Link to this sectionSabit görseller yerine videolar üzerinde arama yapmak mümkün mü?#
+
+Doğrudan değil. Basit bir geçici çözüm, videolarından tek tek kareleri çıkarmak (ör. saniyede bir kare), bunları bağımsız görseller olarak ele almak ve bunları sisteme beslemektir. Bu sayede arama motoru, videolarındaki görsel anları anlamsal olarak dizine ekleyebilir.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/similarity-search.md)
+
+[GLglenn-jocher4](https://github.com/glenn-jocher)[RIRizwanMunawar3](https://github.com/RizwanMunawar)[RAraimbekovm1](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)
+
+Oluşturulma 4 May 2025Güncellenme 6 gün önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

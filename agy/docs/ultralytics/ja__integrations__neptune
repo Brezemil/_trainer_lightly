@@ -1,0 +1,166 @@
+---
+source_url: https://docs.ultralytics.com/ja/integrations/neptune
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/neptune.md)
+
+Neptuneの買収とSaaSの提供終了について
+
+NeptuneはOpenAIに買収される契約を締結し、2026年3月4日をもってホスト型（SaaS）サービスの提供を終了することになりました。[公式発表](https://neptune.ai/blog/we-are-joining-openai)を確認し、それに応じて移行やエクスポートの計画を立ててください。
+
+# Link to this sectionNeptuneを使用した実験トラッキング#
+
+[Neptune](https://neptune.ai/)は、多くの実験を行うチーム向けに構築されたMLOps用のメタデータストアです。モデル構築に関するあらゆるメタデータを記録、保存、表示、整理、比較、クエリするための単一の場所を提供します。
+
+Ultralytics YOLO26はNeptuneと統合されており、[実験トラッキング](https://www.ultralytics.com/glossary/experiment-tracking)を効率化します。この統合により、カスタムのロギングコードを書くことなく、トレーニングメトリクスの自動記録、モデル予測の可視化、モデルアーティファクトの保存が可能になります。
+
+![Neptune.ai ML experiment tracking dashboard](https://docs.neptune.ai/img/app/app_preview.png)
+
+## Link to this section主な特徴#
+
+  * **自動ロギング** : ボックス損失、分類損失、[mAP](https://www.ultralytics.com/glossary/mean-average-precision-map)などの主要なトレーニングメトリクスを自動的に記録します。
+  * **画像可視化** : トレーニングモザイクや検証予測をNeptuneダッシュボードで直接確認できます。
+  * **モデルチェックポイント** : トレーニング終了時に、学習済みモデルの重み（`best.pt`）を自動的にアップロードしてバージョン管理します。
+  * **ハイパーパラメータトラッキング** : すべての構成パラメータを記録し、実験の完全な再現性を確保します。
+  * **インタラクティブなプロット** : 混同行列や精度-再現率曲線（Precision-Recall curves）を可視化し、モデルのパフォーマンスを分析します。
+
+
+
+## Link to this sectionインストール#
+
+To use Neptune with Ultralytics, you will need to install the `neptune` client package along with `ultralytics`.
+
+インストール
+    
+    
+    # Install the required packages
+    pip install ultralytics neptune
+    
+    # Enable Neptune integration in Ultralytics settings
+    yolo settings neptune=True
+
+## Link to this section設定#
+
+トレーニングを開始する前に、ローカル環境をNeptuneプロジェクトに接続する必要があります。Neptuneダッシュボードから**API Token** と**Project Name** を取得してください。
+
+### Link to this section認証情報を取得する#
+
+  1. [Neptune.ai](https://neptune.ai/)にログインします。
+  2. 新しいプロジェクトを作成する（または既存のプロジェクトを選択する）。
+  3. ユーザーメニューに移動し、**API Token** を取得します。
+
+
+
+### Link to this section環境変数を設定する#
+
+The securest way to handle credentials is via environment variables. Note that the Ultralytics Neptune callback reads the YOLO `project` argument and does not use `NEPTUNE_PROJECT`. Pass the full Neptune slug (e.g., `workspace/name`) via `project=` in your training command; otherwise Neptune will try to use the literal default `"Ultralytics"` and the run will fail.
+    
+    
+    export NEPTUNE_API_TOKEN="your_long_api_token_here" # required
+
+## Link to this section使用方法#
+
+設定が完了したら、YOLO26モデルのトレーニングを開始できます。`neptune`パッケージがインストールされており、設定で統合が有効になっていれば、Neptune統合は自動的に機能します。
+
+### Link to this sectionトレーニング例#
+
+Neptuneロギングを使用したYOLO26のトレーニング
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Train the model
+    # Pass the Neptune project slug as the 'project' argument (workspace/name)
+    results = model.train(data="coco8.yaml", epochs=10, project="my-workspace/my-project", name="experiment-1")
+
+## Link to this section統合の仕組み#
+
+以下の図は、UltralyticsトレーニングパイプラインがNeptuneとどのように連携し、様々なアーティファクトやメトリクスを記録するかを示しています。
+    
+    
+    graph LR
+        A[YOLO Training Loop] --> B{Neptune Callback}
+        B -->|Log Scalars| C[Loss, mAP, LR]
+        B -->|Log Images| D[Mosaics, Preds]
+        B -->|Log Artifacts| E[Model Weights]
+        B -->|Log Metadata| F[Hyperparameters]
+    
+        C --> G[Neptune Server]
+        D --> G
+        E --> G
+        F --> G
+    
+        G --> H[Neptune Web Dashboard]
+
+### Link to this section何が記録されるのか？#
+
+トレーニングコマンドを実行すると、Neptune統合は実行時に以下のデータ構造を自動的にキャプチャします。
+
+  1. **Configuration/Hyperparameters** : すべてのトレーニング引数（エポック数、lr0、オプティマイザなど）が「Configuration」セクションの下に記録されます。
+  2. **Configuration/Model** : モデルのアーキテクチャと定義。
+  3. **Metrics** : 
+     * **Train** : `box_loss`、`cls_loss`、`dfl_loss`、`lr`（学習率）。
+     * **Metrics** : `precision`、`recall`、`mAP50`、`mAP50-95`。
+  4. **Images** : 
+     * `Mosaic`: データ拡張を示すトレーニングバッチ。
+     * `Validation`: 検証データ上の正解ラベルとモデル予測。
+     * `Plots`: 混同行列、精度-再現率曲線。
+  5. **Weights** : 最終的な学習済みモデル（`best.pt`）がNeptune実行内の`weights`フォルダにアップロードされます。
+
+
+
+## Link to this section高度な利用方法#
+
+### Link to this section実行の整理#
+
+標準のUltralyticsの`project`および`name`引数を使用して、Neptune内の実行を整理できます。
+
+  * `project`: Neptuneプロジェクトスラッグ（`workspace/name`）である必要があります。これがコールバックによって`neptune.init_run`に渡されます。
+  * `name`: 特定の実行の識別子として機能します。
+
+
+
+### Link to this sectionカスタムロギング#
+
+自動ロギングに加えて追加のカスタムメトリクスを記録する必要がある場合は、Neptuneの実行インスタンスにアクセスできます。Ultralyticsの統合は内部で実行ライフサイクルを処理するため、特定の実行オブジェクトにアクセスするには、トレーナーのロジックを変更するか、カスタムコールバックを作成する必要があることに注意してください。
+
+## Link to this sectionFAQ#
+
+### Link to this sectionNeptuneロギングを無効にするにはどうすればよいですか？#
+
+`neptune`をインストール済みで、特定のセッションまたは全体でロギングを無効にしたい場合は、YOLOの設定を変更してください。
+    
+    
+    # Disable Neptune integration
+    yolo settings neptune=False
+
+### Link to this section画像がアップロードされません。何が問題でしょうか？#
+
+ネットワークがNeptuneのサーバーへの接続を許可していることを確認してください。また、画像のロギングは通常、特定のタイミング（エポックの終了時やトレーニング終了時など）に行われます。`Ctrl+C`を使用してトレーニングを早期に中断した場合、混同行列や最良のモデルの重みなどの最終的なアーティファクトがアップロードされない可能性があります。
+
+### Link to this section特定のNeptune実行IDに記録できますか？#
+
+現在の統合では、トレーニングセッションごとに新しい実行が自動的に作成されます。既存の実行への記録を再開するには、通常、Pythonコードで手動でNeptuneの初期化を行う必要があり、これは自動統合の範囲外です。ただし、Ultralyticsはローカルでのトレーニング再開をサポートしており、再開されたエポックを追跡するためにNeptuneで新しい実行が作成されます。
+
+### Link to this sectionNeptuneでモデルの重みはどこで見つけられますか？#
+
+In your Neptune dashboard, navigate to the **Artifacts** or **All Metadata** section. You will find a `weights` folder containing your `best.pt` file, which you can download for deployment.
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/neptune.md)
+
+[GLglenn-jocher3](https://github.com/glenn-jocher)[RAraimbekovm1](https://github.com/raimbekovm)
+
+作成日 2025年12月4日更新日 2 か月前
+
+## コメント
+
+このページの内容
+
+AIで探索

@@ -1,0 +1,374 @@
+---
+source_url: https://docs.ultralytics.com/ru/guides/deepstream-nvidia-jetson
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/deepstream-nvidia-jetson.md)
+
+# Link to this sectionUltralytics YOLO26 на NVIDIA Jetson с использованием DeepStream SDK и TensorRT#
+
+  
+
+
+  
+**Watch:** How to use Ultralytics YOLO26 models with NVIDIA Deepstream on Jetson Orin NX 🚀 
+
+Это полное руководство содержит подробную пошаговую инструкцию по развертыванию Ultralytics YOLO26 на устройствах [NVIDIA Jetson](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/) с использованием DeepStream SDK и TensorRT. Здесь мы используем TensorRT, чтобы максимизировать производительность вывода на платформе Jetson.
+
+![NVIDIA DeepStream SDK on Jetson platform](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/deepstream-nvidia-jetson.avif)
+
+Примечание
+
+Это руководство было протестировано на [NVIDIA Jetson Orin Nano Super Developer Kit](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/nano-super-developer-kit) с последней стабильной версией JetPack [JP6.1](https://developer.nvidia.com/embedded/jetpack-sdk-61), [Seeed Studio reComputer J4012](https://www.seeedstudio.com/reComputer-J4012-p-5586.html) на базе NVIDIA Jetson Orin NX 16GB с версией JetPack [JP5.1.3](https://developer.nvidia.com/embedded/jetpack-sdk-513) и [Seeed Studio reComputer J1020 v2](https://www.seeedstudio.com/reComputer-J1020-v2-p-5498.html) на базе NVIDIA Jetson Nano 4GB с версией JetPack [JP4.6.4](https://developer.nvidia.com/jetpack-sdk-464). Ожидается, что оно будет работать на всей линейке оборудования NVIDIA Jetson, включая последние и устаревшие модели.
+
+## Link to this sectionЧто такое NVIDIA DeepStream?#
+
+[NVIDIA's DeepStream SDK](https://developer.nvidia.com/deepstream-sdk) is a complete streaming analytics toolkit based on GStreamer for AI-based multi-sensor processing, video, audio, and image understanding. It's ideal for vision AI developers, software partners, startups, and OEMs building IVA (Intelligent Video Analytics) apps and services. You can now create stream-processing pipelines that incorporate [neural networks](https://www.ultralytics.com/glossary/neural-network-nn) and other complex processing tasks like tracking, video encoding/decoding, and video rendering. These pipelines enable real-time analytics on video, image, and sensor data. DeepStream's multi-platform support gives you a faster, easier way to develop vision AI applications and services on-premise, at the edge, and in the cloud.
+
+## Link to this sectionПредварительные требования#
+
+Перед тем как начать следовать этому руководству:
+
+  * Посети нашу документацию, [Краткое руководство: NVIDIA Jetson с Ultralytics YOLO26](/ru/guides/nvidia-jetson), чтобы настроить свое устройство NVIDIA Jetson для работы с Ultralytics YOLO26
+  * Установи [DeepStream SDK](https://developer.nvidia.com/deepstream-getting-started) в соответствии с версией JetPack 
+    * Для JetPack 4.6.4 установи [DeepStream 6.0.1](https://archive.docs.nvidia.com/metropolis/deepstream/6.0.1/dev-guide/text/DS_Quickstart.html)
+    * Для JetPack 5.1.3 установи [DeepStream 6.3](https://archive.docs.nvidia.com/metropolis/deepstream/6.3/dev-guide/text/DS_Quickstart.html)
+    * Для JetPack 6.1 установи [DeepStream 7.1](https://docs.nvidia.com/metropolis/deepstream/7.1/text/DS_Overview.html)
+    * Для JetPack 7.1 установи [DeepStream 9.0](https://docs.nvidia.com/metropolis/deepstream/9.0/text/DS_Overview.html)
+
+
+
+Совет
+
+В этом руководстве мы использовали метод установки DeepStream SDK на устройство Jetson с помощью пакета Debian. Ты также можешь посетить страницу [DeepStream SDK on Jetson (Archived)](https://developer.nvidia.com/embedded/deepstream-on-jetson-downloads-archived) для доступа к старым версиям DeepStream.
+
+## Link to this sectionКонфигурация DeepStream для YOLO26#
+
+Здесь мы используем репозиторий [marcoslucianops/DeepStream-Yolo](https://github.com/marcoslucianops/DeepStream-Yolo) на GitHub, который включает поддержку NVIDIA DeepStream SDK для моделей YOLO. Мы ценим усилия marcoslucianops за его вклад!
+
+  1. Установи Ultralytics с необходимыми зависимостями
+         
+         cd ~
+         pip install -U pip
+         git clone https://github.com/ultralytics/ultralytics
+         cd ultralytics
+         pip install -e ".[export]" onnxslim
+
+  2. Клонируй репозиторий DeepStream-Yolo
+         
+         cd ~
+         git clone https://github.com/marcoslucianops/DeepStream-Yolo
+
+  3. Скопируй файл `export_yolo26.py` из директории `DeepStream-Yolo/utils` в папку `ultralytics`
+         
+         cp ~/DeepStream-Yolo/utils/export_yolo26.py ~/ultralytics
+         cd ultralytics
+
+  4. Скачай модель детектирования Ultralytics YOLO26 (.pt) на свой выбор из [релизов YOLO26](https://github.com/ultralytics/assets/releases). Здесь мы используем [yolo26s.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt).
+         
+         wget https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt
+
+
+
+
+Примечание
+
+Ты также можешь использовать [собственную обученную модель YOLO26](https://docs.ultralytics.com/modes/train).
+
+  5. Конвертируй модель в ONNX
+         
+         python3 export_yolo26.py -w yolo26s.pt
+
+
+
+
+Передай приведенные ниже аргументы в команду выше
+
+Для DeepStream 5.1 удали аргумент `--dynamic` и используй `opset` 12 или ниже. По умолчанию `opset` равен 17.
+    
+    
+    --opset 12
+
+Чтобы изменить размер вывода (по умолчанию: 640)
+    
+    
+    -s SIZE
+    --size SIZE
+    -s HEIGHT WIDTH
+    --size HEIGHT WIDTH
+
+Пример для 1280:
+    
+    
+    -s 1280
+    or
+    -s 1280 1280
+
+Чтобы упростить модель ONNX (DeepStream >= 6.0)
+    
+    
+    --simplify
+
+Чтобы использовать динамический размер батча (DeepStream >= 6.1)
+    
+    
+    --dynamic
+
+Чтобы использовать статический размер батча (пример для размера батча = 4)
+    
+    
+    --batch 4
+
+  6. Скопируй сгенерированный файл модели `.onnx` и файл `labels.txt` в папку `DeepStream-Yolo`
+         
+         cp yolo26s.pt.onnx labels.txt ~/DeepStream-Yolo
+         cd ~/DeepStream-Yolo
+
+  7. Установи версию CUDA в соответствии с установленной версией JetPack
+
+Для JetPack 4.6.4:
+         
+         export CUDA_VER=10.2
+
+Для JetPack 5.1.3:
+         
+         export CUDA_VER=11.4
+
+Для JetPack 6.1:
+         
+         export CUDA_VER=12.6
+
+  8. Скомпилируй библиотеку
+         
+         make -C nvdsinfer_custom_impl_Yolo clean && make -C nvdsinfer_custom_impl_Yolo
+
+  9. Отредактируй файл `config_infer_primary_yolo26.txt` в соответствии с твоей моделью (для YOLO26s с 80 классами)
+         
+         [property]
+         ...
+         onnx-file=yolo26s.pt.onnx
+         ...
+         num-detected-classes=80
+         ...
+
+  10. Отредактируй файл `deepstream_app_config`
+         
+         ...
+         [primary-gie]
+         ...
+         config-file=config_infer_primary_yolo26.txt
+
+  11. Ты также можешь изменить источник видео в файле `deepstream_app_config`. Здесь загружается видеофайл по умолчанию
+         
+         ...
+         [source0]
+         ...
+         uri=file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+
+
+
+
+### Link to this sectionЗапусти вывод (инференс)#
+    
+    
+    deepstream-app -c deepstream_app_config.txt
+
+Примечание
+
+Генерация файла движка TensorRT перед началом вывода займет много времени. Пожалуйста, наберись терпения.
+
+![YOLO26 with deepstream](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov8-with-deepstream.avif)
+
+Совет
+
+Если ты хочешь конвертировать модель в точность FP16, просто установи `model-engine-file=model_b1_gpu0_fp16.engine` и `network-mode=2` внутри файла `config_infer_primary_yolo26.txt`
+
+## Link to this sectionКалибровка INT8#
+
+Если ты хочешь использовать точность INT8 для вывода, тебе нужно выполнить следующие шаги:
+
+Примечание
+
+В настоящее время INT8 не работает с TensorRT 10.x. Этот раздел руководства был протестирован с TensorRT 8.x, с которой он должен работать.
+
+  1. Установи переменную окружения `OPENCV`
+         
+         export OPENCV=1
+
+  2. Скомпилируй библиотеку
+         
+         make -C nvdsinfer_custom_impl_Yolo clean && make -C nvdsinfer_custom_impl_Yolo
+
+  3. Для набора данных COCO скачай [val2017](http://images.cocodataset.org/zips/val2017.zip), распакуй и перемести в папку `DeepStream-Yolo`
+
+  4. Создай новую директорию для калибровочных изображений
+         
+         mkdir calibration
+
+  5. Запусти следующую команду, чтобы выбрать 1000 случайных изображений из набора данных COCO для выполнения калибровки
+         
+         for jpg in $(ls -1 val2017/*.jpg | sort -R | head -1000); do
+           cp ${jpg} calibration/
+         done
+
+
+
+
+Примечание
+
+NVIDIA рекомендует использовать не менее 500 изображений для получения хорошей [точности](https://www.ultralytics.com/glossary/accuracy). В этом примере выбрано 1000 изображений для получения более высокой точности (больше изображений = выше точность). Ты можешь настроить это с помощью **head -1000**. Например, для 2000 изображений используй **head -2000**. Этот процесс может занять много времени.
+
+  6. Создай файл `calibration.txt` со всеми выбранными изображениями
+         
+         realpath calibration/*jpg > calibration.txt
+
+  7. Установи переменные окружения
+         
+         export INT8_CALIB_IMG_PATH=calibration.txt
+         export INT8_CALIB_BATCH_SIZE=1
+
+
+
+
+Примечание
+
+Более высокие значения INT8_CALIB_BATCH_SIZE приведут к более высокой точности и более быстрой калибровке. Установи их в зависимости от памяти твоего GPU.
+
+  8. Обнови файл `config_infer_primary_yolo26.txt`
+
+От
+         
+         ...
+         model-engine-file=model_b1_gpu0_fp32.engine
+         #int8-calib-file=calib.table
+         ...
+         network-mode=0
+         ...
+
+К
+         
+         ...
+         model-engine-file=model_b1_gpu0_int8.engine
+         int8-calib-file=calib.table
+         ...
+         network-mode=1
+         ...
+
+
+
+
+### Link to this sectionЗапусти вывод (инференс)#
+    
+    
+    deepstream-app -c deepstream_app_config.txt
+
+## Link to this sectionНастройка нескольких потоков#
+
+  
+
+
+  
+**Watch:** How to Run Multi-Stream Inference with Ultralytics YOLO26 using NVIDIA DeepStream on Jetson Orin 🚀 
+
+Чтобы настроить несколько потоков в одном приложении DeepStream, внеси следующие изменения в файл `deepstream_app_config.txt`:
+
+  1. Измени количество строк и столбцов, чтобы построить сетку отображения в соответствии с количеством потоков, которые ты хочешь иметь. Например, для 4 потоков мы можем добавить 2 строки и 2 столбца.
+         
+         [tiled-display]
+         rows=2
+         columns=2
+
+  2. Установи `num-sources=4` и добавь записи `uri` для всех четырех потоков.
+         
+         [source0]
+         enable=1
+         type=3
+         uri=path/to/video1.jpg
+         uri=path/to/video2.jpg
+         uri=path/to/video3.jpg
+         uri=path/to/video4.jpg
+         num-sources=4
+
+
+
+
+### Link to this sectionЗапусти вывод (инференс)#
+    
+    
+    deepstream-app -c deepstream_app_config.txt
+
+![DeepStream multi-camera streaming configuration](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/multistream-setup.avif)
+
+## Link to this sectionРезультаты бенчмарков#
+
+Следующие бенчмарки показывают, как модели YOLO26 работают при различных уровнях точности TensorRT с размером входного изображения 640x640 на NVIDIA Jetson Orin NX 16GB.
+
+### Link to this sectionСравнительная диаграмма#
+
+![NVIDIA Jetson DeepStream performance benchmarks](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/jetson-deepstream-benchmarks.avif)
+
+### Link to this sectionПодробная сравнительная таблица#
+
+Производительность
+
+Формат| Статус| Время вывода (мс/из)  
+---|---|---  
+TensorRT (FP32)| ✅| 8.64  
+TensorRT (FP16)| ✅| 5.27  
+TensorRT (INT8)| ✅| 4.54  
+  
+## Link to this sectionБлагодарности#
+
+Это руководство было изначально создано нашими друзьями из Seeed Studio, Лакшантой и Элейн.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionКак мне настроить Ultralytics YOLO26 на устройстве NVIDIA Jetson?#
+
+Чтобы настроить Ultralytics YOLO26 на устройстве [NVIDIA Jetson](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/), тебе сначала нужно установить [DeepStream SDK](https://developer.nvidia.com/deepstream-getting-started), совместимый с твоей версией JetPack. Следуй пошаговому руководству в нашем [Кратком руководстве](/ru/guides/nvidia-jetson), чтобы настроить свой NVIDIA Jetson для развертывания YOLO26.
+
+### Link to this sectionВ чем преимущество использования TensorRT с YOLO26 на NVIDIA Jetson?#
+
+Использование TensorRT с YOLO26 оптимизирует модель для вывода, значительно снижая задержку и повышая пропускную способность на устройствах NVIDIA Jetson. TensorRT обеспечивает высокопроизводительный, низкозадержечный [deep learning](https://www.ultralytics.com/glossary/deep-learning-dl) инференс за счет слияния слоев, калибровки точности и автонастройки ядер. Это ведет к более быстрому и эффективному выполнению, что особенно полезно для приложений реального времени, таких как видеоаналитика и автономные машины.
+
+### Link to this sectionМогу ли я запускать Ultralytics YOLO26 с DeepStream SDK на разном оборудовании NVIDIA Jetson?#
+
+Да, руководство по развертыванию Ultralytics YOLO26 с DeepStream SDK и TensorRT совместимо со всей линейкой NVIDIA Jetson. Это включает устройства, такие как Jetson Orin NX 16GB с [JetPack 5.1.3](https://developer.nvidia.com/embedded/jetpack-sdk-513) и Jetson Nano 4GB с [JetPack 4.6.4](https://developer.nvidia.com/jetpack-sdk-464). Обратись к разделу Конфигурация DeepStream для YOLO26 для получения подробных инструкций.
+
+### Link to this sectionКак я могу конвертировать модель YOLO26 в ONNX для DeepStream?#
+
+Чтобы конвертировать модель YOLO26 в формат ONNX для развертывания с DeepStream, используй скрипт `utils/export_yolo26.py` из репозитория [DeepStream-Yolo](https://github.com/marcoslucianops/DeepStream-Yolo).
+
+Вот пример команды:
+    
+    
+    python3 utils/export_yolo26.py -w yolo26s.pt --opset 12 --simplify
+
+Для получения дополнительной информации о конвертации модели ознакомься с нашим [разделом экспорта моделей](/ru/modes/export).
+
+### Link to this sectionКаковы показатели производительности YOLO на NVIDIA Jetson Orin NX?#
+
+Производительность моделей YOLO26 на NVIDIA Jetson Orin NX 16GB варьируется в зависимости от уровня точности TensorRT. Например, модели YOLO26s достигают:
+
+  * **Точность FP32** : 14.6 мс/изобр., 68.5 FPS
+  * **Точность FP16** : 7.94 мс/изобр., 126 FPS
+  * **Точность INT8** : 5,95 мс/из., 168 FPS
+
+
+
+Эти тесты подчеркивают эффективность и возможности использования моделей YOLO26, оптимизированных с помощью TensorRT, на оборудовании NVIDIA Jetson. Дополнительные сведения см. в нашем разделе Результаты тестирования.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/deepstream-nvidia-jetson.md)
+
+[GLglenn-jocher11](https://github.com/glenn-jocher)[RIRizwanMunawar5](https://github.com/RizwanMunawar)[LAlakshanthad4](https://github.com/lakshanthad)[Y-Y-T-G2](https://github.com/Y-T-G)[ONonuralpszr2](https://github.com/onuralpszr)[PDpderrenger1](https://github.com/pderrenger)[MImiles-deans-ultralytics1](https://github.com/miles-deans-ultralytics)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+Создано 1 июл. 2024 г.Обновлено на прошлой неделе
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

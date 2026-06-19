@@ -1,0 +1,520 @@
+---
+source_url: https://docs.ultralytics.com/tr/models/yoloe
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/yoloe.md)
+
+# Link to this sectionYOLOE: Gerçek Zamanlı Her Şeyi Görme#
+
+## Link to this sectionGiriş#
+
+![YOLOE İstemi Seçenekleri](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yoloe-visualization.avif)
+
+[YOLOE (Gerçek Zamanlı Her Şeyi Görme)](https://arxiv.org/html/2503.07465v1), **açık uçlu (open-vocabulary)** tespit ve segmentasyon için tasarlanmış, sıfır vuruşlu (zero-shot), istem alabilen YOLO modellerinde yeni bir ilerlemedir. Sabit kategorilerle sınırlı önceki YOLO modellerinin aksine, YOLOE metin, görüntü veya dahili sözlük istemlerini kullanarak herhangi bir nesne sınıfının gerçek zamanlı tespitini sağlar. YOLOv10 üzerine inşa edilen ve [YOLO-World](/tr/models/yolo-world) modelinden esinlenen YOLOE, hız ve doğruluk üzerinde minimum etkiyle **en gelişmiş (state-of-the-art) sıfır vuruşlu performans** sunar.
+
+  
+
+
+  
+**Watch:** How to use Ultralytics YOLOE-26 (New) | Open Vocabulary & Real-Time Seeing Anything 🚀 
+
+Önceki YOLO modelleriyle karşılaştırıldığında, YOLOE verimliliği ve doğruluğu önemli ölçüde artırır. Eğitim kaynaklarının yalnızca üçte birini kullanarak ve 1.4 kat daha hızlı çıkarım hızlarına ulaşarak LVIS üzerinde YOLO-Worldv2'ye göre **+3.5 AP** iyileştirme sağlar. COCO üzerinde ince ayar yapılan YOLOE-v8-large, neredeyse **4 kat daha az eğitim süresi** kullanarak YOLOv8-L modelini **0.1 mAP** ile geçer. Bu durum, YOLOE'nin doğruluk, verimlilik ve çok yönlülük konusundaki olağanüstü dengesini göstermektedir. Aşağıdaki bölümler YOLOE'nin mimarisini, kıyaslama karşılaştırmalarını ve [Ultralytics](https://www.ultralytics.com/) çerçevesi ile entegrasyonunu incelemektedir.
+
+## Link to this sectionMimariye Genel Bakış#
+
+![YOLOE Architecture](https://github.com/THU-MIG/yoloe/raw/main/figures/pipeline.svg)
+
+YOLOE, standart YOLO yapısını korur: özellik çıkarımı için evrişimli bir **backbone** (örneğin, CSP-Darknet), çok ölçekli füzyon için bir **neck** (örneğin, PAN-FPN) ve nesneliği, sınıfları ve kutuları bağımsız olarak tahmin eden (YOLOv8/YOLO11'deki gibi) **çapasız (anchor-free), ayrıştırılmış (decoupled)** bir tespit **head** yapısı. YOLOE, açık uçlu tespiti mümkün kılan üç yeni modül tanıtır:
+
+  * **Yeniden Parametrelendirilebilir Bölge-Metin Hizalama (RepRTA)** : Küçük bir yardımcı ağ aracılığıyla metin [gömme (embeddings)](https://www.ultralytics.com/glossary/embeddings) verilerini (örneğin, CLIP'ten) iyileştirerek **metin istemli tespiti** destekler. Çıkarım aşamasında, bu ağ ana modelin içine katlanarak sıfır ek yük sağlar. Böylece YOLOE, çalışma zamanında herhangi bir ceza olmaksızın rastgele metinle etiketlenmiş nesneleri (örneğin, görülmemiş bir "trafik ışığı") tespit eder.
+
+  * **Semantik Etkinleştirilmiş Görsel İstem Kodlayıcı (SAVPE)** : Hafif bir gömme dalı aracılığıyla **görsel istemli tespiti** sağlar. Bir referans görüntü verildiğinde SAVPE, semantik ve aktivasyon özelliklerini kodlar ve modeli görsel olarak benzer nesneleri tespit etmesi için koşullandırır; bu, logolar veya belirli parçalar için yararlı olan tek vuruşlu (one-shot) bir tespit yeteneğidir.
+
+  * **Tembel Bölge-İstem Karşıtlığı (LRPC)** : **İstemsiz modda** , YOLOE büyük sözlükler üzerinde (LVIS ve Objects365'ten 1200+ kategori) eğitilmiş dahili gömme verilerini kullanarak açık küme (open-set) tanıma gerçekleştirir. Harici istemler veya kodlayıcılar olmadan YOLOE, nesneleri gömme benzerliği araması yoluyla tanımlar ve çıkarım sırasında büyük etiket alanlarını verimli bir şekilde işler.
+
+
+
+
+Ek olarak YOLOE, tespit kafasını bir maske tahmin dalı (YOLACT veya YOLOv8-Seg'e benzer) ile genişleterek minimum ek yükle gerçek zamanlı **örnek segmentasyonu** entegre eder.
+
+En önemlisi, YOLOE'nin açık dünya modülleri, normal bir kapalı küme YOLO olarak kullanıldığında **hiçbir çıkarım maliyeti** getirmez. Eğitim sonrasında YOLOE parametreleri standart bir YOLO kafasına yeniden parametrelendirilebilir, böylece (örneğin [YOLO11](/tr/models/yolo11) ile tam olarak eşleşecek şekilde) aynı FLOP'lar ve hız korunur.
+
+## Link to this sectionMevcut Modeller, Desteklenen Görevler ve Çalışma Modları#
+
+Bu bölüm, belirli önceden eğitilmiş ağırlıkları, destekledikleri görevleri ve [Çıkarım](/tr/modes/predict), [Doğrulama](/tr/modes/val), [Eğitim](/tr/modes/train) ve [Dışa Aktarma](/tr/modes/export) gibi çeşitli çalışma modlarıyla uyumluluklarını detaylandırır; desteklenen modlar ✅ ile, desteklenmeyenler ise ❌ ile belirtilmiştir.
+
+### Link to this sectionMetin/Görsel İstem modelleri#
+
+Model Tipi| Önceden Eğitilmiş Ağırlıklar| Desteklenen Görevler| Çıkarım| Doğrulama| Eğitim| Dışa Aktar (Export)  
+---|---|---|---|---|---|---  
+YOLOE-11S| [yoloe-11s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11s-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11M| [yoloe-11m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11m-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11L| [yoloe-11l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11l-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8S| [yoloe-v8s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8s-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8M| [yoloe-v8m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8m-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8L| [yoloe-v8l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8l-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26N| [yoloe-26n-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26S| [yoloe-26s-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26s-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26M| [yoloe-26m-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26m-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26L| [yoloe-26l-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26l-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26X| [yoloe-26x-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26x-seg.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+  
+### Link to this sectionİstemsiz modeller#
+
+Model Tipi| Önceden Eğitilmiş Ağırlıklar| Desteklenen Görevler| Çıkarım| Doğrulama| Eğitim| Dışa Aktar (Export)  
+---|---|---|---|---|---|---  
+YOLOE-11S-PF| [yoloe-11s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11s-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11M-PF| [yoloe-11m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11m-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-11L-PF| [yoloe-11l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11l-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8S-PF| [yoloe-v8s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8s-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8M-PF| [yoloe-v8m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8m-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-v8L-PF| [yoloe-v8l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-v8l-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26N-PF| [yoloe-26n-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26n-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26S-PF| [yoloe-26s-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26s-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26M-PF| [yoloe-26m-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26m-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26L-PF| [yoloe-26l-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26l-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+YOLOE-26X-PF| [yoloe-26x-seg-pf.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-26x-seg-pf.pt)| [Örnek Segmentasyonu](/tr/tasks/segment)| ✅| ✅| ✅| ✅  
+  
+YOLOE-26 Performansı
+
+YOLOE-26 modellerinin ayrıntılı performans kıyaslamaları için [YOLO26 Dokümantasyonuna](/tr/models/yolo26#yoloe-26-open-vocabulary-detection-and-segmentation) bak.
+
+## Link to this sectionKullanım Örnekleri#
+
+YOLOE modellerinin Python uygulamalarına entegrasyonu kolaydır. Ultralytics, geliştirmeyi kolaylaştırmak için kullanıcı dostu [Python API](/tr/usage/python) ve [CLI komutları](/tr/usage/cli) sağlar.
+
+### Link to this sectionEğitim Kullanımı#
+
+#### Link to this sectionÖzel veri kümesinde ince ayar#
+
+Herhangi bir önceden eğitilmiş YOLOE modeline, hem tespit hem de örnek segmentasyonu görevleri için kendi özel YOLO veri kümen üzerinde ince ayar yapabilirsin.
+
+  
+
+
+  
+**Watch:** How to Train YOLOE on Car Parts Segmentation Dataset | Open-Vocabulary Model, Prediction & Export 🚀 
+
+Örnek
+
+**Örnek segmentasyonu**
+
+Fine-tuning a YOLOE pretrained checkpoint mostly follows the [standard YOLO training procedure](/tr/modes/train). The key difference is explicitly passing `YOLOEPESegTrainer` as the `trainer` parameter to `model.train()`:
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOEPESegTrainer
+    
+    model = YOLOE("yoloe-26s-seg.pt")
+    
+    # Fine-tune on your segmentation dataset
+    results = model.train(
+        data="coco128-seg.yaml",  # Segmentation dataset
+        epochs=80,
+        patience=10,
+        trainer=YOLOEPESegTrainer,  # <- Important: use segmentation trainer
+    )
+
+**Nesne tespiti**
+
+All pretrained YOLOE models perform instance segmentation by default. To use these pretrained checkpoints for training a detection model, initialize a detection model from scratch using the YAML configuration, then load the pretrained segmentation checkpoint of the same scale. Note that we use `YOLOEPETrainer` instead of `YOLOEPESegTrainer` since we're training a detection model:
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOEPETrainer
+    
+    # Initialize a detection model from a config
+    model = YOLOE("yoloe-26s.yaml")
+    
+    # Load weights from a pretrained segmentation checkpoint (same scale)
+    model.load("yoloe-26s-seg.pt")
+    
+    # Fine-tune on your detection dataset
+    results = model.train(
+        data="coco128.yaml",  # Detection dataset
+        epochs=80,
+        patience=10,
+        trainer=YOLOEPETrainer,  # <- Important: use detection trainer
+    )
+
+### Link to this sectionTahmin Kullanımı#
+
+YOLOE, hem metin tabanlı hem de görsel istemleri destekler. İstemleri kullanmak oldukça basittir; bunları aşağıda gösterildiği gibi `predict` metodu aracılığıyla geçirmen yeterlidir:
+
+Örnek
+
+Metin istemleri, metinsel açıklamalar aracılığıyla tespit etmek istediğin sınıfları belirtmene olanak tanır. Aşağıdaki kod, bir görüntüdeki insanları ve otobüsleri tespit etmek için YOLOE'yi nasıl kullanabileceğini gösterir:
+    
+    
+    from ultralytics import YOLOE
+    
+    # Initialize a YOLOE model
+    model = YOLOE("yoloe-26l-seg.pt")  # or yoloe-26s/m-seg.pt for different sizes
+    
+    # Set text prompt to detect person and bus. You only need to do this once after you load the model.
+    model.set_classes(["person", "bus"])
+    
+    # Run detection on the given image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+### Link to this sectionDoğrulama Kullanımı#
+
+Bir veri setinde model doğrulama işlemi şu şekilde kolaylaştırılmıştır:
+
+Örnek
+    
+    
+    from ultralytics import YOLOE
+    
+    # Create a YOLOE model
+    model = YOLOE("yoloe-26l-seg.pt")  # or yoloe-26s/m-seg.pt for different sizes
+    
+    # Conduct model validation on the COCO128-seg example dataset
+    metrics = model.val(data="coco128-seg.yaml")
+
+### Link to this sectionDışa Aktarma Kullanımı#
+
+Dışa aktarma süreci, metin ve görsel istemleri işleme esnekliği eklenmiş olarak diğer YOLO modellerine benzer:
+
+Dışa aktarılan modeller statiktir
+
+Classes configured with `set_classes()` (or via `refer_image` for visual prompts) are baked into the exported weights. Once exported, the model can no longer accept new prompts: calling `set_classes()` or passing `visual_prompts=...` to `predict()` on a loaded export will fail. To change the detected classes, re-export from the original `.pt` checkpoint with the new prompts configured. The exported file behaves like a standard YOLO detector and can also be loaded with `YOLO()` instead of `YOLOE()`.
+
+Örnek
+    
+    
+    from ultralytics import YOLOE
+    
+    # Select yoloe-26s/m-seg.pt for different sizes
+    model = YOLOE("yoloe-26l-seg.pt")
+    
+    # Configure the set_classes() before exporting the model
+    model.set_classes(["person", "bus"])
+    
+    export_model = model.export(format="onnx")
+    model = YOLOE(export_model)
+    
+    # Run detection on the given image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+### Link to this sectionResmi Modelleri Eğit#
+
+#### Link to this sectionVeri setlerini hazırlayın#
+
+Not
+
+Training official YOLOE models needs segment annotations for train data, here's [the script provided by official team](https://github.com/THU-MIG/yoloe/blob/main/tools/generate_sam_masks.py) that converts datasets to segment annotations, powered by [SAM2.1 models](/tr/models/sam-2). Or you can directly download the provided `Processed Segment Annotations` in following table provided by official team.
+
+  * Eğitim verisi
+
+
+
+Veri Seti| Tip| Örnekler| Kutular| Ham Tespit Ek Açıklamaları| İşlenmiş Segment Ek Açıklamaları  
+---|---|---|---|---|---  
+[Objects365v1](https://opendatalab.com/OpenDataLab/Objects365_v1)| Tespit| 609k| 9621k| [objects365_train.json](https://opendatalab.com/OpenDataLab/Objects365_v1)| [objects365_train_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/objects365_train_segm.json)  
+[GQA](https://cs.stanford.edu/people/dorarad/gqa/about.html)| [Temellendirme (Grounding)](https://www.ultralytics.com/glossary/grounding)| 621k| 3681k| [final_mixed_train_no_coco.json](https://huggingface.co/GLIPModel/GLIP/resolve/main/mdetr_annotations/final_mixed_train_no_coco.json)| [final_mixed_train_no_coco_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/final_mixed_train_no_coco_segm.json)  
+[Flickr30k](https://shannon.cs.illinois.edu/DenotationGraph/)| Grounding| 149k| 641k| [final_flickr_separateGT_train.json](https://huggingface.co/GLIPModel/GLIP/resolve/main/mdetr_annotations/final_flickr_separateGT_train.json)| [final_flickr_separateGT_train_segm.json](https://huggingface.co/datasets/jameslahm/yoloe/resolve/main/final_flickr_separateGT_train_segm.json)  
+  
+  * Doğrulama verisi
+
+
+
+Veri Seti| Tip| Açıklama Dosyaları  
+---|---|---  
+[LVIS minival](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/lvis.yaml)| Tespit| [minival.txt](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/lvis.yaml)  
+  
+#### Link to this sectionSıfırdan eğitim başlatma#
+
+Not
+
+`Visual Prompt` modelleri, iyi eğitilmiş `Text Prompt` modelleri temel alınarak ince ayar (fine-tune) yapılır.
+
+Örnek
+    
+    
+    from ultralytics import YOLOE
+    from ultralytics.models.yolo.yoloe import YOLOESegTrainerFromScratch
+    
+    # Option 1: Use Python dictionary
+    data = dict(
+        train=dict(
+            yolo_data=["Objects365.yaml"],
+            grounding_data=[
+                dict(
+                    img_path="flickr/full_images/",
+                    json_file="flickr/annotations/final_flickr_separateGT_train_segm.json",
+                ),
+                dict(
+                    img_path="mixed_grounding/gqa/images",
+                    json_file="mixed_grounding/annotations/final_mixed_train_no_coco_segm.json",
+                ),
+            ],
+        ),
+        val=dict(yolo_data=["lvis.yaml"]),
+    )
+    
+    # Option 2: Use YAML file (yoloe_data.yaml)
+    # train:
+    #   yolo_data:
+    #     - Objects365.yaml
+    #   grounding_data:
+    #     - img_path: flickr/full_images/
+    #       json_file: flickr/annotations/final_flickr_separateGT_train_segm.json
+    #     - img_path: mixed_grounding/gqa/images
+    #       json_file: mixed_grounding/annotations/final_mixed_train_no_coco_segm.json
+    # val:
+    #   yolo_data:
+    #     - lvis.yaml
+    
+    model = YOLOE("yoloe-26l-seg.yaml")
+    model.train(
+        data=data,  # or data="yoloe_data.yaml" if using YAML file
+        batch=128,
+        epochs=30,
+        close_mosaic=2,
+        optimizer="AdamW",
+        lr0=2e-3,
+        warmup_bias_lr=0.0,
+        weight_decay=0.025,
+        momentum=0.9,
+        workers=4,
+        trainer=YOLOESegTrainerFromScratch,
+        device="0,1,2,3,4,5,6,7",
+    )
+
+## Link to this sectionYOLOE Performans Karşılaştırması#
+
+YOLOE, hız veya model boyutundan ödün vermeden COCO ve LVIS gibi standart kıyaslamalarda kapalı küme (closed-set) YOLO modellerinin doğruluğunu yakalar veya aşar. Aşağıdaki tablo, YOLOE-L (YOLO11 üzerine kurulu) ve YOLOE26-L ( [YOLO26](/tr/models/yolo26) üzerine kurulu) modellerini ilgili kapalı küme modelleriyle karşılaştırır:
+
+Model| COCO mAP50-95| LVIS mAP50-95| Çıkarım Hızı (T4)| Parametreler| GFLOPs (640px)  
+---|---|---|---|---|---  
+**YOLOv8-L** (kapalı küme)| 52.9%| -| **9.06 ms** (110 FPS)| 43.7 M| 165.2 B  
+**YOLO11-L** (kapalı küme)| 53.5%| -| **6.2 ms** (161 FPS)| 26.2 M| 86.9 B  
+**YOLOE-L** (açık kelime dağarcığı)| 52.6%| 35.2%| **6.2 ms** (161 FPS)| 26.2 M| 86.9 B†  
+**YOLOE26-L** (açık kelime dağarcığı)| -| 36.8%| **6.2 ms** (161 FPS)| 32.3 M| 88.3 B†  
+  
+† _YOLOE-L, YOLO11-L'nin mimarisini paylaşır ve YOLOE26-L, YOLO26-L'nin mimarisini paylaşır; bu da benzer çıkarım hızı ve GFLOPs ile sonuçlanır._
+
+YOLOE26-L, T4 GPU üzerinde 640×640 görüntüleri **6.2 ms (161 FPS)** hızında işleyerek **32.3M parametre** ve **88.3B FLOPs** ile **36.8% LVIS mAP** değerine ulaşır. Bu, YOLOE-L'in **35.2% LVIS mAP** değerine göre bir gelişmedir ve aynı çıkarım hızını korur. En önemlisi, YOLOE'nin açık kelime dağarcığı (open-vocabulary) modülleri **çıkarım maliyeti getirmez** , bu da **"bedava öğle yemeği yoktur takası"** tasarımını kanıtlar.
+
+Sıfır vuruşlu (zero-shot) görevler için YOLOE26, önceki açık kelime dağarcığı dedektörlerinden önemli ölçüde daha iyi performans gösterir: LVIS üzerinde YOLOE26-S, YOLO-World-S'i **+11.4 AP** ile geride bırakarak **29.9% mAP** değerine ulaşırken, YOLOE26-L **+10.0 AP** farkla YOLO-World-L'i geçerek **36.8% mAP** değerine ulaşır. YOLOE26, T4 GPU üzerinde **161 FPS** hızında verimli çıkarım sağlayarak gerçek zamanlı açık kelime dağarcığı uygulamaları için idealdir.
+
+Not
+
+**Kıyaslama koşulları:** YOLOE sonuçları, Objects365, GoldG ve LVIS üzerinde önceden eğitilmiş, ardından COCO üzerinde ince ayar yapılmış veya değerlendirilmiş modellerden alınmıştır. YOLOE'nin YOLOv8'e göre sahip olduğu küçük mAP avantajı, kapsamlı ön eğitimden kaynaklanmaktadır. Bu açık kelime dağarcığı eğitimi olmadan, YOLOE benzer büyüklükteki YOLO modelleriyle eşleşir; bu da SOTA doğruluğunu ve performans cezası olmaksızın açık dünya esnekliğini doğrular.
+
+## Link to this sectionÖnceki Modellerle Karşılaştırma#
+
+YOLOE, önceki YOLO modellerine ve açık kelime dağarcığı dedektörlerine göre kayda değer ilerlemeler sunar:
+
+  * **YOLOE ve YOLOv5:** [YOLOv5](/tr/models/yolov5), iyi bir hız-doğruluk dengesi sunuyordu ancak yeni sınıflar için yeniden eğitim gerektiriyordu ve çapa tabanlı (anchor-based) başlıklar kullanıyordu. Buna karşılık, YOLOE **çapa içermez (anchor-free)** ve yeni sınıfları dinamik olarak algılar. YOLOv8'in iyileştirmeleri üzerine inşa edilen YOLOE, daha yüksek doğruluk (COCO üzerinde YOLOv5'in ~%50 mAP değerine karşı %52.6) sağlar ve YOLOv5'in aksine örnek segmentasyonunu (instance segmentation) entegre eder.
+
+  * **YOLOE ve YOLOv8:** YOLOE, [YOLOv8](/tr/models/yolov8)'in yeniden tasarlanmış mimarisini genişleterek benzer veya üstün doğruluk sağlar (**~26M parametre ile %52.6 mAP** değerine karşılık YOLOv8-L'in **~44M parametre ile %52.9** değeri). Daha güçlü ön eğitim sayesinde eğitim süresini önemli ölçüde azaltır. Temel ilerleme, YOLOv8'in kapalı küme tasarımının aksine, yönlendirmeler aracılığıyla görünmeyen nesneleri (örneğin "**bird scooter** " veya "**peace symbol** ") algılayabilen YOLOE'nin **açık dünya yeteneğidir**.
+
+  * **YOLOE ve YOLO11:** [YOLO11](/tr/models/yolo11), gelişmiş verimlilik ve daha az parametre (~%22 azalma) ile YOLOv8'in üzerine iyileştirmeler ekler. YOLOE, bu kazanımları doğrudan miras alır; YOLO11'in çıkarım hızı ve parametre sayısı (~26M parametre) ile eşleşirken **açık kelime dağarcığı algılama ve segmentasyon** ekler. Kapalı küme senaryolarında YOLOE, YOLO11 ile eşdeğerdir, ancak en önemlisi, hızı düşürmeden **YOLO11 + açık dünya yeteneği** sağlayarak görünmeyen sınıfları algılama uyarlanabilirliği ekler.
+
+  * **YOLOE26 ve YOLOE (YOLO11 tabanlı):** YOLOE26, [YOLO26](/tr/models/yolo26) mimarisi üzerine inşa edilerek daha hızlı çıkarım için NMS'siz uçtan uca tasarımını miras alır. LVIS üzerinde YOLOE26-L, YOLOE-L'in **35.2% mAP** değerini geliştirerek **36.8% mAP** değerine ulaşır. YOLOE26, YOLOE'nin üç (S/M/L) model ölçeğine kıyasla beş model ölçeğinin (N/S/M/L/X) tamamını sunarak farklı dağıtım senaryoları için daha fazla esneklik sağlar.
+
+  * **YOLOE26 ve önceki açık kelime dağarcığı dedektörleri:** Daha eski açık kelime dağarcığı modelleri (GLIP, OWL-ViT, [YOLO-World](/tr/models/yolo-world)), büyük ölçüde görme-dil [transformer](https://www.ultralytics.com/glossary/transformer) modellerine dayanıyordu ve bu da yavaş çıkarıma yol açıyordu. LVIS üzerinde YOLOE26-S **29.9% mAP** (YOLO-World-S üzerinde **+11.4 AP**) ve YOLOE26-L **36.8% mAP** (YOLO-World-L üzerinde **+10.0 AP**) değerine ulaşırken, T4 GPU üzerinde **161 FPS** hızında gerçek zamanlı çıkarımı korur. Transformer tabanlı yaklaşımlarla (örneğin, GLIP) karşılaştırıldığında, YOLOE26 kat kat daha hızlı çıkarım sunarak açık küme algılamada doğruluk-verimlilik boşluğunu etkili bir şekilde kapatır.
+
+
+
+
+Özetle, YOLOE ve YOLOE26, YOLO'nun bilinen hız ve verimliliğini korur, doğruluk konusunda seleflerini geride bırakır, segmentasyonu entegre eder ve güçlü açık dünya algılamasını sunar. YOLOE26, YOLO26'dan gelen NMS'siz uçtan uca çıkarım ile mimariyi daha da geliştirerek onu gerçek zamanlı açık kelime dağarcığı uygulamaları için ideal hale getirir.
+
+## Link to this sectionKullanım Durumları ve Uygulamalar#
+
+YOLOE'nin açık kelime dağarcığı algılama ve segmentasyonu, geleneksel sabit sınıflı modellerin ötesinde çeşitli uygulamalara olanak tanır:
+
+  * **Açık Dünya Nesne Algılama:** Robotların yönlendirmeleri kullanarak daha önce görülmemiş nesneleri tanıdığı [robotik](https://www.ultralytics.com/blog/understanding-the-integration-of-computer-vision-in-robotics) gibi dinamik senaryolar veya yeniden eğitim gerektirmeden yeni tehditlere (örneğin, tehlikeli maddeler) hızla uyum sağlayan [güvenlik sistemleri](https://www.ultralytics.com/blog/computer-vision-for-theft-prevention-enhancing-security) için idealdir.
+
+  * **Az Örnekli ve Tek Örnekli Algılama:** Görsel yönlendirmeler (SAVPE) kullanan YOLOE, yeni nesneleri tek bir referans görüntüden hızla öğrenir; bu, [endüstriyel denetim](https://www.ultralytics.com/blog/computer-vision-in-manufacturing-improving-production-and-quality) (parçaları veya kusurları anında tanımlama) veya **özel gözetim** için mükemmeldir ve minimum kurulumla görsel aramaları mümkün kılar.
+
+  * **Geniş Kelime Dağarcığı ve Uzun Kuyruklu Tanıma:** 1000'den fazla sınıf içeren bir kelime dağarcığı ile donatılmış YOLOE, [biyoçeşitlilik izleme](https://www.ultralytics.com/blog/ai-in-wildlife-conservation) (nadir türleri tespit etme), **müze koleksiyonları** , [perakende envanteri](https://www.ultralytics.com/blog/ai-for-smarter-retail-inventory-management) veya **e-ticaret** gibi görevlerde, kapsamlı sınıf bazlı eğitim olmadan birçok sınıfı güvenilir bir şekilde tanımlayarak mükemmel sonuç verir.
+
+  * **Etkileşimli Algılama ve Segmentasyon:** YOLOE, doğal girdiler (metin veya görsel yönlendirmeler) ile desteklenen **aranabilir video/görüntü geri alma** , **artırılmış gerçeklik (AR)** ve sezgisel **görüntü düzenleme** gibi gerçek zamanlı etkileşimli uygulamaları destekler. Kullanıcılar, segmentasyon maskeleri kullanarak nesneleri hassas bir şekilde izole edebilir, tanımlayabilir veya düzenleyebilir.
+
+  * **Otomatik Veri Etiketleme ve Önyükleme:** YOLOE, başlangıç sınırlayıcı kutu (bounding box) ve segmentasyon ek açıklamaları sağlayarak hızlı veri kümesi oluşturmayı kolaylaştırır ve insan etiketleme çabasını önemli ölçüde azaltır. Özellikle, mevcut nesneleri otomatik olarak tanımlayabildiği ve daha hızlı özel modeller oluşturmaya yardımcı olduğu **büyük medya koleksiyonlarının analitiği** için değerlidir.
+
+  * **Herhangi Bir Nesne için Segmentasyon:** Yönlendirmeler yoluyla segmentasyon yeteneklerini isteğe bağlı nesnelere genişletir; bu, [tıbbi görüntüleme](https://www.ultralytics.com/blog/ai-and-radiology-a-new-era-of-precision-and-efficiency), **mikroskopi** veya [uydu görüntüsü analizi](https://www.ultralytics.com/blog/using-computer-vision-to-analyze-satellite-imagery) için özellikle yararlıdır ve özel önceden eğitilmiş modeller olmadan yapıları otomatik olarak tanımlar ve hassas bir şekilde segmente eder. [SAM](/tr/models/sam) gibi modellerin aksine YOLOE, nesneleri otomatik olarak aynı anda tanır ve segmente eder, bu da **içerik oluşturma** veya **sahne anlama** gibi görevlere yardımcı olur.
+
+
+
+
+Tüm bu kullanım durumlarında YOLOE'nin temel avantajı **çok yönlülüğüdür** ; dinamik senaryolarda algılama, tanıma ve segmentasyon için birleşik bir model sağlar. Verimliliği, robotik, [otonom sürüş](https://www.ultralytics.com/blog/ai-in-self-driving-cars), savunma ve ötesi için ideal olan kaynak kısıtlı cihazlarda gerçek zamanlı performans sağlar.
+
+İpucu
+
+İhtiyaçlarına göre YOLOE modunu seç:
+
+  * **Kapalı küme modu:** Sabit sınıflı görevler için (maksimum hız ve doğruluk).
+  * **Yönlendirmeli mod:** Metin veya görsel yönlendirmelerle yeni nesneleri hızla ekle.
+  * **Yönlendirmesiz açık küme modu:** Birçok kategoride genel algılama (kataloglama ve keşif için ideal).
+
+
+
+Genellikle modları birleştirmek (yönlendirmesiz keşif ve ardından hedeflenmiş yönlendirmeler gibi), YOLOE'nin tam potansiyelinden yararlanmanı sağlar.
+
+## Link to this sectionEğitim ve Çıkarım#
+
+YOLOE, diğer YOLO modellerine (YOLOv8, YOLO-World) benzer şekilde [Ultralytics Python API](/tr/usage/python) ve [CLI](/tr/usage/cli) ile sorunsuz bir şekilde entegre olur. İşte hızlıca başlamanın yolu:
+
+YOLOE ile eğitim ve çıkarım
+    
+    
+    from ultralytics import YOLO
+    
+    # Load pretrained YOLOE model and train on custom data
+    model = YOLO("yoloe-26s-seg.pt")
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+    
+    # Run inference using text prompts ("person", "bus")
+    model.set_classes(["person", "bus"])
+    results = model.predict(source="test_images/street.jpg")
+    results[0].save()  # save annotated output
+
+Burada YOLOE varsayılan olarak standart bir dedektör gibi davranır ancak sınıfları belirterek (`set_classes`) kolayca yönlendirmeli algılamaya geçiş yapar. Sonuçlar sınırlayıcı kutular, maskeler ve etiketler içerir.
+
+### Link to this sectionDiğer Desteklenen Görevler#
+
+  * **Doğrulama:** `model.val()` veya `yolo val` ile doğruluğu kolayca değerlendir.
+  * **Dışa Aktarma:** YOLOE modellerini (`model.export()`) ONNX, TensorRT vb. formatlara aktararak dağıtımı kolaylaştır.
+  * **Takip:** YOLOE, entegre edildiğinde nesne takibini (`yolo track`) destekler; bu, videolardaki yönlendirilmiş sınıfları takip etmek için kullanışlıdır.
+
+
+
+Not
+
+YOLOE, çıkarım sonuçlarına (`results[0].masks`) otomatik olarak **segmentasyon maskelerini** dahil eder, bu da nesne çıkarma veya ölçüm gibi piksel hassasiyetinde görevleri ayrı modellere ihtiyaç duymadan basitleştirir.
+
+## Link to this sectionBaşlarken#
+
+Bu adımları izleyerek YOLOE'yi Ultralytics ile hızlıca kur:
+
+  1. **Kurulum** : Ultralytics paketini kur veya güncelle:
+         
+         pip install -U ultralytics
+
+  2. **YOLOE Ağırlıklarını İndirme** : Önceden eğitilmiş YOLOE modelleri (örneğin, YOLOE-v8-S/L, YOLOE-11 varyantları) YOLOE GitHub sürümlerinden edinilebilir. Ultralytics YOLO sınıfına yüklemek için istediğin `.pt` dosyasını indirmen yeterli.
+
+  3. **Donanım Gereksinimleri** :
+
+     * **Çıkarım** : Önerilen GPU (≥4-8GB VRAM'li NVIDIA). Küçük modeller, uç GPU'larda (örneğin, [Jetson](/tr/guides/nvidia-jetson)) veya daha düşük çözünürlüklerde CPU'larda verimli bir şekilde çalışır. Kompakt iş istasyonlarında yüksek performanslı çıkarım için [NVIDIA DGX Spark](/tr/guides/nvidia-dgx-spark) rehberimize göz at.
+     * **Eğitim** : YOLOE'ye özel veriler üzerinde ince ayar yapmak genellikle sadece bir GPU gerektirir. Yazarların kullandığı kapsamlı açık kelime dağarcığı ön eğitimi (LVIS/Objects365) önemli miktarda hesaplama gücü (8× RTX 4090 GPU) gerektirmiştir.
+  4. **Yapılandırma** : YOLOE yapılandırmaları standart Ultralytics YAML dosyalarını kullanır. Varsayılan yapılandırmalar (örneğin, `yoloe-26s-seg.yaml`) genellikle yeterlidir, ancak ihtiyaç duyduğunda omurga (backbone), sınıflar veya görüntü boyutunu değiştirebilirsin.
+
+  5. **YOLOE Çalıştırma** :
+
+     * **Hızlı çıkarım** (yönlendirmesiz):
+           
+           yolo predict model=yoloe-26s-seg-pf.pt source="image.jpg"
+
+     * **Yönlendirmeli algılama** (metin yönlendirmesi örneği):
+           
+           from ultralytics import YOLO
+           
+           model = YOLO("yoloe-26s-seg.pt")
+           model.set_classes(["bowl", "apple"])
+           results = model.predict("kitchen.jpg")
+           results[0].save()
+
+  6. **Entegrasyon İpuçları** :
+
+     * **Sınıf adları** : Varsayılan YOLOE çıktıları LVIS kategorilerini kullanır; kendi etiketlerini belirtmek için `set_classes()` kullan.
+     * **Hız** : YOLOE, yönlendirme kullanılmadığı sürece ek yük getirmez. Metin yönlendirmelerinin etkisi minimumdur; görsel yönlendirmelerin ise biraz daha fazladır.
+     * **NMS davranışı** : YOLOE, tahmin sırasında otomatik olarak `agnostic_nms=True` kullanır ve sınıflar arasında çakışan kutuları birleştirir. Bu, aynı nesne YOLOE'nin geniş kelime dağarcığında (1200+ LVIS sınıfı) birden fazla kategoriyle eşleştiğinde yinelenen algılamaları önler. `agnostic_nms=False` değerini açıkça ileterek bunu geçersiz kılabilirsin.
+     * **Toplu çıkarım** : Doğrudan desteklenir (`model.predict([img1, img2])`). Görüntüye özel yönlendirmeler için görüntüleri ayrı ayrı çalıştır.
+
+
+
+[Ultralytics belgeleri](https://docs.ultralytics.com/) daha fazla kaynak sağlar. YOLOE, tanıdık YOLO ekosistemi içinde güçlü açık dünya yeteneklerini kolayca keşfetmeni sağlar.
+
+İpucu
+
+**Pro İpucu:** YOLOE'nin sıfır vuruşlu (zero-shot) doğruluğunu en üst düzeye çıkarmak için sıfırdan eğitmek yerine sağlanan kontrol noktalarından (checkpoints) ince ayar yap. Algılama doğruluğunu artırmak için yaygın eğitim etiketleriyle (LVIS kategorilerine bak) uyumlu yönlendirme kelimeleri kullan.
+
+## Link to this sectionAlıntılar ve Teşekkür#
+
+YOLOE araştırmana veya projene katkıda bulunduysa, lütfen **Tsinghua Üniversitesi** 'nden **Ao Wang, Lihao Liu, Hui Chen, Zijia Lin, Jungong Han ve Guiguang Ding** tarafından yazılan orijinal makaleyi alıntıla:
+
+Alıntı
+    
+    
+    @misc{wang2025yoloerealtimeseeing,
+          title={YOLOE: Real-Time Seeing Anything},
+          author={Ao Wang and Lihao Liu and Hui Chen and Zijia Lin and Jungong Han and Guiguang Ding},
+          year={2025},
+          eprint={2503.07465},
+          archivePrefix={arXiv},
+          primaryClass={cs.CV},
+          url={https://arxiv.org/abs/2503.07465},
+    }
+
+Daha fazla okuma için orijinal YOLOE makalesi [arXiv](https://arxiv.org/html/2503.07465v1) üzerinde mevcuttur. Projenin kaynak koduna ve ek kaynaklarına [GitHub deposu](https://github.com/THU-MIG/yoloe) üzerinden erişilebilir.
+
+## Link to this sectionSSS#
+
+### Link to this sectionYOLOE, YOLO-World'den nasıl farklıdır?#
+
+Hem YOLOE hem de [YOLO-World](/tr/models/yolo-world) açık kelime dağarcığı algılamayı mümkün kılsa da, YOLOE birkaç avantaj sunar. YOLOE, YOLO-Worldv2'ye göre 3 kat daha az eğitim kaynağı kullanarak ve 1.4 kat daha hızlı çalışarak LVIS üzerinde +3.5 AP daha yüksek doğruluk elde eder. YOLOE ayrıca üç yönlendirme modunu (metin, görsel ve dahili kelime dağarcığı) desteklerken, YOLO-World öncelikle metin yönlendirmelerine odaklanır. Ayrıca YOLOE, yerleşik [örnek segmentasyonu](https://www.ultralytics.com/blog/what-is-instance-segmentation-a-quick-guide) yeteneklerini içerir ve ek yük olmadan algılanan nesneler için piksel hassasiyetinde maskeler sağlar.
+
+### Link to this sectionYOLOE'yi normal bir YOLO modeli olarak kullanabilir miyim?#
+
+Evet, YOLOE performans cezası olmaksızın standart bir YOLO modeli gibi çalışabilir. Kapalı küme modunda (yönlendirmesiz) kullanıldığında, YOLOE'nin açık kelime dağarcığı modülleri standart algılama başlığına yeniden parametrelendirilir ve bu da eşdeğer YOLO11 modelleriyle aynı hız ve doğruluğu sağlar. Bu, YOLOE'yi son derece çok yönlü kılar; maksimum hız için geleneksel bir dedektör olarak kullanabilir ve ardından yalnızca gerektiğinde açık kelime dağarcığı moduna geçebilirsin.
+
+### Link to this sectionYOLOE ile ne tür yönlendirmeler kullanabilirim?#
+
+YOLOE üç tür yönlendirmeyi destekler:
+
+  1. **Metin yönlendirmeleri** : Nesne sınıflarını doğal dille belirt (örneğin, "person", "traffic light", "bird scooter")
+  2. **Görsel yönlendirmeler** : Algılamak istediğin nesnelerin referans görüntülerini sağla
+  3. **Dahili kelime dağarcığı** : Harici yönlendirmeler olmadan YOLOE'nin yerleşik 1200+ kategorilik kelime dağarcığını kullan
+
+
+
+Bu esneklik, YOLOE'yi modeli yeniden eğitmeden çeşitli senaryolara uyarlamana olanak tanır ve bu da onu özellikle algılama gereksinimlerinin sıkça değiştiği dinamik ortamlar için kullanışlı hale getirir.
+
+### Link to this sectionYOLOE örnek segmentasyonunu nasıl yönetir?#
+
+YOLOE, maske tahmin dalını algılama kafasına genişleterek örnek segmentasyonunu doğrudan mimarisine entegre eder. Bu yaklaşım YOLOv8-Seg ile benzerdir ancak her türlü yönlendirilmiş nesne sınıfı için çalışır. Segmentasyon maskeleri çıkarım sonuçlarına otomatik olarak dahil edilir ve `results[0].masks` aracılığıyla erişilebilir. Bu birleşik yaklaşım, ayrı algılama ve segmentasyon modellerine olan ihtiyacı ortadan kaldırarak piksel hassasiyetinde nesne sınırları gerektiren uygulamalar için iş akışlarını kolaylaştırır.
+
+### Link to this sectionYOLOE, özel yönlendirmelerle (prompts) çıkarımı nasıl gerçekleştirir?#
+
+[YOLO-World](/tr/models/yolo-world) modeline benzer şekilde, YOLOE verimliliği artırmak için çevrimdışı bir sözlük kullanan "önce yönlendir, sonra algıla" stratejisini destekler. Altyazılar veya belirli nesne kategorileri gibi özel yönlendirmeler önceden kodlanır ve çevrimdışı sözlük gömmeleri (embeddings) olarak saklanır. Bu yaklaşım, yeniden eğitim gerektirmeden algılama sürecini hızlandırır. Modeli belirli algılama görevlerine uyarlamak için bu yönlendirmeleri dinamik olarak ayarlayabilirsin:
+    
+    
+    from ultralytics import YOLO
+    
+    # Initialize a YOLOE model
+    model = YOLO("yoloe-26s-seg.pt")
+    
+    # Define custom classes
+    model.set_classes(["person", "bus"])
+    
+    # Execute prediction on an image
+    results = model.predict("path/to/image.jpg")
+    
+    # Show results
+    results[0].show()
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/yoloe.md)
+
+[GLglenn-jocher14](https://github.com/glenn-jocher)[RIRizwanMunawar10](https://github.com/RizwanMunawar)[Y-Y-T-G7](https://github.com/Y-T-G)[LALaughing-q5](https://github.com/Laughing-q)[RAraimbekovm3](https://github.com/raimbekovm)[SHShuaiLYU2](https://github.com/ShuaiLYU)[ONonuralpszr2](https://github.com/onuralpszr)RORonald Eddy Jr1[FCfcakyon1](https://github.com/fcakyon)[PDpderrenger1](https://github.com/pderrenger)[PIpicsalex1](https://github.com/picsalex)WIWillie Maddox1[JSJShengP1](https://github.com/JShengP)[LEleonnil1](https://github.com/leonnil)
+
+Oluşturulma 19 Mar 2025Güncellenme 3 gün önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

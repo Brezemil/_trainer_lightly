@@ -1,0 +1,455 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/model-yaml-config
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-yaml-config.md)
+
+# Link to this sectionモデルYAML構成ガイド#
+
+モデルYAML構成ファイルは、Ultralyticsニューラルネットワークのアーキテクチャの設計図として機能します。これは、レイヤーの接続方法、各モジュールが使用するパラメータ、そしてネットワーク全体が異なるモデルサイズ全体にわたってどのようにスケーリングされるかを定義します。
+
+![Model YAML configuration workflow.](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yaml-configuration-guide.avif)
+
+## Link to this section構成構造#
+
+モデルYAMLファイルは、アーキテクチャを定義するために連携する3つの主要セクションで構成されています。
+
+### Link to this sectionパラメータセクション#
+
+この **parameters** セクションでは、モデルのグローバル特性とスケーリング動作を指定します。
+    
+    
+    # Parameters
+    nc: 80 # number of classes
+    scales: # compound scaling constants [depth, width, max_channels]
+        n: [0.50, 0.25, 1024] # nano: shallow layers, narrow channels
+        s: [0.50, 0.50, 1024] # small: shallow depth, standard width
+        m: [0.50, 1.00, 512] # medium: moderate depth, full width
+        l: [1.00, 1.00, 512] # large: full depth and width
+        x: [1.00, 1.50, 512] # extra-large: maximum performance
+    kpt_shape: [17, 3] # pose models only
+
+  * `nc` は、モデルが予測するクラス数を設定します。
+  * `scales` は、モデルの深さ、幅、および最大チャネル数を調整して、異なるサイズバリエーション（ナノからエクストララージまで）を生成するための複合スケーリング係数を定義します。
+  * `kpt_shape` はポーズモデルに適用されます。`[N, 2]` は `(x, y)` キーポイント、`[N, 3]` は `(x, y, visibility)` 用です。
+
+
+
+`scales` で冗長性を削減
+
+`scales` パラメータを使用すると、単一のベースYAMLから複数のモデルサイズを生成できます。例えば、`yolo26n.yaml` を読み込むと、Ultralyticsはベースの `yolo26.yaml` を読み込み、`n` スケーリング係数（`depth=0.50`、`width=0.25`）を適用してナノバリエーションを構築します。
+
+`nc` と `kpt_shape` はデータセットに依存します
+
+データセットで異なる `nc` や `kpt_shape` が指定されている場合、Ultralyticsはランタイム時にデータセットYAMLに合わせてモデル構成を自動的に上書きします。
+
+### Link to this sectionバックボーンとヘッドのアーキテクチャ#
+
+モデルアーキテクチャは、バックボーン（特徴抽出）とヘッド（タスク固有）のセクションで構成されています。
+    
+    
+    backbone:
+        # [from, repeats, module, args]
+        - [-1, 1, Conv, [64, 3, 2]] # 0: Initial convolution
+        - [-1, 1, Conv, [128, 3, 2]] # 1: Downsample
+        - [-1, 3, C2f, [128, True]] # 2: Feature processing
+    
+    head:
+        - [-1, 1, nn.Upsample, [None, 2, nearest]] # 6: Upsample
+        - [[-1, 2], 1, Concat, [1]] # 7: Skip connection
+        - [-1, 3, C2f, [256]] # 8: Process features
+        - [[8], 1, Detect, [nc]] # 9: Detection layer
+
+## Link to this sectionレイヤー仕様形式#
+
+すべてのレイヤーは、一貫したパターンに従います： **`[from, repeats, module, args]`**
+
+コンポーネント| 目的| 例  
+---|---|---  
+**from**|  入力接続| `-1`（前層）、`6`（レイヤー6）、`[4, 6, 8]`（マルチ入力）  
+**repeats**|  繰り返し数| `1`（単一）、`3`（3回繰り返し）  
+**module**|  モジュールタイプ| `Conv`, `C2f`, `TorchVision`, `Detect`  
+**args**|  モジュールの引数| `[64, 3, 2]`（チャネル、カーネル、ストライド）  
+  
+### Link to this section接続パターン#
+
+`from` フィールドは、ネットワーク全体で柔軟なデータフローパターンを作成します。
+    
+    
+    - [-1, 1, Conv, [64, 3, 2]]    # Takes input from previous layer
+
+レイヤーインデックス
+
+レイヤーは0からインデックス付けされます。負のインデックスは以前のレイヤーを参照し（`-1` = 前のレイヤー）、正のインデックスはその位置によって特定のレイヤーを参照します。
+
+### Link to this sectionモジュールの繰り返し#
+
+`repeats` パラメータは、より深いネットワークセクションを作成します。
+    
+    
+    - [-1, 3, C2f, [128, True]] # Creates 3 consecutive C2f blocks
+    - [-1, 1, Conv, [64, 3, 2]] # Single convolution layer
+
+実際の繰り返し数は、モデルサイズ構成の深さスケーリング係数によって乗算されます。
+
+## Link to this section利用可能なモジュール#
+
+モジュールは機能別に整理されており、[Ultralyticsモジュールディレクトリ](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules)で定義されています。以下の表は、よく使用されるモジュールをカテゴリ別に示しており、ソースコードにはさらに多くのモジュールが含まれています。
+
+### Link to this section基本的な操作#
+
+モジュール| 目的| ソース| 引数  
+---|---|---|---  
+`Conv`| 畳み込み + BatchNorm + 活性化| [conv.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/conv.py)| `[out_ch, kernel, stride, pad, groups]`  
+`nn.Upsample`| 空間アップサンプリング| [PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.nn.Upsample.html)| `[size, scale_factor, mode]`  
+`nn.Identity`| パススルー操作| [PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.nn.Identity.html)| `[]`  
+  
+### Link to this section複合ブロック#
+
+モジュール| 目的| ソース| 引数  
+---|---|---|---  
+`C2f`| 2つの畳み込みを備えたCSPボトルネック| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, shortcut, expansion]`  
+`SPPF`| 空間ピラミッドプーリング（高速）| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, kernel_size]`  
+`Concat`| チャネル単位の連結| [conv.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/conv.py)| `[dimension]`  
+  
+### Link to this section専門モジュール#
+
+モジュール| 目的| ソース| 引数  
+---|---|---|---  
+`TorchVision`| 任意のtorchvisionモデルを読み込み| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, model_name, weights, unwrap, truncate, split]`  
+`Index`| リストから特定のテンソルを抽出| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, index]`  
+`Detect`| YOLO検出ヘッド| [head.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/head.py)| `[nc]`  
+  
+完全なモジュールリスト
+
+これは利用可能なモジュールのサブセットです。モジュールの全リストとそのパラメータについては、[modulesディレクトリ](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules)を参照してください。
+
+## Link to this section高度な機能#
+
+### Link to this sectionTorchVisionの統合#
+
+TorchVisionモジュールは、任意の[TorchVisionモデル](https://docs.pytorch.org/vision/stable/models.html)をバックボーンとしてシームレスに統合できます。
+    
+    
+    from ultralytics import YOLO
+    
+    # Model with ConvNeXt backbone
+    model = YOLO("convnext_backbone.yaml")
+    results = model.train(data="coco8.yaml", epochs=100)
+
+マルチスケール特徴
+
+マルチスケール検出の中間特徴マップを取得するには、最後のパラメータを `True` に設定します。
+
+### Link to this section特徴選択のためのIndexモジュール#
+
+複数の特徴マップを出力するモデルを使用する場合、Indexモジュールは特定の出力を選択します。
+    
+    
+    backbone:
+        - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]] # Multi-output
+    head:
+        - [0, 1, Index, [192, 4]] # Select 4th feature map (192 channels)
+        - [0, 1, Index, [384, 6]] # Select 6th feature map (384 channels)
+        - [0, 1, Index, [768, 8]] # Select 8th feature map (768 channels)
+        - [[1, 2, 3], 1, Detect, [nc]] # Multi-scale detection
+
+## Link to this sectionモジュール解決システム#
+
+Ultralyticsがどのようにモジュールを検索しインポートするかを理解することは、カスタマイズにおいて非常に重要です。
+
+### Link to this sectionモジュール検索プロセス#
+
+Ultralyticsは[`parse_model`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py)内で3層システムを使用しています。
+    
+    
+    # Core resolution logic
+    m = (
+        getattr(torch.nn, m[3:])
+        if "nn." in m
+        else getattr(torchvision.ops, m[16:])
+        if "torchvision.ops." in m
+        else globals()[m]
+    )
+
+  1. **PyTorchモジュール** : `'nn.'`で始まる名前 → `torch.nn`名前空間
+  2. **TorchVisionオペレーション** : `'torchvision.ops.'`で始まる名前 → `torchvision.ops`名前空間
+  3. **Ultralyticsモジュール** : その他のすべての名前 → インポート経由でグローバル名前空間
+
+
+
+### Link to this sectionモジュールインポートチェーン#
+
+標準モジュールは、[`tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py)でのインポートを通じて利用可能になります。
+    
+    
+    from ultralytics.nn.modules import (  # noqa: F401
+        SPPF,
+        C2f,
+        Conv,
+        Detect,
+        # ... many more modules
+        Index,
+        TorchVision,
+    )
+
+## Link to this sectionカスタムモジュールの統合#
+
+### Link to this sectionソースコードの変更#
+
+ソースコードの変更はカスタムモジュールを統合する最も柔軟な方法ですが、難易度が高い場合があります。カスタムモジュールを定義して使用するには、以下の手順に従ってください。
+
+  1. [クイックスタートガイド](https://docs.ultralytics.com/quickstart#git-clone)のGitクローン方法を使用して、**Ultralyticsを開発モードでインストールします** 。
+
+  2. [`ultralytics/nn/modules/block.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)で**モジュールを定義します** 。
+         
+         class CustomBlock(nn.Module):
+             """Custom block with Conv-BatchNorm-ReLU sequence."""
+         
+             def __init__(self, c1, c2):
+                 """Initialize CustomBlock with input and output channels."""
+                 super().__init__()
+                 self.layers = nn.Sequential(nn.Conv2d(c1, c2, 3, 1, 1), nn.BatchNorm2d(c2), nn.ReLU())
+         
+             def forward(self, x):
+                 """Forward pass through the block."""
+                 return self.layers(x)
+
+  3. [`ultralytics/nn/modules/__init__.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/__init__.py)で、**パッケージレベルでモジュールを公開します** 。
+         
+         from .block import CustomBlock  # noqa makes CustomBlock available as ultralytics.nn.modules.CustomBlock
+
+  4. [`ultralytics/nn/tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py)で、**インポートに追加します** 。
+         
+         from ultralytics.nn.modules import CustomBlock  # noqa
+
+  5. **Handle special arguments** (if needed) inside [`parse_model()`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) in `ultralytics/nn/tasks.py`:
+         
+         # Add this condition in the parse_model() function
+         if m is CustomBlock:
+             c1, c2 = ch[f], args[0]  # input channels, output channels
+             args = [c1, c2, *args[1:]]
+
+  6. モデルYAMLで**モジュールを使用します** 。
+         
+         # custom_model.yaml
+         nc: 1
+         backbone:
+             - [-1, 1, CustomBlock, [64]]
+         head:
+             - [-1, 1, Classify, [nc]]
+
+  7. フォワードパスが機能することを確認するために**FLOPsをチェックします** 。
+         
+         from ultralytics import YOLO
+         
+         model = YOLO("custom_model.yaml", task="classify")
+         model.info()  # should print non-zero FLOPs if working
+
+
+
+
+## Link to this section設定例#
+
+### Link to this section基本的な検出モデル#
+    
+    
+    # Simple YOLO detection model
+    nc: 80
+    scales:
+        n: [0.33, 0.25, 1024]
+    
+    backbone:
+        - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+        - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+        - [-1, 3, C2f, [128, True]] # 2
+        - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+        - [-1, 6, C2f, [256, True]] # 4
+        - [-1, 1, SPPF, [256, 5]] # 5
+    
+    head:
+        - [-1, 1, Conv, [256, 3, 1]] # 6
+        - [[6], 1, Detect, [nc]] # 7
+
+### Link to this sectionTorchVisionバックボーンモデル#
+    
+    
+    # ConvNeXt backbone with YOLO head
+    nc: 80
+    
+    backbone:
+        - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]]
+    
+    head:
+        - [0, 1, Index, [192, 4]] # P3 features
+        - [0, 1, Index, [384, 6]] # P4 features
+        - [0, 1, Index, [768, 8]] # P5 features
+        - [[1, 2, 3], 1, Detect, [nc]] # Multi-scale detection
+
+### Link to this section分類モデル#
+    
+    
+    # Simple classification model
+    nc: 1000
+    
+    backbone:
+        - [-1, 1, Conv, [64, 7, 2, 3]]
+        - [-1, 1, nn.MaxPool2d, [3, 2, 1]]
+        - [-1, 4, C2f, [64, True]]
+        - [-1, 1, Conv, [128, 3, 2]]
+        - [-1, 8, C2f, [128, True]]
+        - [-1, 1, nn.AdaptiveAvgPool2d, [1]]
+    
+    head:
+        - [-1, 1, Classify, [nc]]
+
+## Link to this sectionベストプラクティス#
+
+### Link to this sectionアーキテクチャ設計のヒント#
+
+**シンプルに開始する** : カスタマイズする前に、実績のあるアーキテクチャから始めます。既存のYOLO設定をテンプレートとして使用し、ゼロから構築するのではなく、段階的に変更を加えます。
+
+**段階的にテストする** : 各変更ステップを検証します。カスタムモジュールを一度に1つずつ追加し、機能することを確認してから次の変更に進みます。
+
+**チャンネルを監視する** : 接続されたレイヤー間でチャンネル次元が一致していることを確認します。あるレイヤーの出力チャンネル（`c2`）は、シーケンス内の次のレイヤーの入力チャンネル（`c1`）と一致する必要があります。
+
+**スキップ接続を使用する** : `[[-1, N], 1, Concat, [1]]`パターンで特徴の再利用を活用します。これらの接続は勾配フローを助け、モデルが異なるスケールの特徴を組み合わせることを可能にします。
+
+**適切にスケーリングする** : 計算上の制約に基づいてモデルのスケールを選択します。エッジデバイスにはナノ（`n`）、バランスの取れたパフォーマンスにはスモール（`s`）、最大の精度にはより大きなスケール（`m`, `l`, `x`）を使用します。
+
+### Link to this sectionパフォーマンスに関する考慮事項#
+
+**深度と幅** : 深いネットワークは複数の変換レイヤーを通じて複雑な階層的特徴を捉えますが、幅の広いネットワークは各レイヤーでより多くの情報を並行して処理します。タスクの複雑さに基づいてこれらをバランスさせます。
+
+**スキップ接続** : トレーニング中の勾配フローを改善し、ネットワーク全体で特徴の再利用を可能にします。消失勾配を防ぐため、より深いアーキテクチャでは特に重要です。
+
+**ボトルネックブロック** : モデルの表現力を維持しながら計算コストを削減します。`C2f`のようなモジュールは、特徴学習能力を維持しながら標準的な畳み込みよりも少ないパラメータを使用します。
+
+**マルチスケール特徴** : 同一画像内の異なるサイズのオブジェクトを検出するために不可欠です。異なるスケールで複数の検出ヘッドを持つFeature Pyramid Network（FPN）パターンを使用します。
+
+## Link to this sectionトラブルシューティング#
+
+### Link to this section一般的な問題#
+
+問題| 原因| 解決策  
+---|---|---  
+`KeyError: 'ModuleName'`| モジュールがインポートされていません| [`tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py)のインポートに追加します  
+チャンネル次元の不一致| `args`指定が誤っています| 入出力チャンネルの互換性を確認します  
+`AttributeError: 'int' object has no attribute`| 引数の型が間違っています| 正しい引数の型についてモジュールのドキュメントを確認します  
+モデルの構築に失敗します| 無効な`from`参照| 参照されたレイヤーが存在することを確認します  
+  
+### Link to this sectionデバッグのヒント#
+
+カスタムアーキテクチャを開発する際、体系的なデバッグが早期の問題特定に役立ちます。
+
+**テストにIdentity Headを使用する**
+
+複雑なヘッドを`nn.Identity`に置き換えて、バックボーンの問題を分離します。
+    
+    
+    nc: 1
+    backbone:
+        - [-1, 1, CustomBlock, [64]]
+    head:
+        - [-1, 1, nn.Identity, []] # Pass-through for debugging
+
+これにより、バックボーンの出力を直接検査できます。
+    
+    
+    import torch
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("debug_model.yaml")
+    output = model.model(torch.randn(1, 3, 640, 640))
+    print(f"Output shape: {output.shape}")  # Should match expected dimensions
+
+**モデルアーキテクチャの検査**
+
+FLOPsカウントをチェックし、各レイヤーを出力することも、カスタムモデル設定の問題をデバッグするのに役立ちます。有効なモデルであれば、FLOPsカウントはゼロ以外の値になるはずです。ゼロの場合、フォワードパスに問題がある可能性が高いです。シンプルなフォワードパスを実行すると、発生している正確なエラーが表示されるはずです。
+    
+    
+    from ultralytics import YOLO
+    
+    # Build model with verbose output to see layer details
+    model = YOLO("debug_model.yaml", verbose=True)
+    
+    # Check model FLOPs. Failed forward pass causes 0 FLOPs.
+    model.info()
+    
+    # Inspect individual layers
+    for i, layer in enumerate(model.model.model):
+        print(f"Layer {i}: {layer}")
+
+**段階的な検証**
+
+  1. **最小限で開始** : まずは最もシンプルなアーキテクチャでテストします
+  2. **段階的に追加** : レイヤーごとに複雑さを構築します
+  3. **次元を確認** : チャンネルと空間サイズの互換性を検証します
+  4. **スケーリングを検証** : 異なるモデルスケール（`n`, `s`, `m`）でテストします
+
+
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionモデルのクラス数を変更するにはどうすればよいですか？#
+
+YAMLファイルの上部にある`nc`パラメータを、データセットのクラス数に合わせて設定します。
+    
+    
+    nc: 5 # 5 classes
+
+### Link to this sectionモデルYAMLでカスタムバックボーンを使用できますか？#
+
+はい。TorchVisionバックボーンを含むサポートされている任意のモジュールを使用するか、独自のカスタムモジュールを定義してカスタムモジュールの統合で説明されているようにインポートできます。
+
+### Link to this section異なるサイズ（ナノ、スモール、ミディアムなど）に合わせてモデルをスケーリングするにはどうすればよいですか？#
+
+YAML内の`scales`セクションを使用して、深度、幅、最大チャンネルのスケーリング係数を定義します。ベースのYAMLファイルを読み込み、ファイル名にスケールを付加（例: `yolo26n.yaml`）すると、モデルは自動的にこれらを適用します。
+
+### Link to this section`[from, repeats, module, args]`形式は何を意味しますか？#
+
+この形式は、各レイヤーがどのように構築されるかを指定します。
+
+  * `from`: 入力ソース
+  * `repeats`: モジュールを繰り返す回数
+  * `module`: レイヤーの型
+  * `args`: モジュールの引数
+
+
+
+### Link to this sectionチャンネル不一致エラーのトラブルシューティング方法は？#
+
+あるレイヤーの出力チャンネルが、次のレイヤーの期待される入力チャンネルと一致していることを確認します。`print(model.model.model)`を使用してモデルのアーキテクチャを検査します。
+
+### Link to this section利用可能なモジュールとその引数のリストはどこで見つけられますか？#
+
+利用可能なすべてのモジュールとその引数については、[`ultralytics/nn/modules`ディレクトリ](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules)のソースコードを確認してください。
+
+### Link to this sectionYAML設定にカスタムモジュールを追加するにはどうすればよいですか？#
+
+ソースコードでモジュールを定義し、ソースコードの変更に示すようにインポートし、YAMLファイル内で名前を指定して参照します。
+
+### Link to this sectionカスタムYAMLで事前学習済み重みを使用できますか？#
+
+はい、`model.load("path/to/weights")`を使用して事前学習済みチェックポイントから重みを読み込むことができます。ただし、一致するレイヤーの重みのみが正常に読み込まれます。
+
+### Link to this sectionモデル設定を検証するにはどうすればよいですか？#
+
+`model.info()`を使用して、FLOPsカウントがゼロ以外であることを確認します。有効なモデルであれば、ゼロ以外のFLOPsカウントが表示されるはずです。ゼロの場合は、デバッグのヒントの提案に従って問題を見つけてください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-yaml-config.md)
+
+[GLglenn-jocher7](https://github.com/glenn-jocher)[Y-Y-T-G2](https://github.com/Y-T-G)[RIRizwanMunawar1](https://github.com/RizwanMunawar)
+
+作成日 2025年9月16日更新日 2 週間前
+
+## コメント
+
+このページの内容
+
+AIで探索

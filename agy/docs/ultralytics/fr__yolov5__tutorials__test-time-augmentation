@@ -1,0 +1,187 @@
+---
+source_url: https://docs.ultralytics.com/fr/yolov5/tutorials/test-time-augmentation
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/test-time-augmentation.md)
+
+# Link to this sectionAugmentation lors du test (TTA)#
+
+📚 Ce guide t'explique comment utiliser l'augmentation lors du test (TTA) pendant la phase de test et d'inférence pour améliorer le mAP et le [Recall](https://www.ultralytics.com/glossary/recall) avec YOLOv5 🚀.
+
+## Link to this sectionAvant de commencer#
+
+Clone le dépôt et installe [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) dans un environnement [**Python >=3.8.0**](https://www.python.org/), y compris [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). Les [modèles](https://github.com/ultralytics/yolov5/tree/master/models) et les [jeux de données](https://github.com/ultralytics/yolov5/tree/master/data) se téléchargent automatiquement depuis la dernière [version](https://github.com/ultralytics/yolov5/releases) de YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+## Link to this sectionTest normal#
+
+Avant d'essayer TTA, nous voulons établir une performance de base pour comparer. Cette commande teste YOLOv5x sur COCO val2017 à une taille d'image de 640 pixels. `yolov5x.pt` est le modèle le plus grand et le plus précis disponible. Les autres options sont `yolov5s.pt`, `yolov5m.pt` et `yolov5l.pt`, ou ton propre point de contrôle issu de l'entraînement sur un jeu de données personnalisé `./weights/best.pt`. Pour plus de détails sur tous les modèles disponibles, consulte notre [documentation YOLOv5](https://docs.ultralytics.com/models/yolov5).
+    
+    
+    python val.py --weights yolov5x.pt --data coco.yaml --img 640 --half
+
+Sortie :
+    
+    
+    val: data=./data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients
+    
+    val: Scanning '../datasets/coco/val2017' images and labels...4952 found, 48 missing, 0 empty, 0 corrupted: 100% 5000/5000 [00:01<00:00, 2846.03it/s]
+    val: New cache created: ../datasets/coco/val2017.cache
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [02:30<00:00,  1.05it/s]
+                     all       5000      36335      0.746      0.626       0.68       0.49
+    Speed: 0.1ms pre-process, 22.4ms inference, 1.4ms NMS per image at shape (32, 3, 640, 640)  # <--- baseline speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.504  # <--- baseline mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.688
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.546
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.351
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.551
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.644
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.382
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.628
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.681  # <--- baseline mAR
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.524
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.735
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.826
+
+## Link to this sectionTest avec TTA#
+
+Ajoute `--augment` à toute commande `val.py` existante pour activer TTA, et augmente la taille de l'image d'environ 30 % pour de meilleurs résultats. Note que l'inférence avec TTA activé prendra généralement environ 2 à 3 fois plus de temps qu'une inférence normale, car les images sont inversées horizontalement et traitées à 3 résolutions différentes, avec les sorties fusionnées avant le [NMS](https://www.ultralytics.com/glossary/non-maximum-suppression-nms). Une partie de la baisse de vitesse est simplement due aux tailles d'image plus grandes (832 vs 640), tandis qu'une autre partie est due aux opérations TTA réelles, donc assure-toi que ton GPU dispose de suffisamment de mémoire avant d'augmenter `--img`.
+    
+    
+    python val.py --weights yolov5x.pt --data coco.yaml --img 832 --augment --half
+
+Sortie :
+    
+    
+    val: data=./data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=832, conf_thres=0.001, iou_thres=0.6, task=val, device=, single_cls=False, augment=True, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    /usr/local/lib/python3.7/dist-packages/torch/nn/functional.py:718: UserWarning: Named tensors and all their associated APIs are an experimental feature and subject to change. Please do not use them for anything important until they are released as stable. (Triggered internally at  /pytorch/c10/core/TensorImpl.h:1156.)
+      return torch.max_pool2d(input, kernel_size, stride, padding, dilation, ceil_mode)
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients
+    val: Scanning '../datasets/coco/val2017' images and labels...4952 found, 48 missing, 0 empty, 0 corrupted: 100% 5000/5000 [00:01<00:00, 2885.61it/s]
+    val: New cache created: ../datasets/coco/val2017.cache
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [07:29<00:00,  2.86s/it]
+                     all       5000      36335      0.718      0.656      0.695      0.503
+    Speed: 0.2ms pre-process, 80.6ms inference, 2.7ms NMS per image at shape (32, 3, 832, 832)  # <--- TTA speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-2/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.516  # <--- TTA mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.701
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.562
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.361
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.564
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.656
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.388
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.640
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.696  # <--- TTA mAR
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.553
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.744
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.833
+
+## Link to this sectionInférence avec TTA#
+
+L'inférence TTA de `detect.py` fonctionne de manière identique au TTA de `val.py` : ajoute simplement `--augment` à toute commande `detect.py` existante :
+    
+    
+    python detect.py --weights yolov5s.pt --img 832 --source data/images --augment
+
+Sortie :
+    
+    
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Downloading https://github.com/ultralytics/yolov5/releases/download/v5.0/yolov5s.pt to yolov5s.pt...
+    100% 14.1M/14.1M [00:00<00:00, 81.9MB/s]
+    
+    Fusing layers...
+    Model Summary: 224 layers, 7266973 parameters, 0 gradients
+    image 1/2 /content/yolov5/data/images/bus.jpg: 832x640 4 persons, 1 bus, 1 fire hydrant, Done. (0.029s)
+    image 2/2 /content/yolov5/data/images/zidane.jpg: 480x832 3 persons, 3 ties, Done. (0.024s)
+    Results saved to runs/detect/exp
+    Done. (0.156s)
+
+![YOLOv5 test time augmentations](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-test-time-augmentations.avif)
+
+### Link to this sectionPyTorch Hub TTA#
+
+TTA est automatiquement intégré dans tous les modèles [YOLOv5 PyTorch Hub](https://pytorch.org/hub/ultralytics_yolov5/) et peut être accessible en passant `augment=True` lors de l'inférence.
+    
+    
+    import torch
+    
+    # Model
+    model = torch.hub.load("ultralytics/yolov5", "yolov5s")  # or yolov5m, yolov5x, custom
+    
+    # Images
+    img = "https://ultralytics.com/images/zidane.jpg"  # or file, PIL, OpenCV, numpy, multiple
+    
+    # Inference
+    results = model(img, augment=True)  # <--- TTA inference
+    
+    # Results
+    results.print()  # or .show(), .save(), .crop(), .pandas(), etc.
+
+### Link to this sectionPersonnalisation#
+
+Tu peux personnaliser les opérations TTA appliquées dans la [méthode YOLOv5 `forward_augment()`](https://github.com/ultralytics/yolov5/blob/8c6f9e15bfc0000d18b976a95b9d7c17d407ec91/models/yolo.py#L125-L137).
+
+## Link to this sectionAvantages de l'augmentation lors du test (TTA)#
+
+L'augmentation lors du test offre plusieurs avantages clés pour les tâches de [détection d'objets](https://www.ultralytics.com/glossary/object-detection) :
+
+  * **Précision améliorée** : Comme démontré dans les résultats ci-dessus, TTA augmente le mAP de 0,504 à 0,516 et le mAR de 0,681 à 0,696.
+  * **Meilleure détection des petits objets** : TTA améliore particulièrement la détection des petits objets, avec un AP de petite surface passant de 0,351 à 0,361.
+  * **Robustesse accrue** : En testant plusieurs variations de chaque image, TTA réduit l'impact de l'angle de vue, de l'éclairage et d'autres facteurs environnementaux.
+  * **Implémentation simple** : Nécessite uniquement l'ajout de l'indicateur `--augment` aux commandes existantes.
+
+
+
+Le compromis est un temps d'inférence accru, ce qui rend TTA plus adapté aux applications où la précision est priorisée sur la vitesse.
+
+## Link to this sectionEnvironnements pris en charge#
+
+Ultralytics propose une gamme d'environnements prêts à l'emploi, chacun pré-installé avec les dépendances essentielles telles que [CUDA](https://developer.nvidia.com/cuda), [CUDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/) et [PyTorch](https://pytorch.org/), pour lancer tes projets.
+
+  * **Notebooks GPU gratuits** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [Guide de démarrage rapide GCP](/fr/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [Guide de démarrage rapide AWS](/fr/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [Guide de démarrage rapide AzureML](/fr/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Guide de démarrage rapide Docker](/fr/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionStatut du projet#
+
+[![YOLOv5 CI](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+Ce badge indique que tous les tests d'intégration continue (CI) de [GitHub Actions YOLOv5](https://github.com/ultralytics/yolov5/actions) réussissent. Ces tests CI vérifient rigoureusement la fonctionnalité et les performances de YOLOv5 sous divers aspects clés : [entraînement](https://github.com/ultralytics/yolov5/blob/master/train.py), [validation](https://github.com/ultralytics/yolov5/blob/master/val.py), [inférence](https://github.com/ultralytics/yolov5/blob/master/detect.py), [exportation](https://github.com/ultralytics/yolov5/blob/master/export.py) et [benchmarks](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). Ils garantissent un fonctionnement cohérent et fiable sur macOS, Windows et Ubuntu, avec des tests effectués toutes les 24 heures et à chaque nouveau commit.
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/test-time-augmentation.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Créé il y a 3 joursMis à jour il y a 3 jours
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

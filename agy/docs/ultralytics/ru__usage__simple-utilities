@@ -1,0 +1,672 @@
+---
+source_url: https://docs.ultralytics.com/ru/usage/simple-utilities
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/usage/simple-utilities.md)
+
+# Link to this sectionПростые утилиты#
+
+![YOLO model code with 3D perspective visualization](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/code-with-perspective.avif)
+
+Пакет `ultralytics` предоставляет множество утилит для поддержки, улучшения и ускорения твоих рабочих процессов. Хотя их доступно гораздо больше, в этом руководстве освещены наиболее полезные из них для разработчиков, служащие практическим справочником по программированию с инструментами Ultralytics.
+
+  
+
+
+  
+**Watch:** Ultralytics Utilities | Auto Annotation, Explorer API and Dataset Conversion 
+
+## Link to this sectionДанные#
+
+### Link to this sectionАвтоматическая разметка / Аннотации#
+
+[Аннотирование наборов данных](https://www.ultralytics.com/annotate) — это ресурсоемкий и трудозатратный процесс. Если у тебя есть модель [обнаружения объектов](https://www.ultralytics.com/glossary/object-detection) Ultralytics YOLO, обученная на достаточном объеме данных, ты можешь использовать ее вместе с [SAM](/ru/models/sam) для автоматической разметки дополнительных данных в формате сегментации.
+    
+    
+    from ultralytics.data.annotator import auto_annotate
+    
+    auto_annotate(
+        data="path/to/new/data",
+        det_model="yolo26n.pt",
+        sam_model="mobile_sam.pt",
+        device="cuda",
+        output_dir="path/to/save_labels",
+    )
+
+Эта функция не возвращает никакого значения. Подробности см. ниже:
+
+  * Смотри [раздел справочника по `annotator.auto_annotate`](/reference/data/annotator#ultralytics.data.annotator.auto_annotate) для получения дополнительной информации о том, как работает эта функция.
+  * Используй ее в сочетании с функцией `segments2boxes`, чтобы также генерировать ограничивающие рамки (bounding boxes) для обнаружения объектов.
+
+
+
+### Link to this sectionВизуализация аннотаций набора данных#
+
+Эта функция визуализирует аннотации YOLO на изображении перед обучением, помогая выявить и исправить любые ошибочные аннотации, которые могут привести к неверным результатам обнаружения. Она рисует ограничивающие рамки, помечает объекты названиями классов и регулирует цвет текста в зависимости от яркости фона для лучшей читаемости.
+    
+    
+    from ultralytics.data.utils import visualize_image_annotations
+    
+    label_map = {  # Define the label map with all annotated class labels.
+        0: "person",
+        1: "car",
+    }
+    
+    # Visualize
+    visualize_image_annotations(
+        "path/to/image.jpg",  # Input image path.
+        "path/to/annotations.txt",  # Annotation file path for the image.
+        label_map,
+    )
+
+### Link to this sectionПреобразование масок сегментации в формат YOLO#
+
+![Преобразование масок сегментации в формат YOLO](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/segmentation-masks-to-yolo-format.avif)
+
+Используй это, чтобы преобразовать набор данных изображений масок сегментации в формат сегментации [Ultralytics YOLO](/ru/models/yolo26). Эта функция берет каталог, содержащий изображения масок в двоичном формате, и преобразует их в формат сегментации YOLO.
+
+Преобразованные маски будут сохранены в указанном выходном каталоге.
+    
+    
+    from ultralytics.data.converter import convert_segment_masks_to_yolo_seg
+    
+    # The classes here is the total classes in the dataset.
+    # for COCO dataset we have 80 classes.
+    convert_segment_masks_to_yolo_seg(masks_dir="path/to/masks_dir", output_dir="path/to/output_dir", classes=80)
+
+### Link to this sectionПреобразование COCO в формат YOLO#
+
+Используй это для преобразования JSON-аннотаций [COCO](https://docs.ultralytics.com/datasets/detect/coco) в формат YOLO. Для наборов данных по обнаружению объектов (ограничивающие рамки) установи `use_segments` и `use_keypoints` в значение `False`.
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        "coco/annotations/",
+        use_segments=False,
+        use_keypoints=False,
+        cls91to80=True,
+    )
+
+Для получения дополнительной информации о функции `convert_coco` [посети справочную страницу](/reference/data/converter#ultralytics.data.converter.convert_coco).
+
+### Link to this sectionПолучение размеров ограничивающих рамок#
+    
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    from ultralytics.utils.plotting import Annotator
+    
+    model = YOLO("yolo26n.pt")  # Load pretrain or fine-tune model
+    
+    # Process the image
+    source = cv2.imread("path/to/image.jpg")
+    results = model(source)
+    
+    # Extract results
+    annotator = Annotator(source, example=model.names)
+    
+    for box in results[0].boxes.xyxy.cpu():
+        width, height, area = annotator.get_bbox_dimension(box)
+        print(f"Bounding Box Width {width.item()}, Height {height.item()}, Area {area.item()}")
+
+### Link to this sectionПреобразование ограничивающих рамок в сегменты#
+
+Имея существующие данные ограничивающих рамок `x y w h`, преобразуй их в сегменты с помощью функции `yolo_bbox2segment`. Организуй файлы для изображений и аннотаций следующим образом:
+    
+    
+    data
+    |__ images
+        ├─ 001.jpg
+        ├─ 002.jpg
+        ├─ ..
+        └─ NNN.jpg
+    |__ labels
+        ├─ 001.txt
+        ├─ 002.txt
+        ├─ ..
+        └─ NNN.txt
+    
+    
+    from ultralytics.data.converter import yolo_bbox2segment
+    
+    yolo_bbox2segment(
+        im_dir="path/to/images",
+        save_dir=None,  # saved to "labels-segment" in images directory
+        sam_model="sam_b.pt",
+    )
+
+[Посети справочную страницу `yolo_bbox2segment`](/reference/data/converter#ultralytics.data.converter.yolo_bbox2segment) для получения дополнительной информации о функции.
+
+### Link to this sectionПреобразование сегментов в ограничивающие рамки#
+
+Если у тебя есть набор данных, который использует [формат набора данных сегментации](/ru/datasets/segment), ты можешь легко преобразовать их в вертикальные (или горизонтальные) ограничивающие рамки (формат `x y w h`) с помощью этой функции.
+    
+    
+    import numpy as np
+    
+    from ultralytics.utils.ops import segments2boxes
+    
+    segments = np.array(
+        [
+            [805, 392, 797, 400, 812, 402, 808, 714, 808, 392],
+            [115, 398, 113, 400, 150, 410, 150, 400, 149, 298],
+            [267, 412, 265, 413, 300, 420, 300, 413, 299, 412],
+        ],
+        dtype=np.float32,
+    )
+    
+    segments2boxes([s.reshape(-1, 2) for s in segments])
+    # >>> array([[804.5, 553. ,  15. , 322. ],
+    #           [131.5, 354. ,  37. , 112. ],
+    #           [282.5, 416. ,  35. ,   8. ]],
+    #           dtype=float32) # xywh bounding boxes
+
+Чтобы понять, как работает эта функция, посети [справочную страницу](/reference/utils/ops#ultralytics.utils.ops.segments2boxes).
+
+## Link to this sectionУтилиты#
+
+### Link to this sectionСжатие изображений#
+
+Сжимай отдельный файл изображения до уменьшенного размера, сохраняя его соотношение сторон и качество. Если входное изображение меньше максимального размера, оно не будет изменено.
+    
+    
+    from pathlib import Path
+    
+    from ultralytics.data.utils import compress_one_image
+    
+    for f in Path("path/to/dataset").rglob("*.jpg"):
+        compress_one_image(f)
+
+### Link to this sectionАвтоматическое разделение набора данных#
+
+Автоматически разделяй набор данных на выборки `train`/`val`/`test` и сохраняй полученные результаты в файлы `autosplit_*.txt`. Эта функция использует случайную выборку, которая исключается при использовании [аргумента `fraction` для обучения](/ru/modes/train#train-settings).
+    
+    
+    from ultralytics.data.split import autosplit
+    
+    autosplit(
+        path="path/to/images",
+        weights=(0.9, 0.1, 0.0),  # (train, validation, test) fractional splits
+        annotated_only=False,  # split only images with annotation file when True
+    )
+
+Смотри [справочную страницу](/reference/data/split#ultralytics.data.split.autosplit) для получения дополнительных сведений об этой функции.
+
+### Link to this sectionПреобразование сегментного многоугольника в бинарную маску#
+
+Преобразуй отдельный многоугольник (как список) в бинарную маску заданного размера изображения. Многоугольник должен быть плоским 1D-массивом из `N` координат, где чередуются значения `x, y`, определяющие контур многоугольника.
+
+Предупреждение
+
+`N` **всегда должно** быть четным.
+    
+    
+    import numpy as np
+    
+    from ultralytics.data.utils import polygon2mask
+    
+    imgsz = (1080, 810)
+    polygon = np.array([805, 392, 797, 400, ..., 808, 714, 808, 392])  # (238, 2)
+    
+    mask = polygon2mask(
+        imgsz,  # tuple
+        [polygon],  # input as list
+        color=255,  # 8-bit binary
+        downsample_ratio=1,
+    )
+
+## Link to this sectionОграничивающие рамки#
+
+### Link to this sectionЭкземпляры ограничивающих рамок (горизонтальные)#
+
+Для управления данными ограничивающих рамок класс `Bboxes` помогает преобразовывать форматы координат рамок, масштабировать размеры рамок, вычислять площади, включать смещения и многое другое.
+    
+    
+    import numpy as np
+    
+    from ultralytics.utils.instance import Bboxes
+    
+    boxes = Bboxes(
+        bboxes=np.array(
+            [
+                [22.878, 231.27, 804.98, 756.83],
+                [48.552, 398.56, 245.35, 902.71],
+                [669.47, 392.19, 809.72, 877.04],
+                [221.52, 405.8, 344.98, 857.54],
+                [0, 550.53, 63.01, 873.44],
+                [0.0584, 254.46, 32.561, 324.87],
+            ]
+        ),
+        format="xyxy",
+    )
+    
+    boxes.areas()
+    # >>> array([ 4.1104e+05,       99216,       68000,       55772,       20347,      2288.5])
+    
+    boxes.convert("xywh")
+    print(boxes.bboxes)
+    # >>> array(
+    #     [[ 413.93, 494.05,  782.1, 525.56],
+    #      [ 146.95, 650.63,  196.8, 504.15],
+    #      [  739.6, 634.62, 140.25, 484.85],
+    #      [ 283.25, 631.67, 123.46, 451.74],
+    #      [ 31.505, 711.99,  63.01, 322.91],
+    #      [  16.31, 289.67, 32.503,  70.41]]
+    # )
+
+Смотри [раздел справочника `Bboxes`](/reference/utils/instance#ultralytics.utils.instance.Bboxes) для получения информации о дополнительных атрибутах и методах.
+
+Совет
+
+Многие из следующих функций (и другие) можно вызвать, используя класс `Bboxes`, но если ты предпочитаешь работать с функциями напрямую, смотри следующие подразделы, чтобы узнать, как импортировать их независимо.
+
+### Link to this sectionМасштабирование рамок#
+
+При увеличении или уменьшении изображения ты можешь соответствующим образом масштабировать координаты ограничивающих рамок с помощью `ultralytics.utils.ops.scale_boxes`.
+    
+    
+    import cv2 as cv
+    import numpy as np
+    
+    from ultralytics.utils.ops import scale_boxes
+    
+    image = cv.imread("ultralytics/assets/bus.jpg")
+    h, w, c = image.shape
+    resized = cv.resize(image, None, (), fx=1.2, fy=1.2)
+    new_h, new_w, _ = resized.shape
+    
+    xyxy_boxes = np.array(
+        [
+            [22.878, 231.27, 804.98, 756.83],
+            [48.552, 398.56, 245.35, 902.71],
+            [669.47, 392.19, 809.72, 877.04],
+            [221.52, 405.8, 344.98, 857.54],
+            [0, 550.53, 63.01, 873.44],
+            [0.0584, 254.46, 32.561, 324.87],
+        ]
+    )
+    
+    new_boxes = scale_boxes(
+        img1_shape=(h, w),  # original image dimensions
+        boxes=xyxy_boxes,  # boxes from original image
+        img0_shape=(new_h, new_w),  # resized image dimensions (scale to)
+        ratio_pad=None,
+        padding=False,
+        xywh=False,
+    )
+    
+    print(new_boxes)
+    # >>> array(
+    #     [[  27.454,  277.52,  965.98,   908.2],
+    #     [   58.262,  478.27,  294.42,  1083.3],
+    #     [   803.36,  470.63,  971.66,  1052.4],
+    #     [   265.82,  486.96,  413.98,    1029],
+    #     [        0,  660.64,  75.612,  1048.1],
+    #     [   0.0701,  305.35,  39.073,  389.84]]
+    # )
+
+### Link to this sectionПреобразования формата ограничивающих рамок#
+
+#### Link to this sectionXYXY → XYWH#
+
+Преобразуй координаты ограничивающей рамки из формата (x1, y1, x2, y2) в формат (x, y, width, height), где (x1, y1) — левый верхний угол, а (x2, y2) — правый нижний угол.
+    
+    
+    import numpy as np
+    
+    from ultralytics.utils.ops import xyxy2xywh
+    
+    xyxy_boxes = np.array(
+        [
+            [22.878, 231.27, 804.98, 756.83],
+            [48.552, 398.56, 245.35, 902.71],
+            [669.47, 392.19, 809.72, 877.04],
+            [221.52, 405.8, 344.98, 857.54],
+            [0, 550.53, 63.01, 873.44],
+            [0.0584, 254.46, 32.561, 324.87],
+        ]
+    )
+    xywh = xyxy2xywh(xyxy_boxes)
+    
+    print(xywh)
+    # >>> array(
+    #     [[ 413.93,  494.05,   782.1, 525.56],
+    #     [  146.95,  650.63,   196.8, 504.15],
+    #     [   739.6,  634.62,  140.25, 484.85],
+    #     [  283.25,  631.67,  123.46, 451.74],
+    #     [  31.505,  711.99,   63.01, 322.91],
+    #     [   16.31,  289.67,  32.503,  70.41]]
+    # )
+
+### Link to this sectionВсе преобразования ограничивающих рамок#
+    
+    
+    from ultralytics.utils.ops import (
+        ltwh2xywh,
+        ltwh2xyxy,
+        xywh2ltwh,  # xywh → top-left corner, w, h
+        xywh2xyxy,
+        xywhn2xyxy,  # normalized → pixel
+        xyxy2ltwh,  # xyxy → top-left corner, w, h
+        xyxy2xywhn,  # pixel → normalized
+    )
+    
+    for func in (ltwh2xywh, ltwh2xyxy, xywh2ltwh, xywh2xyxy, xywhn2xyxy, xyxy2ltwh, xyxy2xywhn):
+        print(help(func))  # print function docstrings
+
+See the docstring for each function or visit the `ultralytics.utils.ops` [reference page](/reference/utils/ops) to read more.
+
+## Link to this sectionВизуализация#
+
+### Link to this sectionУтилиты для аннотирования#
+
+Ultralytics включает класс `Annotator` для аннотирования различных типов данных. Его лучше всего использовать с [ограничивающими рамками обнаружения объектов](/ru/modes/predict#boxes), [ключевыми точками позы](/ru/modes/predict#keypoints) и [ориентированными ограничивающими рамками](/ru/modes/predict#obb).
+
+#### Link to this sectionАннотация рамками#
+
+Примеры на Python с использованием Ultralytics YOLO 🚀
+    
+    
+    import cv2 as cv
+    import numpy as np
+    
+    from ultralytics.utils.plotting import Annotator, colors
+    
+    names = {
+        0: "person",
+        5: "bus",
+        11: "stop sign",
+    }
+    
+    image = cv.imread("ultralytics/assets/bus.jpg")
+    ann = Annotator(
+        image,
+        line_width=None,  # default auto-size
+        font_size=None,  # default auto-size
+        font="Arial.ttf",  # must be ImageFont compatible
+        pil=False,  # use PIL, otherwise uses OpenCV
+    )
+    
+    xyxy_boxes = np.array(
+        [
+            [5, 22.878, 231.27, 804.98, 756.83],  # class-idx x1 y1 x2 y2
+            [0, 48.552, 398.56, 245.35, 902.71],
+            [0, 669.47, 392.19, 809.72, 877.04],
+            [0, 221.52, 405.8, 344.98, 857.54],
+            [0, 0, 550.53, 63.01, 873.44],
+            [11, 0.0584, 254.46, 32.561, 324.87],
+        ]
+    )
+    
+    for nb, box in enumerate(xyxy_boxes):
+        c_idx, *box = box
+        label = f"{str(nb).zfill(2)}:{names.get(int(c_idx))}"
+        ann.box_label(box, label, color=colors(c_idx, bgr=True))
+    
+    image_with_bboxes = ann.result()
+
+Имена можно использовать из `model.names` при [работе с результатами обнаружения](/ru/modes/predict#working-with-results). Также смотри [справочную страницу `Annotator`](/reference/utils/plotting#ultralytics.utils.plotting.Annotator) для получения дополнительной информации.
+
+#### Link to this sectionАннотация Ultralytics Sweep#
+
+Аннотация Sweep с использованием утилит Ultralytics
+    
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    from ultralytics.solutions.solutions import SolutionAnnotator
+    from ultralytics.utils.plotting import colors
+    
+    # User defined video path and model file
+    cap = cv2.VideoCapture("path/to/video.mp4")
+    model = YOLO(model="yolo26s-seg.pt")  # Model file, e.g., yolo26s.pt or yolo26m-seg.pt
+    
+    if not cap.isOpened():
+        print("Error: Could not open video.")
+        exit()
+    
+    # Initialize the video writer object.
+    w, h, fps = (int(cap.get(x)) for x in (cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS))
+    video_writer = cv2.VideoWriter("ultralytics.avi", cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    
+    masks = None  # Initialize variable to store masks data
+    f = 0  # Initialize frame count variable for enabling mouse event.
+    line_x = w  # Store width of line.
+    dragging = False  # Initialize bool variable for line dragging.
+    classes = model.names  # Store model classes names for plotting.
+    window_name = "Ultralytics Sweep Annotator"
+    
+    def drag_line(event, x, _, flags, param):
+        """Mouse callback function to enable dragging a vertical sweep line across the video frame."""
+        global line_x, dragging
+        if event == cv2.EVENT_LBUTTONDOWN or (flags & cv2.EVENT_FLAG_LBUTTON):
+            line_x = max(0, min(x, w))
+            dragging = True
+    
+    while cap.isOpened():  # Loop over the video capture object.
+        ret, im0 = cap.read()
+        if not ret:
+            break
+        f = f + 1  # Increment frame count.
+        count = 0  # Re-initialize count variable on every frame for precise counts.
+        results = model.track(im0, persist=True)[0]
+    
+        if f == 1:
+            cv2.namedWindow(window_name)
+            cv2.setMouseCallback(window_name, drag_line)
+    
+        annotator = SolutionAnnotator(im0)
+    
+        if results.boxes.is_track:
+            if results.masks is not None:
+                masks = [np.array(m, dtype=np.int32) for m in results.masks.xy]
+    
+            boxes = results.boxes.xyxy.tolist()
+            track_ids = results.boxes.id.int().cpu().tolist()
+            clss = results.boxes.cls.cpu().tolist()
+    
+            for mask, box, cls, t_id in zip(masks or [None] * len(boxes), boxes, clss, track_ids):
+                color = colors(t_id, True)  # Assign different color to each tracked object.
+                label = f"{classes[cls]}:{t_id}"
+                if mask is not None and mask.size > 0:
+                    if box[0] > line_x:
+                        count += 1
+                        cv2.polylines(im0, [mask], True, color, 2)
+                        x, y = mask.min(axis=0)
+                        (w_m, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                        cv2.rectangle(im0, (x, y - 20), (x + w_m, y), color, -1)
+                        cv2.putText(im0, label, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                else:
+                    if box[0] > line_x:
+                        count += 1
+                        annotator.box_label(box=box, color=color, label=label)
+    
+        # Generate draggable sweep line
+        annotator.sweep_annotator(line_x=line_x, line_y=h, label=f"COUNT:{count}")
+    
+        cv2.imshow(window_name, im0)
+        video_writer.write(im0)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+    
+    # Release the resources
+    cap.release()
+    video_writer.release()
+    cv2.destroyAllWindows()
+
+Найди дополнительные сведения о методе `sweep_annotator` в нашем разделе справочника [здесь](/reference/solutions/solutions#ultralytics.solutions.solutions.SolutionAnnotator.sweep_annotator).
+
+#### Link to this sectionАдаптивная аннотация меток#
+
+Предупреждение
+
+Начиная с **Ultralytics v8.3.167** , `circle_label` и `text_label` были заменены унифицированной функцией `adaptive_label`. Теперь ты можешь указать тип аннотации с помощью аргумента `shape`:
+
+  * **Прямоугольник** : `annotator.adaptive_label(box, label=names[int(cls)], color=colors(cls, True), shape="rect")`
+  * **Круг** : `annotator.adaptive_label(box, label=names[int(cls)], color=colors(cls, True), shape="circle")`
+
+
+
+  
+
+
+  
+**Watch:** In-Depth Guide to Text & Circle Annotations with Python Live Demos | Ultralytics Annotations 🚀 
+
+Адаптивная аннотация меток с использованием утилит Ultralytics
+    
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    from ultralytics.solutions.solutions import SolutionAnnotator
+    from ultralytics.utils.plotting import colors
+    
+    model = YOLO("yolo26s.pt")
+    names = model.names
+    cap = cv2.VideoCapture("path/to/video.mp4")
+    
+    w, h, fps = (int(cap.get(x)) for x in (cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS))
+    writer = cv2.VideoWriter("Ultralytics circle annotation.avi", cv2.VideoWriter_fourcc(*"MJPG"), fps, (w, h))
+    
+    while True:
+        ret, im0 = cap.read()
+        if not ret:
+            break
+    
+        annotator = SolutionAnnotator(im0)
+        results = model.predict(im0)[0]
+        boxes = results.boxes.xyxy.cpu()
+        clss = results.boxes.cls.cpu().tolist()
+    
+        for box, cls in zip(boxes, clss):
+            annotator.adaptive_label(box, label=names[int(cls)], color=colors(cls, True), shape="circle")
+        writer.write(im0)
+        cv2.imshow("Ultralytics circle annotation", im0)
+    
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+    
+    writer.release()
+    cap.release()
+    cv2.destroyAllWindows()
+
+Смотри [справочную страницу `SolutionAnnotator`](/reference/solutions/solutions#ultralytics.solutions.solutions.SolutionAnnotator.adaptive_label) для получения дополнительной информации.
+
+## Link to this sectionРазное#
+
+### Link to this sectionПрофилирование кода#
+
+Проверяй длительность выполнения кода с помощью `with` или как декоратор.
+    
+    
+    from ultralytics.utils.ops import Profile
+    
+    with Profile(device="cuda:0") as dt:
+        pass  # operation to measure
+    
+    print(dt)
+    # >>> "Elapsed time is 9.5367431640625e-07 s"
+
+### Link to this sectionПоддерживаемые форматы Ultralytics#
+
+Нужно программно использовать поддерживаемые [форматы изображений или видео](/ru/modes/predict#image-and-video-formats) в Ultralytics? Используй эти константы, если необходимо:
+    
+    
+    from ultralytics.data.utils import IMG_FORMATS, VID_FORMATS
+    
+    print(IMG_FORMATS)
+    # {'avif', 'bmp', 'dng', 'heic', 'heif', 'jp2', 'jpeg', 'jpeg2000', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp'}
+    
+    print(VID_FORMATS)
+    # {'asf', 'avi', 'gif', 'm4v', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'ts', 'wmv', 'webm'}
+
+### Link to this sectionСделать делимым#
+
+Вычисли наименьшее целое число, которое больше или равно `x` и которое делится нацело на `y`.
+    
+    
+    from ultralytics.utils.ops import make_divisible
+    
+    make_divisible(7, 3)
+    # >>> 9
+    make_divisible(7, 2)
+    # >>> 8
+
+## Link to this sectionFAQ#
+
+### Link to this sectionКакие утилиты включены в пакет Ultralytics для улучшения рабочих процессов машинного обучения?#
+
+Пакет Ultralytics включает утилиты, предназначенные для упрощения и оптимизации рабочих процессов машинного обучения. Основные утилиты включают [авто-аннотирование](/reference/data/annotator#ultralytics.data.annotator.auto_annotate) для разметки наборов данных, преобразование [COCO](https://docs.ultralytics.com/datasets/detect/coco) в формат YOLO с помощью [convert_coco](/reference/data/converter#ultralytics.data.converter.convert_coco), сжатие изображений и автоматическое разделение наборов данных. Эти инструменты уменьшают ручной труд, обеспечивают согласованность и повышают эффективность обработки данных.
+
+### Link to this sectionКак мне использовать Ultralytics для автоматической разметки моего набора данных?#
+
+Если у тебя есть предобученная модель обнаружения объектов Ultralytics YOLO, ты можешь использовать ее с моделью [SAM](/ru/models/sam) для автоматической разметки твоего набора данных в формате сегментации. Вот пример:
+    
+    
+    from ultralytics.data.annotator import auto_annotate
+    
+    auto_annotate(
+        data="path/to/new/data",
+        det_model="yolo26n.pt",
+        sam_model="mobile_sam.pt",
+        device="cuda",
+        output_dir="path/to/save_labels",
+    )
+
+Для получения подробностей смотри [справочный раздел по auto_annotate](/reference/data/annotator#ultralytics.data.annotator.auto_annotate) или используй [Ultralytics Platform](https://platform.ultralytics.com/) как размещенную альтернативу без написания кода с маскированием через [SAM 2.1](/ru/models/sam-2) или [SAM 3](/ru/models/sam-3), или с прогнозами от предобученных и дообученных моделей YOLO для задач обнаружения, сегментации и OBB.
+
+### Link to this sectionКак мне преобразовать аннотации набора данных COCO в формат YOLO в Ultralytics?#
+
+Для преобразования аннотаций COCO JSON в формат YOLO для обнаружения объектов ты можешь использовать утилиту `convert_coco`. Вот пример фрагмента кода:
+    
+    
+    from ultralytics.data.converter import convert_coco
+    
+    convert_coco(
+        "coco/annotations/",
+        use_segments=False,
+        use_keypoints=False,
+        cls91to80=True,
+    )
+
+Для получения дополнительной информации посети [справочную страницу convert_coco](/reference/data/converter#ultralytics.data.converter.convert_coco).
+
+### Link to this sectionКак мне проанализировать состав и распределение моего набора данных?#
+
+[Ultralytics Platform](https://platform.ultralytics.com/) предоставляет автоматическую аналитику наборов данных: вкладка `Charts` показывает распределение выборок, количество верхних классов, гистограммы размеров изображений и 2D-тепловые карты позиций аннотаций, помогая тебе обнаружить дисбаланс и выбросы перед обучением.
+
+### Link to this sectionКак мне преобразовать ограничивающие рамки в сегменты в Ultralytics?#
+
+Чтобы преобразовать существующие данные ограничивающих рамок (в формате `x y w h`) в сегменты, ты можешь использовать функцию `yolo_bbox2segment`. Убедись, что твои файлы организованы с отдельными каталогами для изображений и меток.
+    
+    
+    from ultralytics.data.converter import yolo_bbox2segment
+    
+    yolo_bbox2segment(
+        im_dir="path/to/images",
+        save_dir=None,  # saved to "labels-segment" in the images directory
+        sam_model="sam_b.pt",
+    )
+
+Для получения дополнительной информации посети [справочную страницу yolo_bbox2segment](/reference/data/converter#ultralytics.data.converter.yolo_bbox2segment).
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/usage/simple-utilities.md)
+
+[GLglenn-jocher22](https://github.com/glenn-jocher)[RIRizwanMunawar16](https://github.com/RizwanMunawar)[RAraimbekovm4](https://github.com/raimbekovm)[AMambitious-octopus2](https://github.com/ambitious-octopus)[LALaughing-q2](https://github.com/Laughing-q)[BUBurhan-Q2](https://github.com/Burhan-Q)[PDpderrenger1](https://github.com/pderrenger)[MGmgcrea1](https://github.com/mgcrea)[LEleonnil1](https://github.com/leonnil)[IVIvorZhu3311](https://github.com/IvorZhu331)
+
+Создано 20 февр. 2024 г.Обновлено на прошлой неделе
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

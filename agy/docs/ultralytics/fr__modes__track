@@ -1,0 +1,745 @@
+---
+source_url: https://docs.ultralytics.com/fr/modes/track
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/track.md)
+
+# Link to this sectionSuivi multi-objets avec Ultralytics YOLO#
+
+![YOLO multi-object tracking with trajectory paths](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/multi-object-tracking-examples.avif)
+
+Le suivi d'objets dans le domaine de l'analyse vidéo est une tâche essentielle qui non seulement identifie l'emplacement et la classe des objets dans l'image, mais maintient également un identifiant unique pour chaque objet détecté au fur et à mesure que la vidéo progresse. Les applications sont illimitées, allant de la surveillance et de la sécurité à l'analyse sportive en temps réel.
+
+## Link to this sectionPourquoi choisir Ultralytics YOLO pour le suivi d'objets ?#
+
+Le résultat produit par les trackers d'Ultralytics est cohérent avec la [détection d'objets](https://www.ultralytics.com/glossary/object-detection) standard, mais avec la valeur ajoutée des identifiants d'objets. Cela facilite le suivi des objets dans les flux vidéo et l'exécution d'analyses ultérieures. Voici pourquoi tu devrais envisager d'utiliser Ultralytics YOLO pour tes besoins de suivi d'objets :
+
+  * **Efficacité :** Traite les flux vidéo en temps réel sans compromettre la [précision](https://www.ultralytics.com/glossary/accuracy).
+  * **Flexibilité :** Prend en charge plusieurs algorithmes et configurations de suivi.
+  * **Facilité d'utilisation :** API Python simple et options CLI pour une intégration et un déploiement rapides.
+  * **Personnalisation :** Facile à utiliser avec des modèles YOLO entraînés sur mesure, permettant une intégration dans des applications spécifiques à un domaine.
+
+
+
+  
+
+
+  
+**Watch:** How to Run Multi-Object Tracking with Ultralytics YOLO26 | BoT-SORT & ByteTrack | VisionAI 🚀 
+
+## Link to this sectionApplications concrètes#
+
+Transports| Commerce de détail| Aquaculture  
+---|---|---  
+![Suivi de véhicules](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/vehicle-tracking.avif)| ![Suivi de personnes](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/people-tracking.avif)| ![Suivi de poissons](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/fish-tracking.avif)  
+Suivi de véhicules| Suivi de personnes| Suivi de poissons  
+  
+## Link to this sectionDémarrage rapide#
+
+Exécute le suivi sur une vidéo avec le tracker par défaut BoT-SORT. Change de tracker en modifiant l'argument `tracker`.
+
+Exemple
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Default tracker (BoT-SORT)
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", show=True)
+    
+    # Switch to ByteTrack
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", show=True, tracker="bytetrack.yaml")
+
+Pour exécuter le tracker sur des flux vidéo, utilise un modèle entraîné de type Detect, Segment, Pose ou OBB tel que YOLO26n, YOLO26n-seg, YOLO26n-pose ou YOLO26n-obb. Tu peux entraîner des modèles personnalisés localement ou sur des GPU cloud via [Ultralytics Platform](https://platform.ultralytics.com).
+
+Exemple
+    
+    
+    from ultralytics import YOLO
+    
+    # Load an official or custom model
+    model = YOLO("yolo26n.pt")  # Load an official Detect model
+    model = YOLO("yolo26n-seg.pt")  # Load an official Segment model
+    model = YOLO("yolo26n-pose.pt")  # Load an official Pose model
+    model = YOLO("path/to/best.pt")  # Load a custom-trained model
+    
+    # Perform tracking with the model
+    results = model.track("https://youtu.be/LNwODJXcvt4", show=True)  # Tracking with default tracker
+    results = model.track("https://youtu.be/LNwODJXcvt4", show=True, tracker="bytetrack.yaml")  # with ByteTrack
+
+Comme on peut le voir dans l'utilisation ci-dessus, le suivi est disponible pour tous les modèles Detect, Segment et Pose exécutés sur des vidéos ou des sources de streaming.
+
+## Link to this sectionTrackers pris en charge#
+
+Ultralytics YOLO est fourni avec six trackers intégrés. Active-en un en passant son fichier de configuration YAML à l'argument `tracker`.
+
+Tracker| Fichier de config| Modèle de mouvement| Apparence / ReID| Compensation de mouvement de caméra| Gestion des occlusions  
+---|---|---|---|---|---  
+**BoT-SORT**| `botsort.yaml`| Kalman linéaire| Optionnel (`with_reid`)| Oui (sparseOptFlow / ECC)| Tampon de suivi + ReID rebinding  
+**ByteTrack**| `bytetrack.yaml`| Kalman linéaire| Aucune| Non| Sauvetage à faible confiance en deux étapes  
+**OC-SORT**| `ocsort.yaml`| Kalman centré sur l'observation| Aucune| Non| ORU, OCM, OCR ré-actualisation depuis la dernière observation  
+**Deep OC-SORT**| `deepocsort.yaml`| Kalman centré sur l'observation| Optionnel (`with_reid`)| Optionnel (`gmc_method`)| OC-SORT + EMA d'apparence adaptative  
+**FastTracker**| `fasttrack.yaml`| Kalman linéaire + retour en arrière| Aucune| Non| Retour en arrière Kalman + agrandissement de la bbox en cas d'occlusion  
+**TrackTrack**| `tracktrack.yaml`| Kalman linéaire (NSA)| Optionnel (repli HMIoU)| Oui (sparseOptFlow / ECC)| Association multi-indices itérative + TAI  
+  
+### Link to this sectionQuel tracker utiliser ?#
+
+Utilise ce flux pour choisir un point de départ :
+
+  1. **Besoin de la base de référence la plus rapide et la plus simple ?** → **ByteTrack** (pas de ReID, pas de compensation de mouvement de caméra, surcharge minimale).
+  2. **Images portatives, par drone ou caméra mobile ?** → **BoT-SORT** (par défaut ; ajoute la compensation de mouvement de caméra et ReID en option).
+  3. **Mouvement non linéaire (sport, danse, virages brusques) et pas de ReID ?** → **OC-SORT** (corrections centrées sur l'observation sans coût d'apparence).
+  4. **Scènes encombrées avec caméra mobile où les échanges d'ID sont le problème principal ?** → **Deep OC-SORT** ou **TrackTrack** (tous deux ajoutent une fusion d'apparence adaptative ; TrackTrack ajoute également une association multi-indices et une suppression des ID en double).
+  5. **Chevauchement partiel fréquent en temps réel, pas de budget ReID ?** → **FastTracker** (variante ByteTrack sensible aux occlusions avec retour en arrière Kalman).
+
+
+
+## Link to this sectionChangement de tracker#
+
+Passe le nom du fichier de configuration du tracker à `tracker=`. Tout le reste du code reste identique.
+
+Exemple
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    results = model.track(source="path/to/video.mp4", tracker="bytetrack.yaml")
+    results = model.track(source="path/to/video.mp4", tracker="ocsort.yaml")
+    results = model.track(source="path/to/video.mp4", tracker="tracktrack.yaml")
+
+## Link to this sectionConfiguration#
+
+### Link to this sectionArguments de suivi#
+
+La configuration du suivi partage des propriétés avec le mode Predict, comme `conf`, `iou` et `show`. Pour des configurations supplémentaires, réfère-toi à la page du modèle [Predict](/fr/modes/predict#inference-arguments).
+
+Exemple
+    
+    
+    from ultralytics import YOLO
+    
+    # Configure the tracking parameters and run the tracker
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", conf=0.1, iou=0.7, show=True)
+
+### Link to this sectionConfiguration personnalisée du tracker#
+
+Ultralytics te permet également d'utiliser un fichier de configuration de tracker modifié. Pour ce faire, fais simplement une copie d'un fichier de configuration de tracker (par exemple, `custom_tracker.yaml`) depuis [ultralytics/cfg/trackers](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers) et modifie les configurations (sauf le `tracker_type`) selon tes besoins.
+
+Exemple
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the model and run the tracker with a custom configuration file
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", tracker="custom_tracker.yaml")
+
+### Link to this sectionArguments de suivi partagés#
+
+Les paramètres suivants sont communs à la plupart des fichiers YAML de suivi ; tous les paramètres ne figurent pas dans chaque configuration :
+
+Informations sur le seuil du tracker
+
+Si le score de confiance d'une détection tombe en dessous de `track_high_thresh`, le tracker ne mettra pas à jour cet objet, ce qui entraînera l'absence de suivis actifs.
+
+Paramètre| Valeurs valides ou plages| Description  
+---|---|---  
+`tracker_type`| `botsort`, `bytetrack`, `ocsort`, `deepocsort`, `fasttrack`, `tracktrack`| Spécifie le type de tracker.  
+`track_high_thresh`| `0.0-1.0`| Seuil pour la première association. Affecte le niveau de confiance avec lequel une détection est associée à un suivi existant.  
+`track_low_thresh`| `0.0-1.0`| Seuil pour la deuxième association sur les détections à faible confiance. Pour OC-SORT et Deep OC-SORT, cela s'applique uniquement lorsque `use_byte: True`.  
+`new_track_thresh`| `0.0-1.0`| Seuil pour initialiser un nouveau suivi si la détection ne correspond à aucun suivi existant.  
+`track_buffer`| `>=0`| Nombre de frames pendant lesquelles les suivis perdus sont maintenus en vie avant suppression. Une valeur plus élevée signifie une plus grande tolérance aux occlusions.  
+`match_thresh`| `0.0-1.0`| Seuil pour la correspondance des suivis. Des valeurs plus élevées rendent la correspondance plus indulgente.  
+`fuse_score`| `True`, `False`| Indique s'il faut fusionner les scores de confiance avec les distances IoU avant la correspondance.  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| Méthode de compensation du mouvement global. Aide à prendre en compte le mouvement de la caméra.  
+`proximity_thresh`| `0.0-1.0`| IoU minimum requis pour une correspondance ReID valide. Assure une proximité spatiale avant d'utiliser des indices d'apparence.  
+`appearance_thresh`| `0.0-1.0`| Similitude d'apparence minimale requise pour le ReID.  
+`with_reid`| `True`, `False`| Active la correspondance basée sur l'apparence pour un meilleur suivi en cas d'occlusions. Pris en charge par BoT-SORT, Deep OC-SORT et TrackTrack.  
+`model`| `auto` ou chemin vers un fichier exporté| Modèle ReID. `auto` utilise les caractéristiques natives du backbone YOLO lorsqu'elles sont disponibles ; sinon, il se replie sur `yolo26n-cls.pt`. Passe un fichier `.torchscript`, `.onnx`, `.engine`, `.openvino`, … pour un encodeur personnalisé.  
+  
+#### Link to this sectionArguments spécifiques au tracker#
+
+Chaque algorithme expose des options supplémentaires en plus des paramètres partagés. Consulte les sections dédiées à chaque tracker ci-dessous pour obtenir des descriptions et des conseils de réglage, ou reporte-toi directement aux fichiers de configuration :
+
+  * [`botsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/botsort.yaml)
+  * [`bytetrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/bytetrack.yaml)
+  * [`ocsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/ocsort.yaml)
+  * [`deepocsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/deepocsort.yaml)
+  * [`fasttrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/fasttrack.yaml)
+  * [`tracktrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/tracktrack.yaml)
+
+
+
+### Link to this sectionActiver la ré-identification (ReID)#
+
+La fonction ReID est désactivée par défaut pour minimiser la surcharge. Active-la en définissant `with_reid: True` dans un fichier de configuration de tracker.
+
+**Options du modèle ReID :**
+
+  * **`model: auto`** — Utilise les fonctionnalités natives du détecteur YOLO, ajoutant une surcharge minimale. Idéal quand tu as besoin d'un peu de ReID sans impact majeur sur les performances. Bascule sur `yolo26n-cls.pt` si le détecteur n'expose pas de fonctionnalités compatibles.
+  * **Modèle ReID exporté** — Pointez `model:` vers un fichier exporté (`.torchscript`, `.onnx`, `.engine`, `.openvino`, etc.) pour obtenir des embeddings plus discriminants au prix d'une passe supplémentaire par recadrage. L'encodeur est chargé via `AutoBackend`, donc tout format d'export pris en charge par Ultralytics fonctionne sans modification de code.
+
+
+
+Des encodeurs ONNX prêts à l'emploi sont publiés pour chaque taille de modèle. Définis `model:` sur l'un de ces noms et le fichier sera téléchargé automatiquement lors de la première exécution du tracker (de la même manière que les poids YOLO sont récupérés) — aucune étape d'exportation ou de téléchargement manuel n'est requise :
+    
+    
+    # In your tracker config (e.g. tracktrack.yaml)
+    with_reid: True
+    model: yolo26n-reid.onnx # downloaded on first use; swap n→s/m/l/x for a larger encoder
+
+Modèle| taille  
+(pixels)| params  
+(M)| FLOPs  
+(B)  
+---|---|---|---  
+[YOLO26n-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-reid.onnx)| 448| 2.8| 2.0  
+[YOLO26s-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-reid.onnx)| 448| 7.5| 6.6  
+[YOLO26m-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m-reid.onnx)| 448| 12.4| 20.1  
+[YOLO26l-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l-reid.onnx)| 448| 15.3| 25.2  
+[YOLO26x-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-reid.onnx)| 448| 32.7| 55.9  
+  
+ReID est uniquement pour le suivi
+
+Seuls les encodeurs ReID ONNX pour la branche d'apparence du tracker sont actuellement disponibles. Les modes `train`, `val` et `predict` pour ReID, ainsi que les recettes d'exportation dédiées à ReID, sont encore en cours de développement.
+
+Pour de meilleures performances avec un modèle de classification séparé, exporte-le vers un backend plus rapide comme TensorRT :
+
+Exporter un modèle ReID vers TensorRT
+    
+    
+    from torch import nn
+    
+    from ultralytics import YOLO
+    
+    # Load the classification model
+    model = YOLO("yolo26n-cls.pt")
+    
+    # Add average pooling layer
+    head = model.model.model[-1]
+    pool = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(start_dim=1))
+    pool.f, pool.i = head.f, head.i
+    model.model.model[-1] = pool
+    
+    # Export to TensorRT
+    model.export(format="engine", half=True, dynamic=True, batch=32)
+
+Une fois exporté, indique le chemin du modèle TensorRT dans ta configuration de tracker.
+
+## Link to this sectionDétails sur les trackers#
+
+Développe les sections ci-dessous pour découvrir la conception, les paramètres spécifiques et les conseils de réglage de chaque tracker.
+
+#### Link to this sectionBoT-SORT#
+
+[BoT-SORT](https://github.com/NirAharon/BoT-SORT) (Aharon et al., 2022) est le tracker par défaut. Il étend ByteTrack avec une compensation du mouvement de la caméra et une fonction ReID optionnelle :
+
+  * **Compensation du mouvement de la caméra (CMC) :** une déformation affine estimée à chaque image (flux optique épars par défaut ; ORB / ECC également disponibles) est appliquée aux états de Kalman avant la mise en correspondance IoU.
+  * **ReID optionnelle :** les embeddings d'apparence peuvent être fusionnés dans la matrice de coût. Désactivée par défaut ; active-la avec `with_reid: True`.
+
+
+
+**Idéal pour :** le suivi à usage général, surtout avec des caméras mobiles. N'ajoute la ReID que lorsque des foules aux apparences similaires provoquent des échanges d'ID.
+
+**Arguments spécifiques à BoT-SORT :**
+
+Paramètre| Valeurs valides ou plages| Description  
+---|---|---  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| Backend de compensation du mouvement de la caméra. `sparseOptFlow` est la valeur par défaut. `none` désactive la CMC.  
+`with_reid`| `True`, `False`| Active la correspondance basée sur l'apparence. Désactivé par défaut.  
+`model`| `auto` ou chemin vers un modèle ReID| Modèle ReID. `auto` utilise les fonctionnalités natives YOLO lorsqu'elles sont disponibles ; sinon, indique un chemin vers un fichier `.torchscript` / `.onnx` / `.engine`.  
+`proximity_thresh`| `0.0-1.0`| IoU minimum avant que les caractéristiques d'apparence ne soient prises en compte.  
+`appearance_thresh`| `0.0-1.0`| Similitude cosinus minimale requise pour une correspondance ReID. Augmente cette valeur pour réduire les échanges d'identités.  
+  
+**Conseils de réglage :**
+
+  * **Caméra statique :** règle `gmc_method: none` pour économiser quelques ms/image.
+  * **Mouvement intense de la caméra :** conserve `sparseOptFlow` ; `ecc` est plus précis mais plus lent.
+  * **Foules aux apparences similaires :** active `with_reid: True` et augmente `appearance_thresh` (par ex. `0.85+`).
+
+
+
+#### Link to this sectionByteTrack#
+
+[ByteTrack](https://github.com/FoundationVision/ByteTrack) (Zhang et al., ECCV 2022) est la base légère. Il utilise un Kalman linéaire + IoU avec une association en deux étapes :
+
+  * **Étape 1 :** fait correspondre les détections à score élevé avec les pistes actives.
+  * **Étape 2 :** réessaye avec les pistes non appariées contre les détections à faible score pour récupérer après une brève occlusion partielle.
+
+
+
+Il n'y a pas de modèle d'apparence ni de compensation de mouvement de la caméra.
+
+**Idéal pour :** les caméras statiques ou quasi statiques où le coût du détecteur prédomine et où tu souhaites une surcharge de suivi minimale.
+
+**Arguments spécifiques à ByteTrack :** Aucun en dehors des arguments partagés du tracker.
+
+**Conseils de réglage :**
+
+  * **Détecteur bruyant :** diminue `track_low_thresh` afin que la deuxième étape ait plus de candidats.
+  * **Détecteur à haut rappel :** augmente `track_high_thresh` pour réduire les ID fragmentés.
+  * **Scintillement fréquent d'ID :** augmente `track_buffer` pour que les pistes brièvement manquées survivent.
+
+
+
+#### Link to this sectionOC-SORT#
+
+[OC-SORT](https://arxiv.org/abs/2203.14360) (Cao et al., CVPR 2023) est une extension centrée sur l'observation de SORT. Il conserve la conception légère de SORT (pas de caractéristiques d'apparence) et ajoute trois corrections :
+
+  * **Ré-actualisation centrée sur l'observation (ORU) :** rejoue une trajectoire virtuelle entre la dernière observation et la détection actuelle, en relançant la mise à jour de Kalman pour corriger la dérive de vitesse.
+  * **Momentum centré sur l'observation (OCM) :** pénalise les détections se déplaçant dans la mauvaise direction via un terme de cohérence de vitesse.
+  * **Récupération centrée sur l'observation (OCR) :** revérifie les détections non appariées par rapport aux pistes récemment perdues en utilisant leur dernière observation plutôt que l'état prédit.
+
+
+
+**Idéal pour :** le mouvement non linéaire sans le coût d'un modèle ReID.
+
+**Arguments spécifiques à OC-SORT :**
+
+Paramètre| Valeurs valides ou plages| Description  
+---|---|---  
+`delta_t`| `>=1`| Fenêtre temporelle (images) pour le calcul de la direction de la vitesse dans OCM. Des valeurs plus grandes lissent davantage.  
+`inertia`| `0.0-1.0`| Poids du coût de cohérence de la vitesse. Des valeurs plus élevées pénalisent les changements de direction soudains.  
+`use_byte`| `True`, `False`| Active un deuxième passage d'association de type ByteTrack sur les détections à faible confiance.  
+  
+**Conseils de réglage :**
+
+  * **Mouvement non linéaire :** augmente `inertia` (par ex. `0.3-0.4`).
+  * **Détections éparses :** active `use_byte: True`.
+  * **Occlusions longues :** augmente `track_buffer` pour que l'OCR ait plus de pistes perdues à relier.
+
+
+
+#### Link to this sectionDeep OC-SORT#
+
+[Deep OC-SORT](https://arxiv.org/abs/2302.11813) augmente OC-SORT avec des informations d'apparence et une compensation du mouvement de la caméra :
+
+  * **Fusion d'apparence adaptative :** les embeddings de détection sont fusionnés dans la matrice de coût avec un poids modulé par la confiance de détection et le chevauchement.
+  * **EMA d'apparence dynamique :** les embeddings de piste se mettent à jour avec une EMA dont le facteur de lissage s'adapte à la confiance de détection.
+  * **Compensation du mouvement de la caméra :** les états de Kalman sont déformés image par image via un flux optique épars, ORB ou ECC.
+
+
+
+**Idéal pour :** les scènes bondées ou à caméra mobile où les échanges d'ID entre des objets visuellement différents mais spatialement proches sont courants.
+
+**Arguments spécifiques à Deep OC-SORT :**
+
+Paramètre| Valeurs valides ou plages| Description  
+---|---|---  
+`with_reid`| `True`, `False`| Active la correspondance basée sur l'apparence. Désactivé par défaut.  
+`model`| `auto`, fichier de modèle ReID exporté| Modèle ReID. `auto` réutilise les fonctionnalités natives YOLO ; sinon, passe un fichier exporté (`.torchscript`, `.onnx`, `.engine`, …).  
+`proximity_thresh`| `0.0-1.0`| IoU minimum avant que les caractéristiques d'apparence ne soient prises en compte.  
+`appearance_thresh`| `0.0-1.0`| Similitude cosinus minimale requise pour une correspondance ReID.  
+`alpha_fixed_emb`| `0.0-1.0`| Facteur EMA de base pour les mises à jour des embeddings de piste. Des valeurs plus élevées préservent l'ancien embedding plus longtemps.  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| Méthode globale de compensation de mouvement.  
+`delta_t`| `>=1`| Fenêtre temporelle (images) pour le calcul de la direction de la vitesse dans OCM (hérité d'OC-SORT).  
+`inertia`| `0.0-1.0`| Poids du coût de cohérence de la vitesse (hérité d'OC-SORT).  
+`use_byte`| `True`, `False`| Active une deuxième association de type ByteTrack sur les détections à faible confiance (hérité d'OC-SORT).  
+  
+**Conseils de réglage :**
+
+  * **Échanges d'identité dans les foules :** augmente `appearance_thresh` (par ex. `0.92-0.95`) et diminue `alpha_fixed_emb` pour que les embeddings s'adaptent plus lentement.
+  * **Caméra mobile :** règle `gmc_method: sparseOptFlow` (Deep OC-SORT utilise `none` par défaut).
+  * **Latence plus faible :** garde `with_reid: False` (par défaut) pour le mouvement + CMC uniquement ; n'active la ReID que lorsque les échanges d'ID dominent les erreurs.
+
+
+
+#### Link to this sectionFastTracker#
+
+[FastTracker](https://arxiv.org/abs/2508.14370) est une variante de ByteTrack prenant en compte l'occlusion, sans modèle d'apparence :
+
+  * **Détection d'occlusion :** marque les pistes comme occluses lorsque la couverture par d'autres pistes actives dépasse `occ_cover_thresh`.
+  * **Retour en arrière de Kalman lors d'une occlusion :** ramène l'état de Kalman à une image pré-occlusion en utilisant un historique en anneau.
+  * **Atténuation du mouvement et expansion de la recherche :** la vitesse est amortie et la bbox prédite est agrandie pendant l'occlusion.
+  * **Suppression Init-IoU :** empêche les nouvelles pistes de se créer au-dessus des pistes actives.
+
+
+
+**Idéal pour :** les pipelines en temps réel dédiés à la détection avec des chevauchements fréquents de cibles (foules, files d'attente, sports).
+
+**Arguments spécifiques à FastTracker :**
+
+Paramètre| Valeurs valides ou plages| Description  
+---|---|---  
+`reset_velocity_offset_occ`| `>=0`| Images d'historique en arrière pour restaurer la vitesse de Kalman au début de l'occlusion.  
+`reset_pos_offset_occ`| `>=0`| Images d'historique en arrière pour restaurer la position de Kalman au début de l'occlusion.  
+`enlarge_bbox_occ`| `>=1.0`| Mise à l'échelle de la hauteur appliquée à la bbox prédite pendant l'occlusion (la largeur s'ajuste via le rapport d'aspect XYAH).  
+`dampen_motion_occ`| `0.0-1.0`| Multiplicateur de vitesse pendant l'occlusion. Des valeurs plus faibles font "ralentir" la piste lors de l'occlusion.  
+`active_occ_to_lost_thresh`| `>=1`| Nombre maximal d'images occluses consécutives avant qu'une piste active ne soit déplacée vers "perdue".  
+`occ_cover_thresh`| `0.0-1.0`| Fraction de la zone d'une trace couverte par une autre trace active pour déclarer une occlusion.  
+`occ_reappear_window`| `>=0`| Nombre de frames pendant lesquelles une trace perdue récemment occluse reste préférentiellement retrouvable.  
+`init_iou_suppress`| `0.0-1.0`| Supprime l'initialisation d'une nouvelle trace si son IoU avec n'importe quelle trace active dépasse cette valeur. Définis sur `1.0` pour désactiver.  
+  
+**Conseils de réglage :**
+
+  * **Occlusions partielles fréquentes :** diminue `occ_cover_thresh` (par ex. `0.5-0.6`).
+  * **Identifiants en double autour du chevauchement :** diminue `init_iou_suppress` (par ex. `0.5`).
+  * **Occlusions longues :** augmente `occ_reappear_window` et `track_buffer` simultanément.
+  * **Cibles se déplaçant rapidement :** augmente `dampen_motion_occ` (plus proche de `1.0`) et diminue `enlarge_bbox_occ`.
+
+
+
+#### Link to this sectionTrackTrack#
+
+[TrackTrack](https://openaccess.thecvf.com/content/CVPR2025/papers/Shim_Focusing_on_Tracks_for_Online_Multi-Object_Tracking_CVPR_2025_paper.pdf) (Shim et al., CVPR 2025) raisonne depuis la perspective de chaque trace avec une association itérative multi-indices :
+
+  * **Association basée sur la perspective de trace (TPA) :** combine HMIoU, distance ReID cosinus, distance de projection de confiance, et distance d'angle de coin. L'assignation est résolue de manière itérative avec un seuil relaxant.
+  * **Initialisation consciente des traces (TAI) :** supprime les apparitions en double avant la création d'un nouvel identifiant.
+
+
+
+**Idéal pour :** les scènes bondées avec des occlusions fréquentes où les identifiants en double posent problème.
+
+**Arguments spécifiques à TrackTrack :**
+
+Paramètre| Valeurs valides ou plages| Description  
+---|---|---  
+`iou_weight`| `0.0-1.0`| Poids de la distance HMIoU dans la matrice de coût multi-indices.  
+`reid_weight`| `0.0-1.0`| Poids de la distance ReID cosinus. Revient au HMIoU si ReID est désactivé.  
+`conf_weight`| `0.0-1.0`| Poids de la distance de projection de confiance.  
+`angle_weight`| `0.0-1.0`| Poids de la distance d'angle de coin.  
+`penalty_p`| `0.0-1.0`| Pénalité de coût pour les détections à faible confiance.  
+`penalty_q`| `0.0-1.0`| Pénalité de coût pour les détections récupérées par NMS secondaire.  
+`reduce_step`| `0.0-1.0`| Relaxation du seuil de correspondance par itération.  
+`tai_thr`| `0.0-1.0`| Seuil IoU pour le NMS d'initialisation consciente des traces.  
+`min_track_len`| `>=0`| Mises à jour réussies minimales avant qu'une nouvelle trace ne soit confirmée.  
+`lost_match_thr`| `0.0-1.0`| Porte de coût plus large pour le passage de réassociation perdue relaxé ; `0` le désactive.  
+`with_reid`| `True`, `False`| Active la correspondance d'apparence ReID cosinus (utilise les fonctionnalités natives de YOLO). Désactivé par défaut.  
+`model`| `auto`, fichier ReID| Modèle ReID ; `auto` utilise les fonctionnalités natives de YOLO, sinon un fichier ReID exporté.  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| Méthode globale de compensation de mouvement.  
+  
+**Conseils de réglage :**
+
+  * **Piétons en foule :** diminue `tai_thr` (par ex. `0.45`) pour supprimer plus d'apparitions en double ; augmente `track_buffer` pour les occlusions plus longues.
+  * **Mouvement rapide de caméra :** garde `gmc_method: sparseOptFlow` activé.
+  * **Objets petits/rapides :** augmente légèrement `angle_weight` et diminue `min_track_len`.
+  * **Active ReID uniquement si nécessaire :** cela ajoute un coût d'inférence ; pour les occlusions courtes, le coût multi-indices par défaut est généralement suffisant.
+
+
+
+## Link to this sectionExemples Python#
+
+  
+
+
+  
+**Watch:** How to Build Interactive Object Tracking with Ultralytics YOLO | Click to Crop & Display ⚡ 
+
+### Link to this sectionBoucle de persistance des traces#
+
+Voici un script Python utilisant [OpenCV](https://www.ultralytics.com/glossary/opencv) (`cv2`) et YOLO26 pour exécuter le suivi d'objets sur des images vidéo. Ce script suppose que les paquets nécessaires (`opencv-python` et `ultralytics`) sont déjà installés. L'argument `persist=True` indique au tracker que l'image ou la frame actuelle est la suivante dans une séquence et qu'il doit attendre des traces de l'image précédente dans l'image actuelle.
+
+Boucle for de streaming avec suivi
+    
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Open the video file
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    
+    # Loop through the video frames
+    while cap.isOpened():
+        # Read a frame from the video
+        success, frame = cap.read()
+    
+        if success:
+            # Run YOLO26 tracking on the frame, persisting tracks between frames
+            results = model.track(frame, persist=True)
+    
+            # Visualize the results on the frame
+            annotated_frame = results[0].plot()
+    
+            # Display the annotated frame
+            cv2.imshow("YOLO26 Tracking", annotated_frame)
+    
+            # Break the loop if 'q' is pressed
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            # Break the loop if the end of the video is reached
+            break
+    
+    # Release the video capture object and close the display window
+    cap.release()
+    cv2.destroyAllWindows()
+
+Veuillez noter le changement de `model(frame)` vers `model.track(frame)`, qui active le suivi d'objets au lieu d'une simple détection. Ce script modifié exécutera le tracker sur chaque frame de la vidéo, visualisera les résultats et les affichera dans une fenêtre. La boucle peut être quittée en appuyant sur 'q'.
+
+### Link to this sectionTracer les trajectoires dans le temps#
+
+Visualiser les traces d'objets sur des frames consécutives peut fournir des informations précieuses sur les modèles de mouvement et le comportement des objets détectés au sein d'une vidéo. Avec Ultralytics YOLO26, tracer ces trajectoires est un processus fluide et efficace.
+
+Dans l'exemple suivant, nous montrons comment utiliser les capacités de suivi de YOLO26 pour tracer le mouvement des objets détectés à travers plusieurs frames vidéo. Ce script implique l'ouverture d'un fichier vidéo, sa lecture frame par frame, et l'utilisation du modèle YOLO pour identifier et suivre divers objets. En conservant les points centraux des boîtes englobantes détectées et en les connectant, nous pouvons dessiner des lignes qui représentent les chemins suivis par les objets suivis.
+
+Tracer les trajectoires sur plusieurs frames vidéo
+    
+    
+    from collections import defaultdict
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Open the video file
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    
+    # Store the track history
+    track_history = defaultdict(lambda: [])
+    
+    # Loop through the video frames
+    while cap.isOpened():
+        # Read a frame from the video
+        success, frame = cap.read()
+    
+        if success:
+            # Run YOLO26 tracking on the frame, persisting tracks between frames
+            result = model.track(frame, persist=True)[0]
+    
+            # Get the boxes and track IDs
+            if result.boxes and result.boxes.is_track:
+                boxes = result.boxes.xywh.cpu()
+                track_ids = result.boxes.id.int().cpu().tolist()
+    
+                # Visualize the result on the frame
+                frame = result.plot()
+    
+                # Plot the tracks
+                for box, track_id in zip(boxes, track_ids):
+                    x, y, w, h = box
+                    track = track_history[track_id]
+                    track.append((float(x), float(y)))  # x, y center point
+                    if len(track) > 30:  # retain 30 tracks for 30 frames
+                        track.pop(0)
+    
+                    # Draw the tracking lines
+                    points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                    cv2.polylines(frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+    
+            # Display the annotated frame
+            cv2.imshow("YOLO26 Tracking", frame)
+    
+            # Break the loop if 'q' is pressed
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            # Break the loop if the end of the video is reached
+            break
+    
+    # Release the video capture object and close the display window
+    cap.release()
+    cv2.destroyAllWindows()
+
+### Link to this sectionSuivi multi-thread#
+
+Le suivi multi-thread offre la capacité d'exécuter le suivi d'objets sur plusieurs flux vidéo simultanément. Ceci est particulièrement utile lors du traitement de multiples entrées vidéo, comme depuis plusieurs caméras de surveillance, où le traitement simultané peut grandement améliorer l'efficacité et la performance.
+
+Dans le script Python fourni, nous utilisons le module `threading` de Python pour exécuter plusieurs instances du tracker simultanément. Chaque thread est responsable de l'exécution du tracker sur un fichier vidéo, et tous les threads tournent simultanément en arrière-plan.
+
+Pour garantir que chaque thread reçoit les bons paramètres (le fichier vidéo, le modèle à utiliser et l'index du fichier), nous définissons une fonction `run_tracker_in_thread` qui accepte ces paramètres et contient la boucle principale de suivi. Cette fonction lit la vidéo frame par frame, exécute le tracker, et affiche les résultats.
+
+Deux modèles différents sont utilisés dans cet exemple : `yolo26n.pt` et `yolo26n-seg.pt`, chacun suivant des objets dans un fichier vidéo différent. Les fichiers vidéo sont spécifiés dans `SOURCES`.
+
+Le paramètre `daemon=True` dans `threading.Thread` signifie que ces threads seront fermés dès que le programme principal se termine. Nous démarrons ensuite les threads avec `start()` et utilisons `join()` pour faire attendre le thread principal jusqu'à ce que les deux threads de suivi soient terminés.
+
+Enfin, une fois que tous les threads ont terminé leur tâche, les fenêtres affichant les résultats sont fermées en utilisant `cv2.destroyAllWindows()`.
+
+Implémentation de suivi multi-thread
+    
+    
+    import threading
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Define model names and video sources
+    MODEL_NAMES = ["yolo26n.pt", "yolo26n-seg.pt"]
+    SOURCES = ["path/to/video.mp4", "0"]  # local video, 0 for webcam
+    
+    def run_tracker_in_thread(model_name, filename):
+        """Run YOLO tracker in its own thread for concurrent processing.
+    
+        Args:
+            model_name (str): The YOLO26 model object.
+            filename (str): The path to the video file or the identifier for the webcam/external camera source.
+        """
+        model = YOLO(model_name)
+        results = model.track(filename, save=True, stream=True)
+        for r in results:
+            pass
+    
+    # Create and start tracker threads using a for loop
+    tracker_threads = []
+    for video_file, model_name in zip(SOURCES, MODEL_NAMES):
+        thread = threading.Thread(target=run_tracker_in_thread, args=(model_name, video_file), daemon=True)
+        tracker_threads.append(thread)
+        thread.start()
+    
+    # Wait for all tracker threads to finish
+    for thread in tracker_threads:
+        thread.join()
+    
+    # Clean up and close windows
+    cv2.destroyAllWindows()
+
+Cet exemple peut être facilement étendu pour gérer davantage de fichiers vidéo et de modèles en créant plus de threads et en appliquant la même méthodologie.
+
+## Link to this sectionContribuer à de nouveaux trackers#
+
+Es-tu compétent en suivi multi-objets et as-tu implémenté ou adapté avec succès un algorithme de suivi avec Ultralytics YOLO ? Nous t'invitons à contribuer à notre section Trackers dans [ultralytics/cfg/trackers](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers) ! Tes applications et solutions réelles pourraient être inestimables pour les utilisateurs travaillant sur des tâches de suivi.
+
+En contribuant à cette section, tu aides à élargir la portée des solutions de suivi disponibles au sein du framework Ultralytics YOLO, ajoutant une couche supplémentaire de fonctionnalité et d'utilité pour la communauté.
+
+Pour initier ta contribution, veuillez consulter notre [Guide de contribution](/fr/help/contributing) pour des instructions complètes sur la soumission d'une Pull Request (PR) 🛠️. Nous sommes impatients de voir ce que tu apportes !
+
+Ensemble, améliorons les capacités de suivi de l'écosystème Ultralytics YOLO 🙏 !
+
+## Link to this sectionFAQ#
+
+### Link to this sectionQu'est-ce que le suivi multi-objets et comment Ultralytics YOLO le prend-il en charge ?#
+
+Le suivi multi-objets dans l'analyse vidéo implique à la fois l'identification des objets et le maintien d'un identifiant unique pour chaque objet détecté à travers les frames vidéo. Ultralytics YOLO prend cela en charge en fournissant un suivi en temps réel avec des identifiants d'objets, facilitant des tâches telles que la surveillance de sécurité et l'analyse sportive. Le système utilise des trackers tels que [BoT-SORT](https://github.com/NirAharon/BoT-SORT), [ByteTrack](https://github.com/FoundationVision/ByteTrack), OC-SORT, Deep OC-SORT, FastTracker, et TrackTrack, qui peuvent être configurés via des fichiers YAML.
+
+### Link to this sectionComment configurer un tracker personnalisé pour Ultralytics YOLO ?#
+
+Tu peux configurer un tracker personnalisé en copiant un fichier de configuration de tracker existant (par ex. `custom_tracker.yaml`) depuis le [répertoire de configuration des trackers Ultralytics](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers) et en modifiant les paramètres si nécessaire, à l'exception de `tracker_type`. Utilise ce fichier dans ton modèle de suivi comme ceci :
+
+Exemple
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", tracker="custom_tracker.yaml")
+
+### Link to this sectionComment exécuter le suivi d'objets sur plusieurs flux vidéo simultanément ?#
+
+Pour exécuter le suivi d'objets sur plusieurs flux vidéo simultanément, tu peux utiliser le module `threading` de Python. Chaque thread gérera un flux vidéo séparé. Voici un exemple de la façon dont tu peux configurer cela :
+
+Suivi multi-thread
+    
+    
+    import threading
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Define model names and video sources
+    MODEL_NAMES = ["yolo26n.pt", "yolo26n-seg.pt"]
+    SOURCES = ["path/to/video.mp4", "0"]  # local video, 0 for webcam
+    
+    def run_tracker_in_thread(model_name, filename):
+        """Run YOLO tracker in its own thread for concurrent processing.
+    
+        Args:
+            model_name (str): The YOLO26 model object.
+            filename (str): The path to the video file or the identifier for the webcam/external camera source.
+        """
+        model = YOLO(model_name)
+        results = model.track(filename, save=True, stream=True)
+        for r in results:
+            pass
+    
+    # Create and start tracker threads using a for loop
+    tracker_threads = []
+    for video_file, model_name in zip(SOURCES, MODEL_NAMES):
+        thread = threading.Thread(target=run_tracker_in_thread, args=(model_name, video_file), daemon=True)
+        tracker_threads.append(thread)
+        thread.start()
+    
+    # Wait for all tracker threads to finish
+    for thread in tracker_threads:
+        thread.join()
+    
+    # Clean up and close windows
+    cv2.destroyAllWindows()
+
+### Link to this sectionQuelles sont les applications réelles du suivi multi-objets avec Ultralytics YOLO ?#
+
+Le suivi multi-objets avec Ultralytics YOLO a de nombreuses applications, notamment :
+
+  * **Transports :** Suivi de véhicules pour la gestion du trafic et la [conduite autonome](https://www.ultralytics.com/blog/ai-in-self-driving-cars).
+  * **Commerce de détail :** Suivi de personnes pour l'analyse en magasin et la sécurité.
+  * **Aquaculture :** Suivi de poissons pour la surveillance d'environnements aquatiques.
+  * **Analyse sportive :** Suivi des joueurs et de l'équipement pour l'analyse de performance.
+  * **Systèmes de sécurité :** [Surveillance d'activités suspectes](https://www.ultralytics.com/blog/security-alarm-system-projects-with-ultralytics-yolov8) et création d'[alarmes de sécurité](https://docs.ultralytics.com/guides/security-alarm-system).
+
+
+
+Ces applications bénéficient de la capacité d'Ultralytics YOLO à traiter des vidéos à haut taux de rafraîchissement en temps réel avec une précision exceptionnelle.
+
+### Link to this sectionComment visualiser les trajectoires d'objets sur plusieurs frames vidéo avec Ultralytics YOLO ?#
+
+Pour visualiser les trajectoires d'objets sur plusieurs frames vidéo, tu peux utiliser les fonctionnalités de suivi du modèle YOLO avec OpenCV pour dessiner les chemins des objets détectés. Voici un exemple de script qui démontre cela :
+
+Tracer les trajectoires sur plusieurs frames vidéo
+    
+    
+    from collections import defaultdict
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    track_history = defaultdict(lambda: [])
+    
+    while cap.isOpened():
+        success, frame = cap.read()
+        if success:
+            results = model.track(frame, persist=True)
+            boxes = results[0].boxes.xywh.cpu()
+            track_ids = results[0].boxes.id.int().cpu().tolist()
+            annotated_frame = results[0].plot()
+            for box, track_id in zip(boxes, track_ids):
+                x, y, w, h = box
+                track = track_history[track_id]
+                track.append((float(x), float(y)))
+                if len(track) > 30:
+                    track.pop(0)
+                points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                cv2.polylines(annotated_frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+            cv2.imshow("YOLO26 Tracking", annotated_frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+Ce script tracera les lignes de suivi montrant les chemins de mouvement des objets suivis au fil du temps, fournissant des informations précieuses sur le comportement et les modèles des objets.
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/track.md)
+
+[GLglenn-jocher30](https://github.com/glenn-jocher)[RIRizwanMunawar4](https://github.com/RizwanMunawar)[ONonuralpszr2](https://github.com/onuralpszr)[RAraimbekovm2](https://github.com/raimbekovm)[Y-Y-T-G2](https://github.com/Y-T-G)RORonald Eddy Jr1[PDpderrenger1](https://github.com/pderrenger)[LALaughing-q1](https://github.com/Laughing-q)[ANankanpy1](https://github.com/ankanpy)[MAMatthewNoyce1](https://github.com/MatthewNoyce)[IVIvorZhu3311](https://github.com/IvorZhu331)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+Créé 12 nov. 2023Mis à jour la semaine dernière
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

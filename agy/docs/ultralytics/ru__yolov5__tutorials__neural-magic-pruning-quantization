@@ -1,0 +1,259 @@
+---
+source_url: https://docs.ultralytics.com/ru/yolov5/tutorials/neural-magic-pruning-quantization
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/neural-magic-pruning-quantization.md)
+
+# Link to this sectionРазвертывание YOLOv5 с помощью DeepSparse от Neural Magic#
+
+Добро пожаловать в эру программно-определяемого ИИ.
+
+В этом руководстве объясняется, как развернуть YOLOv5 с помощью DeepSparse от Neural Magic.
+
+DeepSparse — это среда выполнения (runtime) для инференса, обеспечивающая исключительную производительность на CPU. Например, по сравнению с базовым показателем ONNX Runtime, DeepSparse дает ускорение в 5.8 раза для YOLOv5s на той же самой машине!
+
+![YOLOv5 DeepSparse vs ONNX Runtime speed comparison chart](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-speed-improvement.avif)
+
+Впервые твои рабочие нагрузки [deep learning](https://www.ultralytics.com/glossary/deep-learning-dl) могут соответствовать производственным требованиям к производительности без сложности и затрат, связанных с аппаратными ускорителями. Проще говоря, DeepSparse дает тебе производительность GPU и простоту программного обеспечения:
+
+  * **Гибкое развертывание** : работай стабильно в облаке, центрах обработки данных и на периферии (edge) с любым оборудованием от Intel до AMD и ARM
+  * **Бесконечная масштабируемость** : масштабируй вертикально до сотен ядер, горизонтально с помощью стандартного Kubernetes или полностью абстрагируйся с помощью Serverless
+  * **Простая интеграция** : понятные API для встраивания модели в приложение и ее мониторинга в продакшене
+
+
+
+## Link to this sectionКак DeepSparse достигает производительности уровня GPU?#
+
+DeepSparse использует разреженность (sparsity) моделей для повышения производительности.
+
+Разрежение путем прунинга (pruning) и квантования — это широко изученная техника, позволяющая на порядки сократить размер и вычислительные ресурсы, необходимые для выполнения сети, сохраняя при этом высокую [точность](https://www.ultralytics.com/glossary/accuracy). DeepSparse учитывает разреженность, что означает, что он пропускает обнуленные параметры, уменьшая объем вычислений при проходе вперед (forward pass). Поскольку разреженные вычисления теперь ограничены памятью, DeepSparse выполняет сеть по глубине, разбивая задачу на Tensor Columns — вертикальные полосы вычислений, которые помещаются в кэш.
+
+![DeepSparse tensor columns for sparse neural network inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/tensor-columns.avif)
+
+Разреженные сети со сжатыми вычислениями, выполняемые по глубине в кэше, позволяют DeepSparse обеспечить производительность уровня GPU на CPU!
+
+## Link to this sectionКак мне создать разреженную версию YOLOv5, обученную на моих данных?#
+
+Репозиторий моделей с открытым исходным кодом от Neural Magic, [SparseZoo](https://github.com/neuralmagic/sparsezoo/blob/main/README.md), содержит предварительно разреженные чекпоинты для каждой модели YOLOv5. Используя [SparseML](https://github.com/neuralmagic/sparseml), который интегрирован с Ultralytics, ты можешь дообучить (fine-tune) разреженный чекпоинт на своих данных с помощью одной команды CLI.
+
+[Ознакомься с документацией Neural Magic по YOLOv5 для получения более подробной информации](https://www.redhat.com/en/about/press-releases/red-hat-completes-acquisition-neural-magic-fuel-optimized-generative-ai-innovation-across-hybrid-cloud).
+
+## Link to this sectionИспользование DeepSparse#
+
+Мы пройдемся по примеру бенчмаркинга и развертывания разреженной версии YOLOv5s с помощью DeepSparse.
+
+### Link to this sectionУстановка DeepSparse#
+
+Выполни следующую команду, чтобы установить DeepSparse. Мы рекомендуем использовать виртуальное окружение с Python.
+    
+    
+    pip install "deepsparse[server,yolo,onnxruntime]"
+
+### Link to this sectionПолучение файла ONNX#
+
+DeepSparse принимает модель в формате ONNX, которая передается либо как:
+
+  * Стаб (stub) SparseZoo, который идентифицирует файл ONNX в SparseZoo
+  * Локальный путь к модели ONNX в файловой системе
+
+
+
+В примерах ниже используются стандартные плотные (dense) и прунинг-квантованные чекпоинты YOLOv5s, идентифицируемые следующими стабами SparseZoo:
+    
+    
+    zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none
+    zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none
+
+### Link to this sectionРазвертывание модели#
+
+DeepSparse предлагает удобные API для интеграции твоей модели в приложение.
+
+Чтобы попробовать примеры развертывания ниже, скачай образец изображения и сохрани его как `basilica.jpg` с помощью следующего кода:
+    
+    
+    wget -O basilica.jpg https://raw.githubusercontent.com/neuralmagic/deepsparse/main/src/deepsparse/yolo/sample_images/basilica.jpg
+
+#### Link to this sectionPython API#
+
+`Pipelines` оборачивают предобработку и пост-обработку вывода вокруг runtime, обеспечивая чистый интерфейс для добавления DeepSparse в приложение. Интеграция DeepSparse-Ultralytics включает в себя готовый к использованию `Pipeline`, который принимает необработанные изображения и выдает ограничивающие рамки (bounding boxes).
+
+Создай `Pipeline` и запусти инференс:
+    
+    
+    from deepsparse import Pipeline
+    
+    # list of images in local filesystem
+    images = ["basilica.jpg"]
+    
+    # create Pipeline
+    model_stub = "zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none"
+    yolo_pipeline = Pipeline.create(
+        task="yolo",
+        model_path=model_stub,
+    )
+    
+    # run inference on images, receive bounding boxes + classes
+    pipeline_outputs = yolo_pipeline(images=images, iou_thres=0.6, conf_thres=0.001)
+    print(pipeline_outputs)
+
+Если ты работаешь в облаке, ты можешь получить ошибку, что OpenCV не может найти `libGL.so.1`. Ты можешь либо установить отсутствующую библиотеку:
+    
+    
+    apt-get install libgl1
+
+Либо использовать headless-пакет Ultralytics, который полностью исключает зависимости GUI:
+    
+    
+    pip install ultralytics-opencv-headless
+
+#### Link to this sectionHTTP сервер#
+
+DeepSparse Server работает поверх популярного веб-фреймворка [FastAPI](https://fastapi.tiangolo.com/) и веб-сервера [Uvicorn](https://uvicorn.dev/). С помощью всего одной команды CLI ты можешь легко настроить эндпоинт службы модели с помощью DeepSparse. Сервер поддерживает любой Pipeline из DeepSparse, включая [object detection](https://www.ultralytics.com/glossary/object-detection) с YOLOv5, что позволяет отправлять необработанные изображения на эндпоинт и получать ограничивающие рамки.
+
+Запусти сервер с прунинг-квантованной моделью YOLOv5s:
+    
+    
+    deepsparse.server \
+      --task yolo \
+      --model_path zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none
+
+Пример запроса с использованием пакета Python `requests`:
+    
+    
+    import json
+    
+    import requests
+    
+    # list of images for inference (local files on client side)
+    path = ["basilica.jpg"]
+    files = [("request", open(img, "rb")) for img in path]
+    
+    # send request over HTTP to /predict/from_files endpoint
+    url = "http://0.0.0.0:5543/predict/from_files"
+    resp = requests.post(url=url, files=files)
+    
+    # response is returned in JSON
+    annotations = json.loads(resp.text)  # dictionary of annotation results
+    bounding_boxes = annotations["boxes"]
+    labels = annotations["labels"]
+
+#### Link to this sectionАннотирование через CLI#
+
+Ты также можешь использовать команду annotate, чтобы движок сохранил аннотированное фото на диске. Попробуй `--source 0`, чтобы аннотировать поток с веб-камеры в реальном времени!
+    
+    
+    deepsparse.object_detection.annotate --model_filepath zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none --source basilica.jpg
+
+Запуск приведенной выше команды создаст папку `annotation-results` и сохранит внутри аннотированное изображение.
+
+![YOLOv5 detection results with bounding boxes](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/basilica-annotated.avif)
+
+## Link to this sectionБенчмаркинг производительности#
+
+Мы сравним пропускную способность (throughput) DeepSparse с пропускной способностью ONNX Runtime на YOLOv5s, используя скрипт бенчмаркинга DeepSparse.
+
+Бенчмарки были запущены на инстансе AWS `c6i.8xlarge` (16 ядер).
+
+### Link to this sectionСравнение производительности при размере батча 32#
+
+#### Link to this sectionБазовый уровень ONNX Runtime#
+
+При размере батча 32, ONNX Runtime достигает 42 изображений/сек со стандартной плотной YOLOv5s:
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none -s sync -b 32 -nstreams 1 -e onnxruntime
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none
+    # Batch Size: 32
+    # Scenario: sync
+    # Throughput (items/sec): 41.9025
+
+#### Link to this sectionПроизводительность DeepSparse (dense)#
+
+Хотя DeepSparse демонстрирует наилучшую производительность с оптимизированными разреженными моделями, он также хорошо работает со стандартной плотной YOLOv5s.
+
+При размере батча 32, DeepSparse достигает 70 изображений/сек со стандартной плотной YOLOv5s — это **улучшение производительности в 1.7 раза по сравнению с ORT**!
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none -s sync -b 32 -nstreams 1
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none
+    # Batch Size: 32
+    # Scenario: sync
+    # Throughput (items/sec): 69.5546
+
+#### Link to this sectionПроизводительность DeepSparse (sparse)#
+
+Когда к модели применяется разреженность, прирост производительности DeepSparse по сравнению с ONNX Runtime становится еще выше.
+
+При размере батча 32, DeepSparse достигает 241 изображения/сек с прунинг-квантованной YOLOv5s — это **улучшение производительности в 5.8 раза по сравнению с ORT**!
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none -s sync -b 32 -nstreams 1
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none
+    # Batch Size: 32
+    # Scenario: sync
+    # Throughput (items/sec): 241.2452
+
+### Link to this sectionСравнение производительности при размере батча 1#
+
+DeepSparse также способен получить ускорение по сравнению с ONNX Runtime для сценария с размером батча 1, чувствительного к задержкам.
+
+#### Link to this sectionБазовый уровень ONNX Runtime#
+
+При размере батча 1, ONNX Runtime достигает 48 изображений/сек со стандартной плотной YOLOv5s.
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none -s sync -b 1 -nstreams 1 -e onnxruntime
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/base-none
+    # Batch Size: 1
+    # Scenario: sync
+    # Throughput (items/sec): 48.0921
+
+#### Link to this sectionПроизводительность DeepSparse (sparse)#
+
+При размере батча 1, DeepSparse достигает 135 элементов/сек с прунинг-квантованной YOLOv5s — **прирост производительности в 2.8 раза по сравнению с ONNX Runtime!**
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none -s sync -b 1 -nstreams 1
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned65_quant-none
+    # Batch Size: 1
+    # Scenario: sync
+    # Throughput (items/sec): 134.9468
+
+Поскольку инстансы `c6i.8xlarge` имеют инструкции VNNI, пропускную способность DeepSparse можно еще больше увеличить, если веса прунируются блоками по 4.
+
+При размере батча 1, DeepSparse достигает 180 элементов/сек с 4-блочной прунинг-квантованной YOLOv5s — это **прирост производительности в 3.7 раза по сравнению с ONNX Runtime!**
+    
+    
+    deepsparse.benchmark zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned35_quant-none-vnni -s sync -b 1 -nstreams 1
+    
+    # Original Model Path: zoo:cv/detection/yolov5-s/pytorch/ultralytics/coco/pruned35_quant-none-vnni
+    # Batch Size: 1
+    # Scenario: sync
+    # Throughput (items/sec): 179.7375
+
+## Link to this sectionНачало работы с DeepSparse#
+
+**Исследования или тестирование?** DeepSparse Community предоставляется бесплатно для исследований и тестирования. Начни работу с их [документацией](https://www.redhat.com/en/about/press-releases/red-hat-completes-acquisition-neural-magic-fuel-optimized-generative-ai-innovation-across-hybrid-cloud).
+
+Для получения дополнительной информации о развертывании YOLOv5 с помощью DeepSparse, ознакомься с [документацией Neural Magic по DeepSparse](https://www.redhat.com/en/about/press-releases/red-hat-completes-acquisition-neural-magic-fuel-optimized-generative-ai-innovation-across-hybrid-cloud) и [постом в блоге Ultralytics об интеграции с DeepSparse](https://www.ultralytics.com/blog/deploy-yolov5-with-neural-magics-deepsparse-for-gpu-class-performance-on-cpus).
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/neural-magic-pruning-quantization.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Создано 3 дня назадОбновлено 3 дня назад
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

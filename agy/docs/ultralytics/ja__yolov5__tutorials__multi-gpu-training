@@ -1,0 +1,210 @@
+---
+source_url: https://docs.ultralytics.com/ja/yolov5/tutorials/multi-gpu-training
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/multi-gpu-training.md)
+
+# Link to this sectionYOLOv5でのマルチGPUトレーニング#
+
+本ガイドでは、単一マシンまたは複数マシンで**複数** のGPUを使用してYOLOv5をトレーニングする方法を説明します。
+
+## Link to this section始める前に#
+
+Clone repo and install [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) in a [**Python >=3.8.0**](https://www.python.org/) environment, including [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). [Models](https://github.com/ultralytics/yolov5/tree/master/models) and [datasets](https://github.com/ultralytics/yolov5/tree/master/data) download automatically from the latest YOLOv5 [release](https://github.com/ultralytics/yolov5/releases).
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+Dockerの使用
+
+すべてのマルチGPUトレーニング実行には、**Ultralytics Dockerイメージ** が推奨されます。[Dockerクイックスタートガイド](/ja/yolov5/environments/docker-image-quickstart-tutorial)を参照してください。 [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+PyTorch >= 1.9
+
+`torch.distributed.run` replaces `torch.distributed.launch` in **[PyTorch](https://www.ultralytics.com/glossary/pytorch) >= 1.9**. See the [PyTorch distributed documentation](https://docs.pytorch.org/docs/stable/distributed.html) for details.
+
+## Link to this sectionトレーニング#
+
+トレーニングを開始する事前学習済みモデルを選択します。ここでは、小型で高速なモデルである [YOLOv5s](https://github.com/ultralytics/yolov5/blob/master/models/yolov5s.yaml) を選択します。すべてのモデルの完全な比較については、READMEの[テーブル](https://github.com/ultralytics/yolov5#pretrained-checkpoints)を参照してください。このモデルを[COCO](https://github.com/ultralytics/yolov5/blob/master/data/scripts/get_coco.sh)データセットでマルチGPUトレーニングします。
+
+![YOLOv5 Models](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-model-comparison.avif)
+
+### Link to this sectionシングルGPU#
+    
+    
+    python train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0
+
+### Link to this sectionマルチGPU [DataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.DataParallel) モード（⚠️ 非推奨）#
+
+DataParallelモードを有効にするには、複数のGPU IDを `--device` に渡します。
+    
+    
+    python train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0,1
+
+DataParallelは低速であり、シングルGPUを使用する場合と比較しても、トレーニング速度はほとんど向上しません。
+
+### Link to this sectionマルチGPU [DistributedDataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.parallel.DistributedDataParallel) モード（✅ 推奨）#
+
+トレーニングコマンドの先頭に `python -m torch.distributed.run --nproc_per_node` を付け、その後に通常の引数を渡します。
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0,1
+
+  * `--nproc_per_node` は使用するGPUの数です。上記の例では `2` です。
+  * `--batch` は合計バッチサイズであり、各GPUに均等に分割されます。上記の例では、各GPUあたり `64 / 2 = 32` となります。
+
+
+
+上記のコマンドはGPU `0...(N-1)` を使用します。環境変数でデバイスの可視性を制御するには、起動前に `CUDA_VISIBLE_DEVICES=2,3` （またはその他のリスト）を設定します。
+
+Use specific GPUs (click to expand)
+
+`--device` に続いて特定のGPU IDを渡します。以下の例ではGPU `2,3` を使用しています。
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights '' --device 2,3
+
+Use SyncBatchNorm (click to expand)
+
+[SyncBatchNorm](https://docs.pytorch.org/docs/master/generated/torch.nn.SyncBatchNorm.html) はマルチGPUトレーニングの[精度](https://www.ultralytics.com/glossary/accuracy)を向上させることができますが、トレーニング速度を大幅に低下させます。これはマルチGPU DistributedDataParallelトレーニングでのみ利用可能です。
+
+**各** GPUのバッチサイズが小さい場合 (`<= 8`) に最適です。
+
+SyncBatchNormを有効にするには、`--sync-bn` を渡します。
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights '' --sync-bn
+
+Use Multiple machines (click to expand)
+
+これはマルチGPU DistributedDataParallelトレーニングでのみ利用可能です。
+
+継続する前に、データセット、コードベース、およびその他の依存関係がすべてのマシン間で一致していることを確認し、ネットワーク経由でマシン同士が通信できることを検証してください。
+
+マスターマシン（他が接続するマシン）を選択し、そのアドレス (`master_addr`) をメモし、ポート (`master_port`) を選択します。以下の例では `master_addr = 192.168.1.1`、`master_port = 1234` を使用しています。
+
+次に、以下を実行します。
+    
+    
+    # On master machine 0
+    python -m torch.distributed.run --nproc_per_node G --nnodes N --node_rank 0 --master_addr "192.168.1.1" --master_port 1234 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights ''
+    
+    
+    # On machine R
+    python -m torch.distributed.run --nproc_per_node G --nnodes N --node_rank R --master_addr "192.168.1.1" --master_port 1234 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights ''
+
+ここで `G` はマシンあたりのGPU数、`N` はマシン数、`R` は `0...(N-1)` の範囲でのマシンランクです。例えば、2台のマシンがあり、それぞれにGPUが2つある場合、2台目のマシンで `G = 2`、`N = 2`、`R = 1` に設定します。
+
+**すべて** の `N` 台のマシンが接続されるまでトレーニングは開始されません。出力はマスターマシンにのみ表示されます。
+
+### Link to this section注意点#
+
+  * Windowsのサポートは未検証です。Linuxの使用を推奨します。
+
+  * `--batch` はGPU数の倍数である必要があります。
+
+  * GPU 0はEMAを保持し、チェックポイントを処理するため、他のGPUよりもわずかに多くのメモリを使用します。
+
+  * `RuntimeError: Address already in use` が発生した場合、通常は複数のトレーニング実行が同じポートを使用していることを意味します。`--master_port` で異なるポートを指定してください。
+        
+        python -m torch.distributed.run --master_port 1234 --nproc_per_node 2 ...
+
+
+
+
+## Link to this section結果#
+
+8x A100 SXM4-40GBを搭載した[AWS EC2 P4dインスタンス](/ja/yolov5/environments/aws-quickstart-tutorial)における、YOLOv5lのCOCO [エポック](https://www.ultralytics.com/glossary/epoch) 1回分のDDPプロファイリング結果。
+
+Profiling code
+    
+    
+    # prepare
+    t=ultralytics/yolov5:latest && sudo docker pull $t && sudo docker run -it --runtime=nvidia --ipc=host --gpus all -v "$(pwd)"/coco:/usr/src/coco $t
+    pip3 install torch==1.9.0+cu111 torchvision==0.10.0+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+    cd .. && rm -rf app && git clone https://github.com/ultralytics/yolov5 -b master app && cd app
+    cp data/coco.yaml data/coco_profile.yaml
+    
+    # profile
+    python train.py --batch-size 16 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch-size 32 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1
+    python -m torch.distributed.run --nproc_per_node 4 train.py --batch-size 64 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1,2,3
+    python -m torch.distributed.run --nproc_per_node 8 train.py --batch-size 128 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1,2,3,4,5,6,7
+
+GPUs  
+A100| batch-size| CUDA_mem  
+device0 (G)| COCO  
+train| COCO  
+val  
+---|---|---|---|---  
+1x| 16| 26GB| 20:39| 0:55  
+2x| 32| 26GB| 11:43| 0:57  
+4x| 64| 26GB| 5:57| 0:55  
+8x| 128| 26GB| 3:09| 0:57  
+  
+結果が示すように、複数のGPUで [DistributedDataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.parallel.DistributedDataParallel) を使用すると、トレーニング速度がほぼ線形にスケーリングします。8個のGPUを使用すると、デバイスあたりのメモリ使用量を維持したまま、シングルGPUと比較して約6.5倍速くトレーニングが完了します。
+
+## Link to this sectionよくある質問 (FAQ)#
+
+Issueをオープンする前に以下のチェックリストを確認してください。時間を節約できる場合があります。
+
+Checklist (click to expand)
+
+  * 本ガイドを最初から最後まで読みましたか？
+  * コードベースを再クローンしましたか？コードは**毎日** 変更されています。
+  * エラーメッセージを検索しましたか？誰かがすでに同じ問題に遭遇し、解決策を共有している可能性があります。
+  * すべての要件（正しいPythonおよびPyTorchバージョンを含む）をインストールしましたか？
+  * 以下にリストされているサポートされている環境のいずれかを試しましたか？
+  * 根本的な原因を特定するために、`coco128` や `coco2017` のような小さなデータセットを試しましたか？
+
+
+
+上記をすべて確認しても解決しない場合は、テンプレートに従い、可能な限り詳細を記載してIssueをオープンしてください。
+
+## Link to this sectionサポートされている環境#
+
+Ultralyticsは、プロジェクトを迅速に開始できるように、[CUDA](https://developer.nvidia.com/cuda)、[CUDNN](https://developer.nvidia.com/cudnn)、[Python](https://www.python.org/)、[PyTorch](https://pytorch.org/) などの主要な依存関係が事前にインストールされた、すぐに使える環境を多数提供しています。
+
+  * **無料GPUノートブック** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [GCP クイックスタートガイド](/ja/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [AWSクイックスタートガイド](/ja/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [AzureMLクイックスタートガイド](/ja/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Dockerクイックスタートガイド](/ja/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionプロジェクトの状態#
+
+[![YOLOv5 CI](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+このバッジは、すべての [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) 継続的インテグレーション（CI）テストが正常に合格していることを示します。これらのCIテストは、YOLOv5の機能とパフォーマンスを[トレーニング](https://github.com/ultralytics/yolov5/blob/master/train.py)、[バリデーション](https://github.com/ultralytics/yolov5/blob/master/val.py)、[推論](https://github.com/ultralytics/yolov5/blob/master/detect.py)、[エクスポート](https://github.com/ultralytics/yolov5/blob/master/export.py)、および[ベンチマーク](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py)といった様々な主要な観点から厳密にチェックします。これにより、macOS、Windows、Ubuntuで24時間ごと、および新しいコミットごとにテストが実施され、一貫した信頼性の高い動作が保証されます。
+
+## Link to this sectionクレジット#
+
+すべての重要な作業を担ってくれた @MagicFrogSJTU と、道筋を指導してくれた @glenn-jocher に感謝します。
+
+## Link to this section関連項目#
+
+  * [トレーニングモード](https://docs.ultralytics.com/modes/train) \- Ultralyticsを使用してYOLOモデルをトレーニングする方法を学ぶ
+  * [ハイパーパラメータチューニング](https://docs.ultralytics.com/guides/hyperparameter-tuning) \- モデルのパフォーマンスを最適化する
+  * [Dockerクイックスタートガイド](https://docs.ultralytics.com/guides/docker-quickstart) \- トレーニング用にDocker環境をセットアップする
+
+
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/multi-gpu-training.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+作成日 3 日前更新日 3 日前
+
+## コメント
+
+このページの内容
+
+AIで探索

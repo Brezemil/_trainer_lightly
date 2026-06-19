@@ -1,0 +1,155 @@
+---
+source_url: https://docs.ultralytics.com/reference/nn/backends/coreml
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/reference/nn/backends/coreml.md)
+
+# Link to this sectionReference for `ultralytics/nn/backends/coreml.py`#
+
+Improvements
+
+This page is sourced from <https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/backends/coreml.py>. Have an improvement or example to add? Open a [Pull Request](https://docs.ultralytics.com/help/contributing) — thank you! 🙏
+
+  
+
+
+Summary
+
+  * `CoreMLBackend`
+
+
+
+## Link to this sectionClass `ultralytics.nn.backends.coreml.CoreMLBackend`#
+    
+    
+    CoreMLBackend()
+
+**Bases:** `BaseBackend`
+
+CoreML inference backend for Apple hardware.
+
+Loads and runs inference with CoreML models (.mlpackage files) using the coremltools library. Supports both static and dynamic input shapes and handles NMS-included model outputs.
+
+**Methods**
+
+Name| Description  
+---|---  
+`forward`| Run CoreML inference with automatic input format handling.  
+`load_model`| Load a CoreML model from a .mlpackage file.  
+  
+Source code in `ultralytics/nn/backends/coreml.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/backends/coreml.py#L17-L66)
+    
+    
+    class CoreMLBackend(BaseBackend):
+
+  
+
+
+### Link to this sectionMethod `ultralytics.nn.backends.coreml.CoreMLBackend.forward`#
+    
+    
+    def forward(self, im: torch.Tensor) -> np.ndarray | list[np.ndarray]
+
+Run CoreML inference with automatic input format handling.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`im`| `torch.Tensor`| Input image tensor in BHWC format (converted from BCHW by AutoBackend).| _required_  
+  
+**Returns**
+
+Type| Description  
+---|---  
+`np.ndarray| list[np.ndarray]`  
+  
+Source code in `ultralytics/nn/backends/coreml.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/backends/coreml.py#L42-L66)
+    
+    
+    def forward(self, im: torch.Tensor) -> np.ndarray | list[np.ndarray]:
+        """Run CoreML inference with automatic input format handling.
+    
+        Args:
+            im (torch.Tensor): Input image tensor in BHWC format (converted from BCHW by AutoBackend).
+    
+        Returns:
+            (np.ndarray | list[np.ndarray]): Model predictions as numpy array(s).
+        """
+        im = im.cpu().numpy()
+        h, w = im.shape[1:3]
+    
+        im = im.transpose(0, 3, 1, 2) if self.dynamic else Image.fromarray((im[0] * 255).astype("uint8"))
+        y = self.model.predict({self.input_name: im})
+        if "confidence" in y:  # NMS included
+            from ultralytics.utils.ops import xywh2xyxy
+    
+            box = xywh2xyxy(y["coordinates"] * [[w, h, w, h]])
+            cls = y["confidence"].argmax(1, keepdims=True)
+            y = np.concatenate((box, np.take_along_axis(y["confidence"], cls, axis=1), cls), 1)[None]
+        else:
+            y = list(y.values())
+        if len(y) == 2 and len(y[1].shape) != 4:  # segmentation model
+            y = list(reversed(y))
+        return y
+
+  
+
+
+### Link to this sectionMethod `ultralytics.nn.backends.coreml.CoreMLBackend.load_model`#
+    
+    
+    def load_model(self, weight: str | Path) -> None
+
+Load a CoreML model from a .mlpackage file.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`weight`| `str| Path`| Path to the .mlpackage model file.  
+  
+Source code in `ultralytics/nn/backends/coreml.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/backends/coreml.py#L24-L40)
+    
+    
+    def load_model(self, weight: str | Path) -> None:
+        """Load a CoreML model from a .mlpackage file.
+    
+        Args:
+            weight (str | Path): Path to the .mlpackage model file.
+        """
+        check_requirements(["coremltools>=9.0", "numpy>=1.14.5,<=2.3.5"])
+        import coremltools as ct
+    
+        LOGGER.info(f"Loading {weight} for CoreML inference...")
+        self.model = ct.models.MLModel(weight)
+        spec = self.model.get_spec()
+        self.input_name = spec.description.input[0].name
+        self.dynamic = spec.description.input[0].type.HasField("multiArrayType")
+    
+        # Load metadata
+        self.apply_metadata(dict(self.model.user_defined_metadata))
+
+  
+  
+
+
+Contributors
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/reference/nn/backends/coreml.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)
+
+Created 3 months agoUpdated 1 month ago
+
+On This Page
+
+Explore with AI

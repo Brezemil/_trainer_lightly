@@ -1,0 +1,2062 @@
+---
+source_url: https://docs.ultralytics.com/ja/platform/api
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+# Link to this sectionREST API リファレンス#
+
+[Ultralytics Platform](https://platform.ultralytics.com) は、データセット、モデル、トレーニング、デプロイメントへプログラムからアクセスするための包括的な REST API を提供します。
+
+![Ultralytics Platform Api Overview](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/platform/platform-api-overview.avif)
+
+クイックスタート
+    
+    
+    # List your datasets
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+インタラクティブな API ドキュメント
+
+[Ultralytics Platform API docs](https://platform.ultralytics.com/api/docs) で、すべてのインタラクティブな API リファレンスを確認できます。
+
+## Link to this sectionAPI の概要#
+
+API は、プラットフォームのコアリソースを中心に構成されています。
+    
+    
+    graph LR
+        A[API Key] --> B[Datasets]
+        A --> C[Projects]
+        A --> D[Models]
+        A --> E[Deployments]
+        B -->|train on| D
+        C -->|contains| D
+        D -->|deploy to| E
+        D -->|export| F[Exports]
+        B -->|auto-annotate| B
+
+リソース| 説明| 主要な操作  
+---|---|---  
+[Datasets](/ja/platform/data/datasets)| ラベル付き画像コレクション| CRUD、画像、ラベル、エクスポート、バージョン、クローン  
+[Projects](/ja/platform/train/projects)| トレーニングワークスペース| CRUD、クローン、アイコン  
+[Models](/ja/platform/train/models)| 学習済みチェックポイント| CRUD、推論（predict）、ダウンロード、クローン、エクスポート  
+[Deployments](/ja/platform/deploy/endpoints)| 専用の推論エンドポイント| CRUD、開始/停止、メトリクス、ログ、ヘルスチェック  
+[Exports](/ja/platform/train/models#export-model)| フォーマット変換ジョブ| 作成、ステータス、ダウンロード  
+[Training](/ja/platform/train/cloud-training)| クラウド GPU トレーニングジョブ| 開始、ステータス、キャンセル  
+[Billing](/ja/platform/account/billing)| クレジットとサブスクリプション| 残高、チャージ、支払い方法  
+[Teams](/ja/platform/account/teams)| ワークスペースの共同作業| メンバー、招待、ロール  
+  
+## Link to this section認証#
+
+データセット、プロジェクト、モデル、トレーニング、エクスポート、推論などのリソース API は、API キーによる認証を使用します。公開エンドポイント（公開データセット、プロジェクト、モデルの一覧表示）は、キーなしでの匿名読み取りアクセスをサポートしています。アクティビティ、設定、チーム、請求、GDPR フローを含むアカウント指向のルートは、現在認証されたブラウザセッションを必要とし、API キー経由では利用できません。
+
+### Link to this sectionAPI キーの取得#
+
+  1. `Settings` > `API Keys` に移動します
+  2. `Create Key` をクリックします
+  3. 生成されたキーをコピーします
+
+
+
+詳細な手順については [API Keys](/ja/platform/account/api-keys) を参照してください。
+
+### Link to this section認証ヘッダー#
+
+すべてのリクエストに API キーを含めてください：
+    
+    
+    Authorization: Bearer YOUR_API_KEY
+
+API キーのフォーマット
+
+API キーは、`ul_` の後に 40 桁の 16 進数が続くフォーマットです。キーは秘密に保持し、バージョン管理にコミットしたり、公開したりしないでください。
+
+### Link to this section例#
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+## Link to this sectionベース URL#
+
+すべての API エンドポイントは以下を使用します：
+
+`https://platform.ultralytics.com/api `
+
+## Link to this sectionレート制限#
+
+この API は、不正利用を防ぎつつ正当な利用を制限しないように、API キーごとのレート制限（スライディングウィンドウ、Upstash Redis ベース）を強制しています。匿名トラフィックは、さらに Vercel のプラットフォームレベルの悪用防止機能によって保護されています。
+
+制限を超えた場合、API は再試行メタデータを含む `429` を返します：
+    
+    
+    Retry-After: 12
+    X-RateLimit-Reset: 2026-02-21T12:34:56.000Z
+
+### Link to this sectionAPI キーごとの制限#
+
+レート制限は、呼び出されるエンドポイントに基づいて自動的に適用されます。負荷の高い操作には不正利用を防ぐために厳しい制限が設けられていますが、標準的な CRUD 操作には十分なデフォルト枠が設定されています。
+
+エンドポイント| 制限| 適用対象  
+---|---|---  
+**デフォルト**|  100 リクエスト/分| 以下にリストされていないすべてのエンドポイント（一覧、取得、作成、更新、削除）  
+**トレーニング**|  10 リクエスト/分| クラウドトレーニングジョブの開始 (`POST /api/training/start`)  
+**アップロード**|  10 リクエスト/分| ファイルアップロード、署名付き URL、データセット取り込み  
+**推論 (Predict)**|  20 リクエスト/分| 共有モデル推論 (`POST /api/models/{id}/predict`)  
+**エクスポート**|  20 リクエスト/分| モデルフォーマットエクスポート (`POST /api/exports`)、データセットの NDJSON エクスポート、およびバージョン作成  
+**ダウンロード**|  30 リクエスト/分| モデル重みファイルのダウンロード (`GET /api/models/{id}/files`)  
+**専用 (Dedicated)**| **無制限**| [Dedicated endpoints](/ja/platform/deploy/endpoints) — 独自のサービスであり、API 制限はありません。  
+  
+各カテゴリには、API キーごとに独立したカウンターがあります。例えば、20 回の推論リクエストを行っても、100 リクエスト/分のデフォルト許容量には影響しません。
+
+### Link to this section専用エンドポイント (無制限)#
+
+[Dedicated endpoints](/ja/platform/deploy/endpoints) は **API キーのレート制限の対象外** です。モデルを専用エンドポイントにデプロイすると、そのエンドポイント URL (`https://predict-abc123.run.app/predict` など) へのリクエストは、プラットフォームからのレート制限を受けることなく、直接お客様の専用サービスへ送信されます。コンピューティングリソースに対する支払いを行っているため、共有 API 制限ではなく、専用サービスの構成に応じたスループットが得られます。
+
+レート制限の処理
+
+`429` ステータスコードを受け取った場合は、`Retry-After` (または `X-RateLimit-Reset` まで) 待機してから再試行してください。指数バックオフの実装については、rate limit FAQ を参照してください。
+
+## Link to this sectionレスポンスフォーマット#
+
+### Link to this section成功レスポンス#
+
+レスポンスはリソース固有のフィールドを持つ JSON を返します。
+    
+    
+    {
+        "datasets": [...],
+        "total": 100
+    }
+
+### Link to this sectionエラーレスポンス#
+    
+    
+    {
+        "error": "Dataset not found"
+    }
+
+HTTP ステータス| 意味  
+---|---  
+`200`| 成功  
+`201`| 作成完了  
+`400`| 無効なリクエスト  
+`401`| 認証が必要  
+`403`| 権限不足  
+`404`| リソースが見つかりません  
+`409`| 競合（重複）  
+`429`| レート制限を超えました  
+`500`| サーバーエラー  
+  
+* * *
+
+## Link to this sectionDatasets API#
+
+YOLOモデルのトレーニング用に、ラベル付き画像データセットを作成、閲覧、管理します。詳しくは [Datasets documentation](/ja/platform/data/datasets) を参照してください。
+
+### Link to this sectionデータセット一覧#
+    
+    
+    GET /api/datasets
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`username`| string| ユーザー名でフィルタリング  
+`slug`| string| スラグ（slug）で単一のデータセットを取得  
+`limit`| int| ページあたりのアイテム数（デフォルト: 1000、最大: 1000）  
+`owner`| string| ワークスペース所有者のユーザー名  
+      
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=10"
+
+**レスポンス:**
+    
+    
+    {
+        "datasets": [
+            {
+                "_id": "dataset_abc123",
+                "name": "my-dataset",
+                "slug": "my-dataset",
+                "task": "detect",
+                "imageCount": 1000,
+                "classCount": 10,
+                "classNames": ["person", "car"],
+                "visibility": "private",
+                "username": "johndoe",
+                "starCount": 3,
+                "isStarred": false,
+                "sampleImages": [
+                    {
+                        "url": "https://storage.example.com/...",
+                        "width": 1920,
+                        "height": 1080,
+                        "labels": [{ "classId": 0, "bbox": [0.5, 0.4, 0.3, 0.6] }]
+                    }
+                ],
+                "createdAt": "2024-01-15T10:00:00Z",
+                "updatedAt": "2024-01-16T08:30:00Z"
+            }
+        ],
+        "total": 1,
+        "region": "us"
+    }
+
+### Link to this sectionデータセットを取得#
+    
+    
+    GET /api/datasets/{datasetId}
+
+メタデータ、クラス名、分割カウントを含むデータセットの完全な詳細を返します。
+
+### Link to this sectionデータセットを作成#
+    
+    
+    POST /api/datasets
+
+**ボディ:**
+    
+    
+    {
+        "slug": "my-dataset",
+        "name": "My Dataset",
+        "task": "detect",
+        "description": "A custom detection dataset",
+        "visibility": "private",
+        "classNames": ["person", "car"]
+    }
+
+サポートされているタスク
+
+有効な `task` 値: `detect`、`segment`、`semantic`、`classify`、`pose`、`obb`。
+
+### Link to this sectionデータセットを更新#
+    
+    
+    PATCH /api/datasets/{datasetId}
+
+**ボディ（部分更新）:**
+    
+    
+    {
+        "name": "Updated Name",
+        "description": "New description",
+        "visibility": "public"
+    }
+
+### Link to this sectionデータセットアイコン#
+
+データセットアイコンをアップロードします（画像ファイルを含むマルチパートフォーム）：
+    
+    
+    POST /api/datasets/{datasetId}/icon
+
+データセットアイコンを削除します：
+    
+    
+    DELETE /api/datasets/{datasetId}/icon
+
+どちらもアクティブなプラットフォームブラウザセッションが必要です。APIキー経由では利用できません。
+
+### Link to this sectionデータセットを削除#
+    
+    
+    DELETE /api/datasets/{datasetId}
+
+データセットを論理削除します（[trash](/ja/platform/account/trash) に移動され、30日間復元可能です）。
+
+### Link to this sectionデータセットをクローンする#
+    
+    
+    POST /api/datasets/{datasetId}/clone
+
+すべての画像とラベルを含むデータセットのコピーを作成します。パブリックなデータセット、所有するデータセット、または編集可能なワークスペースのデータセットのみ複製可能です。アクティブなプラットフォームブラウザセッションが必要であり、APIキー経由では利用できません。
+
+**ボディ（全フィールド任意）:**
+    
+    
+    {
+        "name": "cloned-dataset",
+        "description": "My cloned dataset",
+        "visibility": "private",
+        "owner": "team-username"
+    }
+
+### Link to this sectionデータセットをエクスポート#
+    
+    
+    GET /api/datasets/{datasetId}/export
+
+最新のデータセットエクスポートへの署名付きダウンロードURLを含むJSONレスポンスを返します。
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`v`| integer| バージョン番号（1から開始）。省略した場合、最新の（キャッシュされていない）エクスポートを返します。  
+  
+**レスポンス:**
+    
+    
+    {
+        "downloadUrl": "https://storage.example.com/export.ndjson?signed=...",
+        "cached": true
+    }
+
+### Link to this sectionデータセットバージョンを作成#
+    
+    
+    POST /api/datasets/{datasetId}/export
+
+データセットの番号付きバージョンスナップショットを新しく作成します。所有者のみ実行可能です。このバージョンは、現在の画像数、クラス数、アノテーション数、分割分布を記録し、イミュータブル（不変）なNDJSONエクスポートを生成・保存します。
+
+**リクエストボディ:**
+    
+    
+    {
+        "description": "Added 500 training images"
+    }
+
+すべてのフィールドは任意です。`description` フィールドはユーザーが設定するバージョンのラベルです。
+
+**レスポンス:**
+    
+    
+    {
+        "version": 3,
+        "downloadUrl": "https://storage.example.com/v3.ndjson?signed=..."
+    }
+
+### Link to this sectionバージョン説明を更新#
+    
+    
+    PATCH /api/datasets/{datasetId}/export
+
+既存バージョンの説明を更新します。所有者のみ実行可能です。
+
+**リクエストボディ:**
+    
+    
+    {
+        "version": 2,
+        "description": "Fixed mislabeled classes"
+    }
+
+**レスポンス:**
+    
+    
+    {
+        "ok": true
+    }
+
+### Link to this sectionクラス統計を取得#
+    
+    
+    GET /api/datasets/{datasetId}/class-stats
+
+クラス分布、位置ヒートマップ、次元統計を返します。結果は最大5分間キャッシュされます。
+
+**レスポンス:**
+    
+    
+    {
+        "classes": [{ "classId": 0, "count": 1500, "imageCount": 450 }],
+        "imageStats": {
+            "widthHistogram": [{ "bin": 640, "count": 120 }],
+            "heightHistogram": [{ "bin": 480, "count": 95 }],
+            "pointsHistogram": [{ "bin": 4, "count": 200 }]
+        },
+        "locationHeatmap": {
+            "bins": [
+                [5, 10],
+                [8, 3]
+            ],
+            "maxCount": 50
+        },
+        "dimensionHeatmap": {
+            "bins": [
+                [2, 5],
+                [3, 1]
+            ],
+            "maxCount": 12,
+            "minWidth": 10,
+            "maxWidth": 1920,
+            "minHeight": 10,
+            "maxHeight": 1080
+        },
+        "classNames": ["person", "car", "dog"],
+        "cached": true,
+        "sampled": false,
+        "sampleSize": 1000
+    }
+
+### Link to this sectionクラスの管理#
+
+クラスをマージします（ソースクラスのアノテーションをターゲットに再割り当てした後、ソースを削除します）：
+    
+    
+    POST /api/datasets/{datasetId}/classes/merge
+
+クラスを削除します：
+    
+    
+    POST /api/datasets/{datasetId}/classes/delete
+
+### Link to this sectionスプリットの再分配#
+    
+    
+    POST /api/datasets/{datasetId}/splits/redistribute
+
+train/val/testスプリット間で画像を再割り当てします。これら3つすべてにアクティブなプラットフォームブラウザセッションが必要であり、APIキー経由では利用できません。
+
+### Link to this sectionデータセットの埋め込み（Embeddings）#
+    
+    
+    GET /api/datasets/{datasetId}/embeddings
+    POST /api/datasets/{datasetId}/embeddings
+    DELETE /api/datasets/{datasetId}/embeddings
+
+GETは現在のUMAP分析サマリーとアクティブなジョブステータスを返し、POSTは埋め込み分析ジョブをキューに入れ、DELETEはアクティブなジョブをキャンセルします。
+
+### Link to this section画像クラスタリング#
+    
+    
+    GET /api/datasets/{datasetId}/images/clustering
+
+クラスタリング散布図ビュー用のUMAP 2Dレイアウトおよび画像ごとのメタデータを返します（ページ分割され、レート制限があります）。
+
+### Link to this sectionデータセットでトレーニングされたモデルを取得#
+    
+    
+    GET /api/datasets/{datasetId}/models
+
+このデータセットを使用してトレーニングされたモデルを返します。
+
+**レスポンス:**
+    
+    
+    {
+        "models": [
+            {
+                "_id": "model_abc123",
+                "name": "experiment-1",
+                "slug": "experiment-1",
+                "status": "completed",
+                "task": "detect",
+                "epochs": 100,
+                "bestEpoch": 87,
+                "projectId": "project_xyz",
+                "projectSlug": "my-project",
+                "projectIconColor": "#3b82f6",
+                "projectIconLetter": "M",
+                "username": "johndoe",
+                "startedAt": "2024-01-14T22:00:00Z",
+                "completedAt": "2024-01-15T10:00:00Z",
+                "createdAt": "2024-01-14T21:55:00Z",
+                "metrics": {
+                    "mAP50": 0.85,
+                    "mAP50-95": 0.72,
+                    "precision": 0.88,
+                    "recall": 0.81
+                }
+            }
+        ],
+        "count": 1
+    }
+
+### Link to this sectionデータセットを自動アノテーション#
+    
+    
+    POST /api/datasets/{datasetId}/predict
+
+データセット画像でYOLO推論を実行し、アノテーションを自動生成します。選択したモデルを使用して、アノテーションのない画像のラベルを予測します。
+
+**ボディ:**
+
+フィールド| タイプ| 必須| 説明  
+---|---|---|---  
+`imageHash`| string| はい| アノテーション対象画像のハッシュ  
+`modelId`| string| いいえ| 推論に使用するモデル。`ul://` URI（例: `ul://username/project/model`）として指定します。省略された場合、データセットのタスク固有のデフォルトモデルが使用されます。  
+`confidence`| float| いいえ| 信頼度のしきい値（デフォルト: 0.25）  
+`iou`| float| いいえ| IoUのしきい値（デフォルト: 0.7）  
+  
+### Link to this sectionデータセット取り込み#
+    
+    
+    POST /api/datasets/ingest
+
+ZIPまたはTARファイル（`.tar.gz`や`.tgz`を含む）を処理するためのデータセット取り込みジョブを作成します。これには画像とラベルが含まれます。
+
+リクエストボディには、`sessionId`（アップロードされたアーカイブのアップロードセッション）または`sourceUrl`（リモートのZIP、TAR、TAR.GZ、TGZ、またはNDJSON URL）のいずれか一方のみを指定し、さらにアーカイブのスプリット構造を上書きするためのオプションの`targetSplit`（`train`、`val`、または`test`）を含めることができます。
+    
+    
+    graph LR
+        A[Upload Archive] --> B[POST /api/datasets/ingest]
+        B --> C[Process Archive]
+        C --> D[Extract images]
+        C --> E[Parse labels]
+        C --> F[Generate thumbnails]
+        D & E & F --> G[Dataset ready]
+
+### Link to this sectionデータセット画像#
+
+#### Link to this section画像一覧を取得#
+    
+    
+    GET /api/datasets/{datasetId}/images
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`split`| string| 分割（split）でフィルタリング: `train`、`val`、`test`  
+`offset`| int| ページネーションのオフセット（デフォルト: 0）  
+`limit`| int| ページあたりのアイテム数（デフォルト: 50、最大: 5000）  
+`sort`| string| 並び順: `newest`、`oldest`、`name-asc`、`name-desc`、`height-asc`、`height-desc`、`width-asc`、`width-desc`、`size-asc`、`size-desc`、`labels-asc`、`labels-desc`（10万枚を超えるデータセットでは一部無効）  
+`hasLabel`| string| ラベルの状態によるフィルタリング（`true` または `false`）  
+`hasError`| string| エラーの状態によるフィルタリング（`true` または `false`）  
+`search`| string| ファイル名または画像ハッシュによる検索  
+`classIds`| string| カンマ区切りのクラスID。指定されたクラスのいずれかを含む画像を返します。  
+`includeThumbnails`| string| 署名付きサムネイルURLを含める（デフォルト: `true`）  
+`includeImageUrls`| string| 署名付きフル画像URLを含める（デフォルト: `false`）  
+  
+#### Link to this section署名付き画像URLを取得#
+    
+    
+    POST /api/datasets/{datasetId}/images/urls
+
+画像ハッシュのバッチに対する署名付きURLを取得します（ブラウザでの表示用）。
+
+#### Link to this section画像を削除#
+    
+    
+    DELETE /api/datasets/{datasetId}/images/{hash}
+
+#### Link to this section画像ラベルを取得#
+    
+    
+    GET /api/datasets/{datasetId}/images/{hash}/labels
+
+特定の画像のアノテーションとクラス名を返します。
+
+#### Link to this section画像ラベルを更新#
+    
+    
+    PUT /api/datasets/{datasetId}/images/{hash}/labels
+
+**ボディ:**
+    
+    
+    {
+        "labels": [
+            { "classId": 0, "bbox": [0.5, 0.5, 0.2, 0.3] },
+            { "classId": 1, "segments": [0.1, 0.2, 0.3, 0.2, 0.2, 0.4] }
+        ]
+    }
+
+座標形式
+
+ラベルの座標は、0から1の間のYOLO正規化値を使用します。バウンディングボックスは `[x_center, y_center, width, height]` を使用します。セグメンテーションラベルは、ポリゴン頂点のフラット化されたリストである `segments` (`[x1, y1, x2, y2, ...]` ) を使用します。
+
+#### Link to this section一括画像操作#
+
+データセット内の分割（train/val/test）間で画像を移動します：
+    
+    
+    PATCH /api/datasets/{datasetId}/images/bulk
+
+画像の一括削除：
+    
+    
+    DELETE /api/datasets/{datasetId}/images/bulk
+
+* * *
+
+## Link to this sectionProjects API#
+
+モデルをプロジェクトに整理します。各モデルは1つのプロジェクトに属します。詳しくは [Projects documentation](/ja/platform/train/projects) を参照してください。
+
+### Link to this sectionプロジェクト一覧を取得#
+    
+    
+    GET /api/projects
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`username`| string| ユーザー名でフィルタリング  
+`limit`| int| ページあたりのアイテム数  
+`owner`| string| ワークスペース所有者のユーザー名  
+  
+### Link to this sectionプロジェクトを取得#
+    
+    
+    GET /api/projects/{projectId}
+
+### Link to this sectionプロジェクトを作成#
+    
+    
+    POST /api/projects
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"name": "my-project", "slug": "my-project", "description": "Detection experiments"}' \
+      https://platform.ultralytics.com/api/projects
+
+### Link to this sectionプロジェクトを更新#
+    
+    
+    PATCH /api/projects/{projectId}
+
+### Link to this sectionプロジェクトを削除#
+    
+    
+    DELETE /api/projects/{projectId}
+
+プロジェクトを論理削除します（[trash](/ja/platform/account/trash) に移動されます）。
+
+### Link to this sectionプロジェクトのクローン#
+    
+    
+    POST /api/projects/{projectId}/clone
+
+公開プロジェクト（すべてのモデルを含む）をワークスペースにクローンします。アクティブなプラットフォームブラウザセッションが必要であり、APIキー経由では利用できません。
+
+### Link to this sectionプロジェクトアイコン#
+
+プロジェクトアイコンをアップロードします（画像ファイルを含むマルチパートフォーム）：
+    
+    
+    POST /api/projects/{projectId}/icon
+
+プロジェクトアイコンを削除します：
+    
+    
+    DELETE /api/projects/{projectId}/icon
+
+どちらもアクティブなプラットフォームブラウザセッションが必要です。APIキー経由では利用できません。
+
+* * *
+
+## Link to this sectionModels API#
+
+トレーニング済みのYOLOモデルを管理します。メトリクスの表示、重みのダウンロード、推論の実行、他フォーマットへのエクスポートが可能です。詳しくは[Modelsのドキュメント](/ja/platform/train/models)を参照してください。
+
+### Link to this sectionモデルの一覧表示#
+    
+    
+    GET /api/models
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 必須| 説明  
+---|---|---|---  
+`projectId`| string| はい| プロジェクトID（必須）  
+`fields`| string| いいえ| フィールドセット: `summary`, `charts`  
+`ids`| string| いいえ| カンマ区切りのモデルID  
+`limit`| int| いいえ| 最大結果数（デフォルト20、最大100）  
+  
+### Link to this section完了したモデルの一覧表示#
+    
+    
+    GET /api/models/completed
+
+トレーニングが完了したモデルを返します（モデルセレクターやデプロイで使用）。
+
+### Link to this sectionモデルの取得#
+    
+    
+    GET /api/models/{modelId}
+
+### Link to this sectionモデルの作成#
+    
+    
+    POST /api/models
+
+**JSON Body:**
+
+フィールド| タイプ| 必須| 説明  
+---|---|---|---  
+`projectId`| string| はい| 対象プロジェクトID  
+`slug`| string| いいえ| URLスラッグ（英数字小文字およびハイフン）  
+`name`| string| いいえ| 表示名（最大100文字）  
+`description`| string| いいえ| モデルの説明（最大1000文字）  
+`task`| string| いいえ| タスクタイプ（detect, segment, semantic, pose, obb, classify）  
+  
+モデルファイルのアップロード
+
+モデルの`.pt`ファイルアップロードは別途処理されます。プラットフォームのUIを使用して、モデルファイルをプロジェクトにドラッグ＆ドロップしてください。
+
+### Link to this sectionモデルの更新#
+    
+    
+    PATCH /api/models/{modelId}
+
+### Link to this sectionモデルの削除#
+    
+    
+    DELETE /api/models/{modelId}
+
+### Link to this sectionモデルファイルのダウンロード#
+    
+    
+    GET /api/models/{modelId}/files
+
+モデルファイルへの署名付きダウンロードURLを返します。
+
+### Link to this sectionモデルをクローンする#
+    
+    
+    POST /api/models/{modelId}/clone
+
+公開モデルを自分のプロジェクトにクローンします。アクティブなプラットフォームブラウザセッションが必要です。APIキー経由では利用できません。
+
+**ボディ:**
+    
+    
+    {
+        "targetProjectSlug": "my-project",
+        "modelName": "cloned-model",
+        "description": "Cloned from public model",
+        "owner": "team-username"
+    }
+
+フィールド| タイプ| 必須| 説明  
+---|---|---|---  
+`targetProjectSlug`| string| はい| 宛先プロジェクトのスラッグ  
+`modelName`| string| いいえ| クローンモデルの名称  
+`description`| string| いいえ| モデルの説明  
+`owner`| string| いいえ| チームのユーザー名（ワークスペースクローン用）  
+  
+### Link to this sectionダウンロードの追跡#
+    
+    
+    POST /api/models/{modelId}/track-download
+
+モデルダウンロードの分析を追跡します。
+
+### Link to this section推論を実行します#
+    
+    
+    POST /api/models/{modelId}/predict
+
+**Multipart Form:**
+
+フィールド| タイプ| 説明  
+---|---|---  
+`file`| ファイル| 画像または動画ファイル（例: JPG, PNG, WebP, BMP, TIFF; MP4, MOV, AVI）  
+`conf`| float| 信頼度のしきい値（デフォルト: 0.25）  
+`iou`| float| IoUのしきい値（デフォルト: 0.7）  
+`imgsz`| int| ピクセル単位の画像サイズ（デフォルト: 640）  
+`source`| string| 画像URLまたはbase64エンコードされた画像（`file`の代替）  
+  
+最大アップロードサイズは100 MBです。
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -F "file=@image.jpg" \
+      -F "conf=0.5" \
+      https://platform.ultralytics.com/api/models/MODEL_ID/predict
+
+**レスポンス:**
+    
+    
+    {
+        "images": [
+            {
+                "shape": [1080, 1920],
+                "results": [
+                    {
+                        "class": 0,
+                        "name": "person",
+                        "confidence": 0.92,
+                        "box": { "x1": 100, "y1": 50, "x2": 300, "y2": 400 }
+                    }
+                ]
+            }
+        ],
+        "metadata": {
+            "imageCount": 1
+        }
+    }
+
+### Link to this section予測トークンの取得#
+    
+    
+    POST /api/models/{modelId}/predict/token
+
+ブラウザセッションのみ
+
+このルートは、アプリ内のPredictタブが、ブラウザからpredict-serviceへの直接呼び出し（低レイテンシ、APIプロキシなし）を行うための短期間有効な推論トークンを発行するために使用されます。アクティブなプラットフォームブラウザセッションが必要であり、APIキー経由では利用できません。プログラムによる推論には、APIキーを使用して `POST /api/models/{modelId}/predict` を呼び出してください。
+
+### Link to this sectionモデルのウォームアップ#
+    
+    
+    POST /api/models/{modelId}/predict/warmup
+
+ブラウザセッションのみ
+
+ウォームアップルートは、ユーザーが最初の推論を行う前に、Predictタブがpredict-service上でモデルの重みをプリロードするために使用されます。アクティブなプラットフォームブラウザセッションが必要であり、APIキー経由では利用できません。
+
+* * *
+
+## Link to this sectionTraining API#
+
+クラウドGPU（RTX 2000 AdaからB300まで、26種類のGPUタイプ）でYOLOのトレーニングを開始し、リアルタイムで進行状況を監視できます。詳細は[Cloud Training documentation](/ja/platform/train/cloud-training)を参照してください。
+    
+    
+    graph LR
+        A[POST /training/start] --> B[Job Created]
+        B --> C{Training}
+        C -->|progress| D[GET /models/id/training]
+        C -->|cancel| E[DELETE /models/id/training]
+        C -->|complete| F[Model Ready]
+        F --> G[Deploy or Export]
+
+### Link to this sectionトレーニングの開始#
+    
+    
+    POST /api/training/start
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "modelId": "MODEL_ID",
+        "projectId": "PROJECT_ID",
+        "gpuType": "rtx-4090",
+        "trainArgs": {
+          "model": "yolo26n.pt",
+          "data": "ul://username/datasets/my-dataset",
+          "epochs": 100,
+          "imgsz": 640,
+          "batch": 16
+        }
+      }' \
+      https://platform.ultralytics.com/api/training/start
+
+GPUタイプ
+
+利用可能なGPUタイプには `rtx-4090`, `a100-80gb-pcie`, `a100-80gb-sxm`, `h100-sxm`, `rtx-pro-6000`, `b300` などが含まれます。料金を含む全リストは[クラウドトレーニング](/ja/platform/train/cloud-training)を参照してください。
+
+### Link to this sectionGPU可用性の取得#
+    
+    
+    GET /api/training/gpu-availability
+
+GPUタイプIDごとの現在のGPU在庫ステータス（`High`、`Medium`、`Low`、または`null`）を返します。パブリックであり認証は不要で、5分間キャッシュされます。
+
+### Link to this sectionトレーニングステータスの取得#
+    
+    
+    GET /api/models/{modelId}/training
+
+モデルの現在のトレーニングジョブステータス、メトリクス、進捗を返します。公開プロジェクトは匿名でアクセス可能ですが、プライベートプロジェクトにはアクティブなプラットフォームブラウザセッションが必要です（このルートはAPIキー認証を受け付けません）。
+
+### Link to this sectionトレーニングのキャンセル#
+    
+    
+    DELETE /api/models/{modelId}/training
+
+実行中のコンピューティングインスタンスを終了し、ジョブをキャンセル済みとしてマークします。アクティブなプラットフォームブラウザセッションが必要であり、APIキー経由では利用できません。
+
+* * *
+
+## Link to this sectionDeployments API#
+
+ヘルスチェックとモニタリングを備えた専用推論エンドポイントにモデルをデプロイします。新しいデプロイメントはデフォルトでスケールトゥゼロを使用し、APIはオプションの `resources` オブジェクトを受け付けます。詳細は[エンドポイントのドキュメント](/ja/platform/deploy/endpoints)を参照してください。
+
+ルートごとのAPIキーサポート
+
+`GET /api/deployments`, `POST /api/deployments`, `GET /api/deployments/{deploymentId}`, `DELETE /api/deployments/{deploymentId}` のみがAPIキー認証をサポートしています。`predict`, `health`, `logs`, `metrics`, `start`, `stop` のサブルートはアクティブなプラットフォームブラウザセッションを必要とします。これらはアプリ内UIのための便利なプロキシです。プログラムによる推論を行う場合は、APIキーを使用して、デプロイメント固有のエンドポイントURL（例: `https://predict-abc123.run.app/predict`）を直接呼び出してください。[専用エンドポイント](/ja/platform/deploy/endpoints#using-endpoints)にはレート制限がありません。
+    
+    
+    graph LR
+        A[Create] --> B[Deploying]
+        B --> C[Ready]
+        C -->|stop| D[Stopped]
+        D -->|start| C
+        C -->|delete| E[Deleted]
+        D -->|delete| E
+        C -->|predict| F[Inference Results]
+
+### Link to this sectionデプロイメントの一覧表示#
+    
+    
+    GET /api/deployments
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`modelId`| string| モデルによるフィルタリング  
+`status`| string| ステータスによるフィルタリング  
+`limit`| int| 最大結果数（デフォルト: 20、最大: 100）  
+`owner`| string| ワークスペース所有者のユーザー名  
+  
+### Link to this sectionデプロイメントの作成#
+    
+    
+    POST /api/deployments
+
+**ボディ:**
+    
+    
+    {
+        "modelId": "model_abc123",
+        "name": "my-deployment",
+        "region": "us-central1",
+        "resources": {
+            "cpu": 1,
+            "memoryGi": 2,
+            "minInstances": 0,
+            "maxInstances": 1
+        }
+    }
+
+フィールド| タイプ| 必須| 説明  
+---|---|---|---  
+`modelId`| string| はい| デプロイするモデルID  
+`name`| string| はい| デプロイメント名  
+`region`| string| はい| デプロイメントリージョン  
+`resources`| オブジェクト| いいえ| リソース設定（`cpu`, `memoryGi`, `minInstances`, `maxInstances`）  
+  
+指定したリージョンに専用の推論エンドポイントを作成します。エンドポイントは固有のURLを介してグローバルにアクセス可能です。
+
+デフォルトリソース
+
+現在、デプロイメントダイアログは `cpu=1`, `memoryGi=2`, `minInstances=0`, `maxInstances=1` の固定デフォルト値を送信します。APIルートは `resources` オブジェクトを受け付けますが、プラン制限により `minInstances` は `0`、`maxInstances` は `1` が上限となります。
+
+リージョン選択
+
+レイテンシを最小化するために、ユーザーに近いリージョンを選択してください。プラットフォームUIでは、利用可能な全43リージョンのレイテンシ推定値が表示されます。
+
+### Link to this sectionデプロイメントの取得#
+    
+    
+    GET /api/deployments/{deploymentId}
+
+### Link to this sectionデプロイメントの削除#
+    
+    
+    DELETE /api/deployments/{deploymentId}
+
+### Link to this sectionデプロイメントの開始#
+    
+    
+    POST /api/deployments/{deploymentId}/start
+
+停止中のデプロイメントを再開します。
+
+### Link to this sectionデプロイメントの停止#
+    
+    
+    POST /api/deployments/{deploymentId}/stop
+
+実行中のデプロイメントを一時停止します（課金を停止します）。
+
+### Link to this sectionヘルスチェック#
+    
+    
+    GET /api/deployments/{deploymentId}/health
+
+デプロイメントエンドポイントの健全性ステータスを返します。
+
+### Link to this sectionデプロイメントでの推論実行#
+    
+    
+    POST /api/deployments/{deploymentId}/predict
+
+画像をデプロイメントエンドポイントに直接送信して推論します。機能的にはモデルの予測と同じですが、低レイテンシのために専用エンドポイントを経由します。
+
+**Multipart Form:**
+
+フィールド| タイプ| 説明  
+---|---|---  
+`file`| ファイル| 画像ファイル（JPEG, PNG, WebP）  
+`conf`| float| 信頼度のしきい値（デフォルト: 0.25）  
+`iou`| float| IoUのしきい値（デフォルト: 0.7）  
+`imgsz`| int| ピクセル単位の画像サイズ（デフォルト: 640）  
+  
+### Link to this sectionメトリクスの取得#
+    
+    
+    GET /api/deployments/{deploymentId}/metrics
+
+リクエスト数、レイテンシ、エラー率のメトリクスをスパークラインデータとともに返します。
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`range`| string| 時間範囲: `1h`, `6h`, `24h`（デフォルト）, `7d`, `30d`  
+`sparkline`| string| ダッシュボード表示用に最適化されたスパークラインデータを取得するには `true` に設定してください。  
+  
+### Link to this sectionログの取得#
+    
+    
+    GET /api/deployments/{deploymentId}/logs
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`severity`| string| カンマ区切りのフィルタ: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`  
+`limit`| int| エントリー数（デフォルト: 50、最大: 200）  
+`pageToken`| string| 前回のレスポンスからのページネーショントークン  
+  
+* * *
+
+## Link to this sectionMonitoring API#
+
+ブラウザセッションのみ
+
+`GET /api/monitoring` はUI専用のルートであり、アクティブなプラットフォームブラウザセッションが必要です。APIキー認証は受け付けません。デプロイメントごとのルート（これもブラウザセッション専用です）を介して個別のデプロイメントメトリクスをクエリするか、プログラムによるアクセスのために、デプロイされた Cloud Run サービス上の [Cloud Monitoring エクスポート](https://cloud.google.com/monitoring) を使用してください。
+
+### Link to this section集計メトリクス#
+    
+    
+    GET /api/monitoring
+
+すべてのユーザーデプロイメントにわたる集計メトリクス（合計リクエスト数、アクティブなデプロイメント数、エラー率、平均レイテンシ）を返します。
+
+* * *
+
+## Link to this sectionエクスポートAPI#
+
+モデルを ONNX、TensorRT、CoreML、TFLite などの最適化された形式に変換してエッジデプロイメントを行います。[デプロイのドキュメント](/ja/platform/deploy) を参照してください。
+
+### Link to this sectionエクスポート一覧#
+    
+    
+    GET /api/exports
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`modelId`| string| モデルID（必須）  
+`status`| string| ステータスによるフィルタリング  
+`limit`| int| 最大結果数（デフォルト: 20、最大: 100）  
+  
+### Link to this sectionエクスポート作成#
+    
+    
+    POST /api/exports
+
+**ボディ:**
+
+フィールド| タイプ| 必須| 説明  
+---|---|---|---  
+`modelId`| string| はい| ソースモデルID  
+`format`| string| はい| エクスポート形式（下表参照）  
+`gpuType`| string| 条件付き| `format` が `engine` (TensorRT) の場合に必須  
+`args`| オブジェクト| いいえ| エクスポート引数 (`imgsz`、`half`、`dynamic` など)  
+      
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"modelId": "MODEL_ID", "format": "onnx"}' \
+      https://platform.ultralytics.com/api/exports
+
+**サポートされている形式:**
+
+形式| 値| ユースケース  
+---|---|---  
+ONNX| `onnx`| クロスプラットフォーム推論  
+TorchScript| `torchscript`| PyTorch デプロイメント  
+OpenVINO| `openvino`| Intel ハードウェア  
+TensorRT| `engine`| NVIDIA GPU 最適化  
+CoreML| `coreml`| Apple デバイス  
+TFLite| `tflite`| モバイルおよび組み込み  
+TF SavedModel| `saved_model`| TensorFlow Serving  
+TF GraphDef| `pb`| TensorFlow フリーズグラフ  
+PaddlePaddle| `paddle`| Baidu PaddlePaddle  
+NCNN| `ncnn`| モバイルニューラルネットワーク  
+Edge TPU| `edgetpu`| Google Coral デバイス  
+TF.js| `tfjs`| ブラウザ推論  
+MNN| `mnn`| Alibaba モバイル推論  
+RKNN| `rknn`| Rockchip NPU  
+Qualcomm| `qnn`| Qualcomm Snapdragon NPU  
+IMX| `imx`| Sony IMX500 センサー  
+Axelera| `axelera`| Axelera AI アクセラレータ  
+ExecuTorch| `executorch`| Meta ExecuTorch ランタイム  
+DeepX| `deepx`| DeepX NPU アクセラレータ  
+  
+### Link to this sectionエクスポートステータスの取得#
+    
+    
+    GET /api/exports/{exportId}
+
+### Link to this sectionエクスポートのキャンセル#
+    
+    
+    DELETE /api/exports/{exportId}
+
+### Link to this sectionエクスポートダウンロードの追跡#
+    
+    
+    POST /api/exports/{exportId}/track-download
+
+* * *
+
+## Link to this sectionアクティビティAPI#
+
+アカウントでの最近のアクション（トレーニング実行、アップロードなど）のフィードを表示します。[アクティビティのドキュメント](/ja/platform/account/activity) を参照してください。
+
+ブラウザセッション専用
+
+アクティビティルートは、プラットフォームUIからのブラウザ認証済みリクエストによって機能します。これらはパブリックAPIとして公開されておらず、APIキー認証も受け付けません。以下のルート形状は参照用としてのみ記載されています。イベントの表示、確認、アーカイブを行うには、プラットフォームUIのアクティビティフィードを使用してください。
+
+### Link to this sectionアクティビティ一覧#
+    
+    
+    GET /api/activity
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`limit`| int| ページサイズ（デフォルト: 20、最大: 100）  
+`page`| int| ページ番号（デフォルト: 1）  
+`archived`| boolean| アーカイブタブの場合は `true`、受信トレイの場合は `false`  
+`search`| string| イベントフィールドの大文字と小文字を区別しない検索  
+  
+### Link to this sectionイベントを既読にする#
+    
+    
+    POST /api/activity/mark-seen
+
+**ボディ:**
+    
+    
+    {
+        "all": true
+    }
+
+または特定のIDを渡す:
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"]
+    }
+
+### Link to this sectionイベントのアーカイブ#
+    
+    
+    POST /api/activity/archive
+
+**ボディ:**
+    
+    
+    {
+        "all": true,
+        "archive": true
+    }
+
+または特定のIDを渡す:
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"],
+        "archive": false
+    }
+
+* * *
+
+## Link to this sectionゴミ箱API#
+
+削除されたアイテムの表示と復元。アイテムは30日後に完全に削除されます。[ゴミ箱のドキュメント](/ja/platform/account/trash) を参照してください。
+
+### Link to this sectionゴミ箱一覧#
+    
+    
+    GET /api/trash
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`type`| string| フィルター: `all`、`project`、`dataset`、`model`  
+`page`| int| ページ番号（デフォルト: 1）  
+`limit`| int| ページあたりのアイテム数（デフォルト: 50、最大: 200）  
+`owner`| string| ワークスペース所有者のユーザー名  
+  
+### Link to this sectionアイテムの復元#
+    
+    
+    POST /api/trash
+
+**ボディ:**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+### Link to this sectionアイテムの完全削除#
+    
+    
+    DELETE /api/trash
+
+**ボディ:**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+元に戻せません
+
+完全削除は取り消すことができません。リソースおよびすべての関連データが削除されます。
+
+### Link to this sectionゴミ箱を空にする#
+    
+    
+    DELETE /api/trash/empty
+
+ゴミ箱内のすべてのアイテムを完全に削除します。
+
+認証
+
+`DELETE /api/trash/empty` は認証済みのブラウザセッションを必要とし、APIキーでは利用できません。代わりにUIの **ゴミ箱を空にする** ボタンを使用してください。
+
+* * *
+
+## Link to this section請求API#
+
+クレジット残高の確認、クレジットの購入、取引履歴の表示、自動チャージの設定を行います。[請求のドキュメント](/ja/platform/account/billing) を参照してください。
+
+通貨単位
+
+請求金額にはセント (`creditsCents`) が使用されます（`100 = $1.00`）。
+
+### Link to this section残高取得#
+    
+    
+    GET /api/billing/balance
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`owner`| string| ワークスペース所有者のユーザー名  
+  
+**レスポンス:**
+    
+    
+    {
+        "creditsCents": 2500,
+        "plan": "free"
+    }
+
+### Link to this section利用状況サマリーの取得#
+    
+    
+    GET /api/billing/usage-summary
+
+プランの詳細、制限、使用メトリクスを返します。
+
+### Link to this section取引履歴の取得#
+    
+    
+    GET /api/billing/transactions
+
+取引履歴（最新のものから順に）を返します。
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`owner`| string| ワークスペース所有者のユーザー名  
+  
+### Link to this sectionチェックアウトセッションの作成#
+    
+    
+    POST /api/billing/checkout-session
+
+**ボディ:**
+    
+    
+    {
+        "amount": 25,
+        "owner": "team-username"
+    }
+
+フィールド| タイプ| 必須| 説明  
+---|---|---|---  
+`amount`| number| はい| ドル単位の金額（$5-$1000）  
+`owner`| string| いいえ| ワークスペースチャージ用のチームユーザー名（管理者ロールが必要）  
+  
+クレジット購入のためのチェックアウトセッションを作成します。
+
+### Link to this sectionサブスクリプションチェックアウトの作成#
+    
+    
+    POST /api/billing/subscription-checkout
+
+Pro サブスクリプションアップグレードのためのチェックアウトセッションを作成します。
+
+**ボディ:**
+    
+    
+    {
+        "planId": "pro",
+        "billingCycle": "monthly",
+        "owner": "team-username"
+    }
+
+フィールド| タイプ| 必須| 説明  
+---|---|---|---  
+`planId`| string| はい| サブスクライブするプラン (`pro`)  
+`billingCycle`| string| いいえ| 請求サイクル: `monthly` (デフォルト) または `yearly`  
+`owner`| string| いいえ| ワークスペースアップグレード用のチームユーザー名（管理者ロールが必要）  
+  
+### Link to this sectionサブスクリプションのキャンセルまたは再開#
+    
+    
+    DELETE /api/billing/subscription-checkout
+
+デフォルトでは、期間終了時に Pro サブスクリプションをキャンセルします。請求期間終了前にすでにスケジュールされたキャンセルを再開するには、`{"resume": true}` を送信してください。
+
+**ボディ:**
+    
+    
+    {
+        "resume": true
+    }
+
+### Link to this section自動チャージ#
+
+残高がしきい値を下回った場合に、自動的にクレジットを追加します。
+
+#### Link to this section自動チャージ設定の取得#
+    
+    
+    GET /api/billing/auto-topup
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`owner`| string| ワークスペース所有者のユーザー名  
+  
+#### Link to this section自動チャージ設定の更新#
+    
+    
+    PATCH /api/billing/auto-topup
+
+**ボディ:**
+    
+    
+    {
+        "enabled": true,
+        "thresholdCents": 500,
+        "amountCents": 2500
+    }
+
+### Link to this section支払い方法#
+
+#### Link to this section支払い方法の一覧表示#
+    
+    
+    GET /api/billing/payment-methods
+
+#### Link to this sectionSetup Intentの作成#
+    
+    
+    POST /api/billing/payment-methods/setup
+
+新しい支払い方法を追加するためのクライアントシークレットを返します。
+
+#### Link to this sectionデフォルトの支払い方法を設定#
+    
+    
+    POST /api/billing/payment-methods/default
+
+**ボディ:**
+    
+    
+    {
+        "paymentMethodId": "pm_123"
+    }
+
+#### Link to this section請求情報の更新#
+    
+    
+    PATCH /api/billing/payment-methods
+
+**ボディ:**
+    
+    
+    {
+        "name": "Jane Doe",
+        "address": {
+            "line1": "123 Main St",
+            "city": "San Francisco",
+            "state": "CA",
+            "postal_code": "94105",
+            "country": "US"
+        }
+    }
+
+#### Link to this section支払い方法の削除#
+    
+    
+    DELETE /api/billing/payment-methods/{id}
+
+* * *
+
+## Link to this sectionストレージAPI#
+
+カテゴリ別（データセット、モデル、エクスポート）のストレージ使用状況の内訳を確認し、容量の大きい項目を表示します。
+
+ブラウザセッションのみ
+
+ストレージ関連のルートにはアクティブなプラットフォームブラウザセッションが必要であり、APIキー経由ではアクセスできません。対話型の内訳については、UIの[Settings > Profile](/ja/platform/account/settings#storage-usage)ページを使用してください。
+
+### Link to this sectionストレージ情報の取得#
+    
+    
+    GET /api/storage
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`details`| boolean| Set to `true` to include `topItems` (largest datasets, models, exports).  
+  
+**レスポンス:**
+    
+    
+    {
+        "tier": "free",
+        "usage": {
+            "storage": {
+                "current": 1073741824,
+                "limit": 107374182400,
+                "percent": 1.0
+            }
+        },
+        "region": "us",
+        "username": "johndoe",
+        "updatedAt": "2024-01-15T10:00:00Z",
+        "breakdown": {
+            "byCategory": {
+                "datasets": { "bytes": 536870912, "count": 2 },
+                "models": { "bytes": 268435456, "count": 4 },
+                "exports": { "bytes": 268435456, "count": 3 }
+            },
+            "topItems": [
+                {
+                    "_id": "dataset_abc123",
+                    "name": "my-dataset",
+                    "slug": "my-dataset",
+                    "sizeBytes": 536870912,
+                    "type": "dataset"
+                },
+                {
+                    "_id": "model_def456",
+                    "name": "experiment-1",
+                    "slug": "experiment-1",
+                    "sizeBytes": 134217728,
+                    "type": "model",
+                    "parentName": "My Project",
+                    "parentSlug": "my-project"
+                }
+            ]
+        }
+    }
+
+* * *
+
+## Link to this sectionアップロードAPI#
+
+署名付きURLを使用してファイルをクラウドストレージに直接アップロードし、高速で信頼性の高い転送を実現します。署名付きURLの取得とファイルアップロードという2ステップのフローを使用します。[データドキュメント](/ja/platform/data)を参照してください。
+
+### Link to this section署名付きアップロードURLの取得#
+    
+    
+    POST /api/upload/signed-url
+
+ファイルをクラウドストレージに直接アップロードするための署名付きURLを要求します。署名付きURLを使用することで、大容量ファイルの転送時にAPIサーバーを介さずに済みます。
+
+**ボディ:**
+    
+    
+    {
+        "assetType": "images",
+        "assetId": "abc123",
+        "filename": "my-image.jpg",
+        "contentType": "image/jpeg",
+        "totalBytes": 5242880
+    }
+
+フィールド| タイプ| 説明  
+---|---|---  
+`assetType`| string| アセットタイプ: `models`, `datasets`, `images`, `videos`  
+`assetId`| string| ターゲットアセットのID  
+`filename`| string| 元のファイル名  
+`contentType`| string| MIMEタイプ  
+`totalBytes`| int| バイト単位のファイルサイズ  
+  
+**レスポンス:**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "uploadUrl": "https://storage.example.com/...",
+        "gcsPath": "gs://bucket/users/user123/images/abc123/my-image.jpg",
+        "downloadUrl": "https://cdn.example.com/...",
+        "expiresAt": "2026-02-22T12:00:00Z"
+    }
+
+### Link to this sectionアップロードの完了#
+    
+    
+    POST /api/upload/complete
+
+ファイルのアップロードが完了したことをプラットフォームに通知し、処理を開始できるようにします。
+
+**ボディ:**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "checksum": "<optional sha-256 hex>"
+    }
+
+* * *
+
+## Link to this sectionインテグレーションAPI#
+
+サードパーティサービスからデータセットをインポートします。[インテグレーションドキュメント](/ja/platform/integrations)を参照してください。
+
+### Link to this sectionRoboflowインポートのプレビュー#
+    
+    
+    POST /api/integrations/roboflow/preview
+
+Roboflow APIキーをバルクインポート計画に解決します。ワークスペース情報、新しくインポートされるプロジェクト、すでにインポート済みのバージョン数（スキップ）、およびサポートされていないプロジェクトタイプが対象です。Roboflow APIキーはボディで渡され、永続化されません。
+
+### Link to this sectionRoboflowからのインポート#
+    
+    
+    POST /api/integrations/roboflow/import
+
+選択したRoboflowプロジェクトをワークスペースにインポートするためのデータセット取り込みジョブをキューに入れます。ストレージの余裕が必要であり、各データセットはプランごとのインポートサイズ制限内に収まる必要があります。
+
+* * *
+
+## Link to this sectionAPIキーAPI#
+
+プログラムによるアクセスのためにAPIキーを管理します。[APIキーのドキュメント](/ja/platform/account/api-keys)を参照してください。
+
+### Link to this sectionAPIキーの一覧表示#
+    
+    
+    GET /api/api-keys
+
+### Link to this sectionAPIキーの作成#
+    
+    
+    POST /api/api-keys
+
+**ボディ:**
+    
+    
+    {
+        "name": "training-server"
+    }
+
+### Link to this sectionAPIキーの削除#
+    
+    
+    DELETE /api/api-keys
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`keyId`| string| 取り消すAPIキーのID  
+  
+**例:**
+    
+    
+    curl -X DELETE \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/api-keys?keyId=KEY_ID"
+
+* * *
+
+## Link to this sectionチーム＆メンバーAPI#
+
+チームワークスペースの作成、メンバーの招待、共同作業のためのロール管理を行います。[チームのドキュメント](/ja/platform/account/teams)を参照してください。
+
+### Link to this sectionチームの一覧表示#
+    
+    
+    GET /api/teams
+
+### Link to this sectionチームの作成#
+    
+    
+    POST /api/teams/create
+
+**ボディ:**
+    
+    
+    {
+        "username": "my-team",
+        "fullName": "My Team"
+    }
+
+### Link to this sectionメンバーの一覧表示#
+    
+    
+    GET /api/members
+
+現在のワークスペースのメンバーを返します。
+
+### Link to this sectionメンバーの招待#
+    
+    
+    POST /api/members
+
+**ボディ:**
+    
+    
+    {
+        "email": "user@example.com",
+        "role": "editor"
+    }
+
+メンバーのロール
+
+ロール| 権限  
+---|---  
+`viewer`| ワークスペースリソースへの読み取り専用アクセス  
+`editor`| リソースの作成、編集、削除  
+`admin`| メンバー、請求、およびすべてのリソースの管理（チームオーナーのみ割り当て可能）  
+  
+チームの`owner`（オーナー）は作成者であり、招待することはできません。オーナー権限は、`POST /api/members/transfer-ownership`経由で個別に譲渡されます。ロールの完全な詳細については[チーム](/ja/platform/account/teams)を参照してください。
+
+### Link to this sectionメンバーロールの更新#
+    
+    
+    PATCH /api/members/{userId}
+
+### Link to this sectionメンバーの削除#
+    
+    
+    DELETE /api/members/{userId}
+
+### Link to this section所有権の譲渡#
+    
+    
+    POST /api/members/transfer-ownership
+
+### Link to this section招待#
+
+#### Link to this section招待の承諾#
+    
+    
+    POST /api/invites/accept
+
+#### Link to this section招待情報の取得#
+    
+    
+    GET /api/invites/info
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`token`| string| 招待トークン  
+  
+#### Link to this section招待の取り消し#
+    
+    
+    DELETE /api/invites/{inviteId}
+
+#### Link to this section招待の再送#
+    
+    
+    POST /api/invites/{inviteId}/resend
+
+* * *
+
+## Link to this section探索API#
+
+コミュニティによって共有された公開データセットやプロジェクトを検索・閲覧します。[探索ドキュメント](/ja/platform/explore)を参照してください。
+
+### Link to this section公開コンテンツの検索#
+    
+    
+    GET /api/explore/search
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`q`| string| 検索クエリ  
+`type`| string| リソースタイプ: `all` (デフォルト), `projects`, `datasets`  
+`sort`| string| 並び替え順: `newest`（デフォルト）、`stars`、`oldest`、`name-asc`、`name-desc`、`count-desc`、`count-asc`  
+`offset`| int| ページネーションのオフセット（デフォルト: 0）。結果は1ページあたり20項目を返します。  
+`task`| string| オプション: データセットをフィルタリングするためのカンマ区切りのYOLOタスクタイプ（`detect`、`segment`、`semantic`、`classify`、`pose`、`obb`）  
+  
+### Link to this sectionサイドバーデータ#
+    
+    
+    GET /api/explore/sidebar
+
+探索サイドバー用の厳選されたコンテンツを返します。
+
+* * *
+
+## Link to this sectionユーザー＆設定API#
+
+プロフィール、APIキー、ストレージ使用状況、データプライバシー設定を管理します。[設定ドキュメント](/ja/platform/account/settings)を参照してください。
+
+### Link to this sectionユーザー名によるユーザー取得#
+    
+    
+    GET /api/users
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`username`| string| 検索するユーザー名  
+  
+### Link to this sectionユーザーのフォローまたはフォロー解除#
+    
+    
+    PATCH /api/users
+
+**ボディ:**
+    
+    
+    {
+        "username": "target-user",
+        "followed": true
+    }
+
+### Link to this sectionユーザー名の利用可否確認#
+    
+    
+    GET /api/username/check
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`username`| string| 確認するユーザー名  
+`suggest`| bool| オプション: 使用中の場合に提案を含めるには`true`  
+  
+### Link to this section設定#
+    
+    
+    GET /api/settings
+    POST /api/settings
+
+ユーザープロファイル設定（表示名、バイオ、ソーシャルリンクなど）の取得または更新。
+
+### Link to this sectionプロフィールアイコン#
+    
+    
+    POST /api/settings/icon
+    DELETE /api/settings/icon
+
+プロフィールアバターのアップロードまたは削除。
+
+### Link to this sectionオンボーディング#
+    
+    
+    POST /api/onboarding
+
+オンボーディングフローの完了（データリージョン、ユーザー名の設定）。
+
+* * *
+
+## Link to this sectionGDPR API#
+
+すべてのデータの書き出し要求、またはアカウントの完全な削除を行います。[設定ドキュメント](/ja/platform/account/settings)を参照してください。
+
+### Link to this sectionGDPRジョブステータスの取得#
+    
+    
+    GET /api/gdpr
+
+**クエリパラメータ:**
+
+パラメータ| タイプ| 説明  
+---|---|---  
+`jobId`| string| 確認するGDPRジョブID  
+  
+ジョブのステータスを返します。完了したエクスポートジョブについては、レスポンスに`downloadUrl`が含まれます。
+
+### Link to this sectionエクスポートまたは削除フローの開始#
+    
+    
+    POST /api/gdpr
+
+**ボディ:**
+    
+    
+    {
+        "action": "export"
+    }
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE"
+    }
+
+チームワークスペースの場合のオプション:
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE",
+        "teamUsername": "my-team"
+    }
+
+元に戻せない操作
+
+アカウントの削除は永続的であり、元に戻すことはできません。すべてのデータ、モデル、およびデプロイメントが削除されます。
+
+* * *
+
+## Link to this sectionエラーコード#
+
+コード| HTTP ステータス| 説明  
+---|---|---  
+`UNAUTHORIZED`| 401| APIキーが無効または未入力です  
+`FORBIDDEN`| 403| 権限不足  
+`NOT_FOUND`| 404| リソースが見つかりません  
+`VALIDATION_ERROR`| 400| 無効なリクエストデータ  
+`RATE_LIMITED`| 429| リクエストが多すぎます  
+`INTERNAL_ERROR`| 500| サーバーエラー  
+  
+* * *
+
+## Link to this sectionPythonの統合#
+
+より簡単に統合するには、認証、アップロード、リアルタイムのメトリクスストリーミングを自動的に処理するUltralytics Pythonパッケージを使用してください。
+
+### Link to this sectionインストールとセットアップ#
+    
+    
+    pip install ultralytics
+
+インストールの確認:
+    
+    
+    yolo check
+
+パッケージのバージョン要件
+
+プラットフォームの統合には **ultralytics >=8.4.60** が必要です。これより古いバージョンではプラットフォームは動作しません。
+
+### Link to this section認証#
+    
+    
+    yolo settings api_key=YOUR_API_KEY
+
+### Link to this sectionプラットフォームデータセットの使用#
+
+`ul://` URIを使用してデータセットを参照します:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Train on your Platform dataset
+    model.train(
+        data="ul://your-username/datasets/your-dataset",
+        epochs=100,
+        imgsz=640,
+    )
+
+**URI形式:**
+
+パターン| 説明  
+---|---  
+`ul://username/datasets/slug`| データセット  
+`ul://username/project-name`| プロジェクト  
+`ul://username/project/model-name`| 特定のモデル  
+`ul://ultralytics/yolo26/yolo26n`| 公式モデル  
+  
+### Link to this sectionプラットフォームへのプッシュ#
+
+プラットフォームプロジェクトに結果を送信します:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Results automatically sync to Platform
+    model.train(
+        data="coco8.yaml",
+        epochs=100,
+        project="your-username/my-project",
+        name="experiment-1",
+    )
+
+**同期される項目:**
+
+  * トレーニングメトリクス (リアルタイム)
+  * 最終的なモデルウェイト
+  * 検証用プロット
+  * コンソール出力
+  * システムメトリクス
+
+
+
+### Link to this sectionAPIの例#
+
+**プラットフォームからモデルを読み込む:**
+    
+    
+    # Your own model
+    model = YOLO("ul://username/project/model-name")
+    
+    # Official model
+    model = YOLO("ul://ultralytics/yolo26/yolo26n")
+
+**推論を実行:**
+    
+    
+    results = model("image.jpg")
+    
+    # Access results
+    for r in results:
+        boxes = r.boxes  # Detection boxes
+        masks = r.masks  # Segmentation masks
+        keypoints = r.keypoints  # Pose keypoints
+        probs = r.probs  # Classification probabilities
+
+**モデルをエクスポート:**
+    
+    
+    # Export to ONNX
+    model.export(format="onnx", imgsz=640, half=True)
+    
+    # Export to TensorRT
+    model.export(format="engine", imgsz=640, half=True)
+    
+    # Export to CoreML
+    model.export(format="coreml", imgsz=640)
+
+**検証:**
+    
+    
+    metrics = model.val(data="ul://username/datasets/my-dataset")
+    
+    print(f"mAP50: {metrics.box.map50}")
+    print(f"mAP50-95: {metrics.box.map}")
+
+* * *
+
+## Link to this sectionWebhook#
+
+プラットフォームは内部Webhookを使用して、`ultralytics` Python SDK (クラウドGPUやリモート/ローカルマシン上で実行) からエポックごとの損失、mAP、システム統計、完了ステータスなどのリアルタイムトレーニングメトリクスをプラットフォームにストリーミングします。これらのWebhookは、トレーニングジョブごとにプロビジョニングされるHMAC `webhookSecret` を介して認証されており、ユーザーアプリケーションでの使用を想定したものではありません。
+
+ユーザー側での作業
+
+**すべてのプラン** : `ultralytics` SDKを介したトレーニングの進捗状況 (リアルタイムメトリクス、完了通知) はすべてのプランで自動的に機能します。トレーニング時に `project=username/my-project name=my-run` を設定するだけで、SDKがイベントをプラットフォームにストリーミングします。ユーザー側でのWebhook登録は不要です。
+
+**ユーザー向けのWebhookサブスクリプション** (制御可能なURLへのPOSTコールバック) はEnterpriseのロードマップに記載されており、現時点では利用できません。その間は、ステータスを確認するために `GET /api/models/{modelId}/training` をポーリングするか、UIの アクティビティフィード を使用してください。
+
+* * *
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this section大量の結果をページネーションするにはどうすればよいですか？#
+
+ほとんどのエンドポイントは、リクエストごとに返される結果の数を制御するために `limit` パラメータを使用します:
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=50"
+
+アクティビティおよびゴミ箱エンドポイントも、ページベースのページネーションのために `page` パラメータをサポートしています:
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/activity?page=2&limit=20"
+
+The Explore Search endpoint uses `offset` instead of `page`, with a fixed page size of 20:
+    
+    
+    curl "https://platform.ultralytics.com/api/explore/search?type=datasets&offset=20&sort=stars"
+
+### Link to this sectionSDKなしでAPIを使用できますか？#
+
+はい、すべての機能はREST経由で利用可能です。Python SDKは、リアルタイムメトリクスストリーミングや自動モデルアップロードなどの機能を追加する便利なラッパーです。また、[platform.ultralytics.com/api/docs](https://platform.ultralytics.com/api/docs) ですべてのエンドポイントをインタラクティブに探索できます。
+
+### Link to this sectionAPIクライアントライブラリはありますか？#
+
+現在は、Ultralytics Pythonパッケージを使用するか、直接HTTPリクエストを行ってください。他の言語向けの公式クライアントライブラリは計画中です。
+
+### Link to this sectionレート制限にはどのように対処すればよいですか？#
+
+429レスポンスの `Retry-After` ヘッダーを使用して、適切な時間だけ待機してください:
+    
+    
+    import time
+    
+    import requests
+    
+    def api_request_with_retry(url, headers, max_retries=3):
+        for attempt in range(max_retries):
+            response = requests.get(url, headers=headers)
+            if response.status_code != 429:
+                return response
+            wait = int(response.headers.get("Retry-After", 2**attempt))
+            time.sleep(wait)
+        raise Exception("Rate limit exceeded")
+
+### Link to this sectionモデルまたはデータセットのIDはどこで確認できますか？#
+
+リソースIDは、APIを介してリソースを作成する際に返されます。また、プラットフォームのURLでも確認できます:
+    
+    
+    https://platform.ultralytics.com/username/project/model-name
+                                      ^^^^^^^^ ^^^^^^^ ^^^^^^^^^^
+                                      username project   model
+
+リストエンドポイントを使用して、名前で検索したりプロジェクトでフィルタリングしたりしてください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[MYmykolaxboiko2](https://github.com/mykolaxboiko)[LAlaodouya1](https://github.com/laodouya)[RAraimbekovm1](https://github.com/raimbekovm)[SEsergiuwaxmann1](https://github.com/sergiuwaxmann)[LALaughing-q1](https://github.com/Laughing-q)
+
+作成日 5 か月前更新日 4 時間前
+
+## コメント
+
+このページの内容
+
+AIで探索

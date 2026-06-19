@@ -1,0 +1,234 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/yolo26-training-recipe
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo26-training-recipe.md)
+
+# Link to this sectionYOLO26 训练配方#
+
+## Link to this section简介#
+
+This guide documents the exact [training](/zh/modes/train) recipe used to produce the official [YOLO26](/zh/models/yolo26) pretrained checkpoints on [COCO](/zh/datasets/detect/coco). Every [hyperparameter](https://www.ultralytics.com/glossary/hyperparameter-tuning) shown here is already embedded in the released `.pt` weights and can be inspected programmatically.
+
+了解官方检查点中包含的内容——不仅是架构，还包括塑造其性能的 [学习率](https://www.ultralytics.com/glossary/learning-rate) 调度、增强管道和损失权重——有助于你在 [微调](https://www.ultralytics.com/glossary/fine-tuning) 时做出更好的决策：保留哪些 [数据增强](/zh/guides/yolo-data-augmentation)，调整哪些 [损失函数](https://www.ultralytics.com/glossary/loss-function) 权重，以及哪些优化器设置最适合你的数据集大小。
+
+## Link to this section训练概述#
+
+所有 YOLO26 基础模型均在 COCO 上以 **640x640** 分辨率使用 **MuSGD** 优化器及 **[批量大小](https://www.ultralytics.com/glossary/batch-size) 128** 进行训练。模型并非在单次运行中从随机权重开始，而是从中间预训练权重初始化，并使用通过 [进化搜索](/zh/guides/hyperparameter-tuning#genetic-evolution-and-mutation) 找到的超参数进行精炼。每个模型大小的完整训练日志和指标可在 [Ultralytics Platform](https://platform.ultralytics.com/ultralytics/yolo26) 上获取：
+
+所有尺寸的关键设计选择：
+
+  * **端到端训练** (`end2end=True`)，带有无需 NMS 的一对一检测头
+  * **[MuSGD](/zh/modes/train#musgd-optimizer) 优化器**，结合了 SGD 与用于权重矩阵（`ndim >= 2` 的参数，例如卷积和线性权重）的 Muon 样式正交化更新
+  * **重度马赛克增强** （~0.9-1.0 概率），在最后 10 个 epoch 禁用 (`close_mosaic=10`)
+  * **激进的缩放增强** (0.56-0.95)，用于处理不同大小的目标
+  * **最小程度的旋转/剪切** ，适用于大多数尺寸，以保持较低的几何失真
+
+
+
+## Link to this section检查 YOLO26 检查点训练参数#
+
+每个 Ultralytics 检查点都存储了用于生成它的完整训练配置，因此你可以亲自验证此页面上的每个数字：
+
+检查检查点训练参数
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    print(model.ckpt["train_args"])
+
+输出列表包含超过 100 个条目的完整配置，包括本文档中记录的每个配方值。以下是 `yolo26n.pt` 的摘录：
+    
+    
+    batch: 128
+    ...
+    box: 5.62767
+    ...
+    close_mosaic: 10
+    cls: 0.56099
+    ...
+    dfl: 9.03871
+    ...
+    epochs: 245
+    ...
+    lr0: 0.0054
+    lrf: 0.04952
+    ...
+    optimizer: MuSGD
+
+这适用于任何 `.pt` 检查点——无论是官方发布版本还是你自己的微调模型。有关可配置训练参数的完整列表，请参阅 [训练配置参考](/zh/usage/cfg)。
+
+## Link to this sectionYOLO26 各模型尺寸的训练超参数#
+
+下表按类别对配方进行了分组——优化器和调度、损失权重以及增强。每个值直接来自发布检查点中嵌入的 `train_args`。
+
+### Link to this section优化器和学习率#
+
+这些优化器和调度设置驱动了每个尺寸的 COCO 预训练；请注意 N 模型与其他模型有何不同：
+
+设置| N| S| M| L| X  
+---|---|---|---|---|---  
+`optimizer`| MuSGD| MuSGD| MuSGD| MuSGD| MuSGD  
+`lr0`| 0.0054| 0.00038| 0.00038| 0.00038| 0.00038  
+`lrf`| 0.0495| 0.882| 0.882| 0.882| 0.882  
+`momentum`| 0.947| 0.948| 0.948| 0.948| 0.948  
+`weight_decay`| 0.00064| 0.00027| 0.00027| 0.00027| 0.00027  
+`warmup_epochs`| 0.98| 0.99| 0.99| 0.99| 0.99  
+`epochs`| 245| 70| 80| 60| 40  
+`batch`| 128| 128| 128| 128| 128  
+`imgsz`| 640| 640| 640| 640| 640  
+  
+学习率策略
+
+N 模型使用了较高的初始学习率和急剧衰减 (`lrf=0.0495`)，而 S/M/L/X 模型使用了较低的初始 LR 和更平缓的调度 (`lrf=0.882`)。这反映了小型模型与大型模型在收敛动态上的不同——小型模型需要更激进的更新才能有效学习。
+
+### Link to this section损失权重#
+
+损失权重平衡了检测损失的三个组成部分——[边界框](https://www.ultralytics.com/glossary/bounding-box) IoU 回归 (`box`)、分类 (`cls`) 和框距离回归项 (`dfl`)。请注意，无 DFL 的 YOLO26 将 `dfl` 增益重新调整为归一化框距离上的 L1 损失权重，而不是分布焦点损失 (Distribution Focal Loss)：
+
+设置| N| S| M| L| X  
+---|---|---|---|---|---  
+`box`| 5.63| 9.83| 9.83| 9.83| 9.83  
+`cls`| 0.56| 0.65| 0.65| 0.65| 0.65  
+`dfl`| 9.04| 0.96| 0.96| 0.96| 0.96  
+  
+N 模型优先考虑 `dfl` 距离回归项，而 S/M/L/X 模型则更强调基于 IoU 的框回归。分类损失在所有尺寸中保持相对一致。
+
+### Link to this section增强管道#
+
+有关每种技术的详细解释，请参阅 [YOLO 数据增强指南](/zh/guides/yolo-data-augmentation)。
+
+设置| N| S| M| L| X  
+---|---|---|---|---|---  
+[`mosaic`](/zh/guides/yolo-data-augmentation#mosaic-mosaic)| 0.909| 0.992| 0.992| 0.992| 0.992  
+[`mixup`](/zh/guides/yolo-data-augmentation#mixup-mixup)| 0.012| 0.05| 0.427| 0.427| 0.427  
+[`copy_paste`](/zh/guides/yolo-data-augmentation#copy-paste-copy_paste)| 0.075| 0.404| 0.304| 0.404| 0.404  
+[`scale`](/zh/guides/yolo-data-augmentation#scale-scale)| 0.562| 0.9| 0.95| 0.95| 0.95  
+[`fliplr`](/zh/guides/yolo-data-augmentation#flip-left-right-fliplr)| 0.606| 0.304| 0.304| 0.304| 0.304  
+[`degrees`](/zh/guides/yolo-data-augmentation#rotation-degrees)| 1.11| ~0| ~0| ~0| ~0  
+[`shear`](/zh/guides/yolo-data-augmentation#shear-shear)| 1.46| ~0| ~0| ~0| ~0  
+[`translate`](/zh/guides/yolo-data-augmentation#translation-translate)| 0.071| 0.275| 0.275| 0.275| 0.275  
+[`hsv_h`](/zh/guides/yolo-data-augmentation#hue-adjustment-hsv_h)| 0.014| 0.013| 0.013| 0.013| 0.013  
+[`hsv_s`](/zh/guides/yolo-data-augmentation#saturation-adjustment-hsv_s)| 0.645| 0.353| 0.353| 0.353| 0.353  
+[`hsv_v`](/zh/guides/yolo-data-augmentation#brightness-adjustment-hsv_v)| 0.566| 0.194| 0.194| 0.194| 0.194  
+[`bgr`](/zh/guides/yolo-data-augmentation#bgr-channel-swap-bgr)| 0.106| 0.0| 0.0| 0.0| 0.0  
+  
+显示为 `~0` 的值在实际检查点中低于 0.01（例如，S 模型的 `degrees=0.00012`）——即该增强实际上已禁用。
+
+大型模型通常使用更激进的增强（更高的 mixup、copy-paste 和缩放），因为它们具有更大的容量，并受益于更强的 [正则化](https://www.ultralytics.com/glossary/regularization)。N 模型是唯一具有显著旋转、剪切和 BGR 增强的尺寸。
+
+### Link to this section内部训练参数#
+
+进阶：内部管道参数
+
+检查点还包含在内部训练管道中使用，但**未** 在 `default.yaml` 中作为用户可配置设置公开的参数：
+
+设置| 描述| N| S| M| L| X  
+---|---|---|---|---|---|---  
+`muon_w`| MuSGD 中的 Muon 更新权重| 0.528| 0.436| 0.436| 0.436| 0.436  
+`sgd_w`| MuSGD 中的 SGD 更新权重| 0.674| 0.479| 0.479| 0.479| 0.479  
+`cls_w`| 内部分类权重| 2.74| 3.48| 3.48| 3.48| 3.48  
+`o2m`| 一对多检测头损失权重| 1.0| 0.705| 0.705| 0.705| 0.705  
+`topk`| Top-k 标签分配| 8| 5| 5| 5| 5  
+  
+请参阅关于这些参数的 FAQ 条目，了解在微调时它们的含义。
+
+## Link to this section在你的数据集上微调 YOLO26#
+
+在你的数据集上微调 YOLO26 时，无需复刻完整的预训练配方。预训练权重已经包含了从 COCO 训练中习得的增强和优化知识。有关更通用的训练最佳实践，请参阅 [模型训练技巧](/zh/guides/model-training-tips)。
+
+### Link to this section使用默认设置进行微调#
+
+使用默认配置微调
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    results = model.train(data="your-dataset.yaml", epochs=100, imgsz=640)
+
+使用默认配置进行微调是一个强大的基准。除非有特定原因，否则无需调整超参数。
+
+### Link to this section何时调整 YOLO26 超参数#
+
+**小型数据集 ( < 1,000 张图像)：**
+
+  * 降低增强强度：`mosaic=0.5`, `mixup=0.0`, `copy_paste=0.0`
+  * 降低学习率：`lr0=0.001`
+  * 使用较少的 [epochs](https://www.ultralytics.com/glossary/epoch) 并设置耐心值：`epochs=50`, `patience=20`
+  * 考虑冻结主干层：`freeze=10`
+
+
+
+**大型数据集 ( > 50,000 张图像)：**
+
+  * 更贴近预训练配方
+  * 对于更长的训练运行，考虑使用 `optimizer=MuSGD`
+  * 增加增强：`mosaic=1.0`, `mixup=0.3`, `scale=0.9`
+
+
+
+**领域特定图像（航空、医疗、水下）：**
+
+  * 如果垂直方向有变化，增加 `flipud=0.5`
+  * 如果物体以任意角度旋转，增加 `degrees`
+  * 如果光照条件与 COCO 有显著差异，调整 `hsv_s` 和 `hsv_v`
+
+
+
+有关自动超参数优化，请参阅 [超参数调优指南](/zh/guides/hyperparameter-tuning)。
+
+### Link to this section选择模型大小#
+
+模型| 最适用场景| Batch Size 指南  
+---|---|---  
+YOLO26n| 边缘设备、移动设备、CPU 实时推理| 消费级 GPU 上的大批量 (64-128)  
+YOLO26s| 速度与精度的平衡| 中等批量 (32-64)  
+YOLO26m| 以适中的算力获得更高精度| 较小批量 (16-32)  
+YOLO26l| 有 GPU 可用时的高精度| 小批量 (8-16) 或多 GPU  
+YOLO26x| 最高精度，服务器部署| 小批量 (4-8) 或多 GPU  
+  
+有关导出和部署选项，请参阅 [导出指南](/zh/modes/export) 和 [模型部署选项](/zh/guides/model-deployment-options)。
+
+## Link to this section结论#
+
+YOLO26 检查点内置了完整的训练配方，因此每个模型大小背后的精确超参数都可以通过查询 `train_args` 获取。请从默认设置开始微调，使用本页的表格进行有目的的调整，并根据你的验证集验证每一次修改。如果过程中有任何疑问，请在 [Ultralytics GitHub 仓库](https://github.com/ultralytics/ultralytics) 或 [Ultralytics Discord 服务器](https://discord.com/invite/ultralytics) 上向社区提问。
+
+## Link to this section常见问题解答#
+
+### Link to this section我该如何查看任何检查点所使用的精确超参数？#
+
+使用 `torch.load()` 加载检查点并访问 `train_args` 键，或使用 Ultralytics API 的 `model.ckpt["train_args"]`。查看 检查 YOLO26 检查点训练参数 获取完整示例。
+
+### Link to this section为什么每个模型大小的 epoch 计数不同？#
+
+更大的模型在 COCO 上通常需要的 epoch 更少，因为其更强的容量加速了收敛 —— X 模型训练了 40 个 epoch，而 N 模型为 245 个 —— 尽管计数并非严格单调（S 使用了 70，M 使用了 80）。在自己的数据集上进行微调时，最佳 epoch 数取决于你的数据集大小和复杂度，而非模型大小。使用提前停止 (`patience`) 来自动寻找合适的停止点。
+
+### Link to this section微调时我应该使用 MuSGD 吗？#
+
+通常你无需选择：使用默认的 `optimizer=auto` 时，Ultralytics 会自动为较长的训练运行（>10,000 次迭代）选择 **MuSGD** ，为较短的运行选择 **AdamW** 。如果你愿意，可以明确设置 `optimizer=MuSGD`。有关 MuSGD 工作原理的更多信息，请参阅 [训练文档](/zh/modes/train#musgd-optimizer)。
+
+### Link to this section检查点中的 `muon_w`、`sgd_w`、`cls_w`、`o2m` 和 `topk` 是什么？#
+
+这些是生成基础检查点的训练流程中的内部参数，记录在 `train_args` 中以便复现。它们不是 `default.yaml` 中用户可配置的设置，将其传递给 `model.train()` 会引发无效参数错误 —— 公共软件包不会读取它们。微调时无需设置它们；请参阅 内部训练参数 查看各模型大小对应的参数值。
+
+### Link to this section我可以从头开始复现完全相同的预训练吗？#
+
+不完全可以 —— 这些检查点是使用一个内部训练分支生成的，该分支包含公共代码库中没有的其他功能（如可配置的 `o2m` 权重和 `cls_w`）。使用本页记录的超参数配合公共 Ultralytics 软件包，你可以获得非常接近的结果，但要完全复现则需要该内部分支。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo26-training-recipe.md)
+
+[RAraimbekovm2](https://github.com/raimbekovm)[Y-Y-T-G1](https://github.com/Y-T-G)
+
+已创建 2个月前已更新 上周
+
+## 评论
+
+本页内容
+
+使用 AI 探索

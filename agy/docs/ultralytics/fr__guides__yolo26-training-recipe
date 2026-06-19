@@ -1,0 +1,234 @@
+---
+source_url: https://docs.ultralytics.com/fr/guides/yolo26-training-recipe
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo26-training-recipe.md)
+
+# Link to this sectionRecette d'entraînement YOLO26#
+
+## Link to this sectionIntroduction#
+
+Ce guide documente la recette d'[entraînement](/fr/modes/train) exacte utilisée pour produire les points de contrôle pré-entraînés officiels de [YOLO26](/fr/models/yolo26) sur [COCO](/fr/datasets/detect/coco). Chaque [hyperparamètre](https://www.ultralytics.com/glossary/hyperparameter-tuning) présenté ici est déjà intégré dans les poids `.pt` publiés et peut être inspecté par programmation.
+
+Savoir ce qui a servi à créer les points de contrôle officiels — pas seulement l'architecture, mais aussi les planifications de [taux d'apprentissage](https://www.ultralytics.com/glossary/learning-rate), les pipelines d'augmentation et les poids de perte qui ont façonné leurs performances — t'aide à prendre de meilleures décisions lors du [fine-tuning](https://www.ultralytics.com/glossary/fine-tuning) : quelles [augmentations de données](/fr/guides/yolo-data-augmentation) conserver, quels poids de [fonction de perte](https://www.ultralytics.com/glossary/loss-function) ajuster, et quels paramètres d'optimiseur fonctionnent le mieux pour la taille de ton jeu de données.
+
+## Link to this sectionPrésentation de l'entraînement#
+
+Tous les modèles de base YOLO26 ont été entraînés sur COCO à une résolution de **640x640** en utilisant l'optimiseur **MuSGD** avec une **[taille de lot](https://www.ultralytics.com/glossary/batch-size) de 128**. Plutôt que de commencer avec des poids aléatoires en une seule exécution, les modèles ont été initialisés à partir de poids pré-entraînés intermédiaires et affinés avec des hyperparamètres trouvés via [recherche évolutionnaire](/fr/guides/hyperparameter-tuning#genetic-evolution-and-mutation). Les journaux d'entraînement complets et les métriques pour chaque taille de modèle sont disponibles sur [Ultralytics Platform](https://platform.ultralytics.com/ultralytics/yolo26) :
+
+Choix de conception clés pour toutes les tailles :
+
+  * **Entraînement de bout en bout** (`end2end=True`) avec tête un-à-un sans NMS
+  * **Optimiseur[MuSGD](/fr/modes/train#musgd-optimizer)** combinant SGD avec des mises à jour orthogonalisées de style Muon pour les matrices de poids (paramètres avec `ndim >= 2`, tels que les poids de convolution et linéaires)
+  * **Augmentation mosaïque intensive** (probabilité ~0.9-1.0) désactivée lors des 10 dernières époques (`close_mosaic=10`)
+  * **Augmentation d'échelle agressive** (0.56-0.95) pour gérer les objets à différentes tailles
+  * **Rotation/cisaillement minimal** pour la plupart des tailles, maintenant une faible distorsion géométrique
+
+
+
+## Link to this sectionInspection des arguments d'entraînement des points de contrôle YOLO26#
+
+Chaque point de contrôle Ultralytics stocke la configuration d'entraînement complète utilisée pour le produire, afin que tu puisses vérifier chaque chiffre sur cette page toi-même :
+
+Inspecter les arguments d'entraînement du point de contrôle
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    print(model.ckpt["train_args"])
+
+La sortie liste la configuration complète de plus de 100 entrées, incluant chaque valeur de recette documentée sur cette page. Un extrait pour `yolo26n.pt` :
+    
+    
+    batch: 128
+    ...
+    box: 5.62767
+    ...
+    close_mosaic: 10
+    cls: 0.56099
+    ...
+    dfl: 9.03871
+    ...
+    epochs: 245
+    ...
+    lr0: 0.0054
+    lrf: 0.04952
+    ...
+    optimizer: MuSGD
+
+Cela fonctionne pour n'importe quel point de contrôle `.pt` — qu'il s'agisse des versions officielles ou de tes propres modèles fine-tunés. Pour la liste complète des arguments d'entraînement configurables, consulte la [référence de configuration d'entraînement](/fr/usage/cfg).
+
+## Link to this sectionHyperparamètres d'entraînement YOLO26 par taille de modèle#
+
+Les tableaux ci-dessous regroupent la recette par catégorie — optimiseur et planification, poids de perte et augmentation. Chaque valeur provient directement des `train_args` intégrés dans les points de contrôle publiés.
+
+### Link to this sectionOptimiseur et taux d'apprentissage#
+
+Ces paramètres d'optimiseur et de planification ont conduit le pré-entraînement COCO pour chaque taille ; remarque comment le modèle N se distingue des autres :
+
+Paramètre| N| S| M| L| X  
+---|---|---|---|---|---  
+`optimizer`| MuSGD| MuSGD| MuSGD| MuSGD| MuSGD  
+`lr0`| 0.0054| 0.00038| 0.00038| 0.00038| 0.00038  
+`lrf`| 0.0495| 0.882| 0.882| 0.882| 0.882  
+`momentum`| 0.947| 0.948| 0.948| 0.948| 0.948  
+`weight_decay`| 0.00064| 0.00027| 0.00027| 0.00027| 0.00027  
+`warmup_epochs`| 0.98| 0.99| 0.99| 0.99| 0.99  
+`epochs`| 245| 70| 80| 60| 40  
+`batch`| 128| 128| 128| 128| 128  
+`imgsz`| 640| 640| 640| 640| 640  
+  
+Stratégie de taux d'apprentissage
+
+Le modèle N a utilisé un taux d'apprentissage initial plus élevé avec une décroissance abrupte (`lrf=0.0495`), tandis que les modèles S/M/L/X ont utilisé un taux initial beaucoup plus bas avec une planification plus douce (`lrf=0.882`). Cela reflète les dynamiques de convergence différentes entre les petits et les grands modèles — les modèles plus petits ont besoin de mises à jour plus agressives pour apprendre efficacement.
+
+### Link to this sectionPoids de perte#
+
+Les poids de perte équilibrent les trois composantes de la perte de détection — régression IoU de [boîte englobante](https://www.ultralytics.com/glossary/bounding-box) (`box`), classification (`cls`) et un terme de régression de distance de boîte (`dfl`). Note que YOLO26, sans DFL, réutilise le gain `dfl` pour pondérer une perte L1 sur les distances de boîte normalisées plutôt que la perte focale de distribution :
+
+Paramètre| N| S| M| L| X  
+---|---|---|---|---|---  
+`box`| 5.63| 9.83| 9.83| 9.83| 9.83  
+`cls`| 0.56| 0.65| 0.65| 0.65| 0.65  
+`dfl`| 9.04| 0.96| 0.96| 0.96| 0.96  
+  
+Le modèle N donne la priorité au terme de régression de distance `dfl`, tandis que les modèles S/M/L/X déplacent l'accent vers la régression de boîte basée sur l'IoU. La perte de classification reste relativement cohérente sur toutes les tailles.
+
+### Link to this sectionPipeline d'augmentation#
+
+Pour une explication détaillée de chaque technique, consulte le [guide d'augmentation des données YOLO](/fr/guides/yolo-data-augmentation).
+
+Paramètre| N| S| M| L| X  
+---|---|---|---|---|---  
+[`mosaic`](/fr/guides/yolo-data-augmentation#mosaic-mosaic)| 0.909| 0.992| 0.992| 0.992| 0.992  
+[`mixup`](/fr/guides/yolo-data-augmentation#mixup-mixup)| 0.012| 0.05| 0.427| 0.427| 0.427  
+[`copy_paste`](/fr/guides/yolo-data-augmentation#copy-paste-copy_paste)| 0.075| 0.404| 0.304| 0.404| 0.404  
+[`scale`](/fr/guides/yolo-data-augmentation#scale-scale)| 0.562| 0.9| 0.95| 0.95| 0.95  
+[`fliplr`](/fr/guides/yolo-data-augmentation#flip-left-right-fliplr)| 0.606| 0.304| 0.304| 0.304| 0.304  
+[`degrees`](/fr/guides/yolo-data-augmentation#rotation-degrees)| 1.11| ~0| ~0| ~0| ~0  
+[`shear`](/fr/guides/yolo-data-augmentation#shear-shear)| 1.46| ~0| ~0| ~0| ~0  
+[`translate`](/fr/guides/yolo-data-augmentation#translation-translate)| 0.071| 0.275| 0.275| 0.275| 0.275  
+[`hsv_h`](/fr/guides/yolo-data-augmentation#hue-adjustment-hsv_h)| 0.014| 0.013| 0.013| 0.013| 0.013  
+[`hsv_s`](/fr/guides/yolo-data-augmentation#saturation-adjustment-hsv_s)| 0.645| 0.353| 0.353| 0.353| 0.353  
+[`hsv_v`](/fr/guides/yolo-data-augmentation#brightness-adjustment-hsv_v)| 0.566| 0.194| 0.194| 0.194| 0.194  
+[`bgr`](/fr/guides/yolo-data-augmentation#bgr-channel-swap-bgr)| 0.106| 0.0| 0.0| 0.0| 0.0  
+  
+Les valeurs affichées comme `~0` sont inférieures à 0.01 dans les points de contrôle réels (par exemple, `degrees=0.00012` pour le modèle S) — l'augmentation est effectivement désactivée.
+
+Les modèles plus grands utilisent une augmentation globalement plus agressive (mixup, copy-paste et échelle plus élevés), car ils ont plus de capacité et bénéficient d'une [régularisation](https://www.ultralytics.com/glossary/regularization) plus forte. Le modèle N est la seule taille avec une augmentation significative de rotation, de cisaillement et de BGR.
+
+### Link to this sectionParamètres d'entraînement internes#
+
+Avancé : paramètres de pipeline internes
+
+Les points de contrôle contiennent également des paramètres qui ont été utilisés dans le pipeline d'entraînement interne mais qui ne sont **pas** exposés comme des paramètres configurables par l'utilisateur dans `default.yaml` :
+
+Paramètre| Description| N| S| M| L| X  
+---|---|---|---|---|---|---  
+`muon_w`| Poids de mise à jour Muon dans MuSGD| 0.528| 0.436| 0.436| 0.436| 0.436  
+`sgd_w`| Poids de mise à jour SGD dans MuSGD| 0.674| 0.479| 0.479| 0.479| 0.479  
+`cls_w`| Poids de classification interne| 2.74| 3.48| 3.48| 3.48| 3.48  
+`o2m`| Poids de la perte de la tête one-to-many| 1.0| 0.705| 0.705| 0.705| 0.705  
+`topk`| Assignation d'étiquettes Top-k| 8| 5| 5| 5| 5  
+  
+Consulte l'entrée FAQ sur ces paramètres pour comprendre leur signification lors du fine-tuning.
+
+## Link to this sectionFine-tuning de YOLO26 sur ton propre jeu de données#
+
+Lorsque tu effectues un fine-tuning de YOLO26 sur ton propre jeu de données, tu n'as pas besoin de reproduire l'intégralité de la recette de pré-entraînement. Les poids pré-entraînés encodent déjà les connaissances en matière d'augmentation et d'optimisation issues de l'entraînement sur COCO. Pour des meilleures pratiques de formation plus générales, consulte les [Conseils pour l'entraînement des modèles](/fr/guides/model-training-tips).
+
+### Link to this sectionFine-tuning avec les paramètres par défaut#
+
+Fine-tuning avec les paramètres par défaut
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    results = model.train(data="your-dataset.yaml", epochs=100, imgsz=640)
+
+Le fine-tuning avec les paramètres par défaut constitue une excellente base. N'ajuste les hyperparamètres que si tu as une raison spécifique de le faire.
+
+### Link to this sectionQuand ajuster les hyperparamètres de YOLO26#
+
+**Petits jeux de données ( < 1 000 images) :**
+
+  * Réduis l'intensité de l'augmentation : `mosaic=0.5`, `mixup=0.0`, `copy_paste=0.0`
+  * Diminue le taux d'apprentissage : `lr0=0.001`
+  * Utilise moins d'[époques](https://www.ultralytics.com/glossary/epoch) avec patience : `epochs=50`, `patience=20`
+  * Envisage de geler les couches du backbone : `freeze=10`
+
+
+
+**Grands jeux de données ( > 50 000 images) :**
+
+  * Respecte plus fidèlement la recette de pré-entraînement
+  * Envisage `optimizer=MuSGD` pour les entraînements plus longs
+  * Augmente l'augmentation : `mosaic=1.0`, `mixup=0.3`, `scale=0.9`
+
+
+
+**Imagerie spécifique au domaine (aérienne, médicale, sous-marine) :**
+
+  * Augmente `flipud=0.5` si l'orientation verticale varie
+  * Augmente `degrees` si les objets apparaissent avec des rotations arbitraires
+  * Ajuste `hsv_s` et `hsv_v` si les conditions d'éclairage diffèrent significativement de COCO
+
+
+
+Pour une optimisation automatisée des hyperparamètres, consulte le [guide de réglage des hyperparamètres](/fr/guides/hyperparameter-tuning).
+
+### Link to this sectionChoisis une taille de modèle#
+
+Modèle| Idéal pour| Conseils sur la taille des lots  
+---|---|---  
+YOLO26n| Appareils Edge, mobile, temps réel sur CPU| Grands lots (64-128) sur GPU grand public  
+YOLO26s| Vitesse et précision équilibrées| Lots moyens (32-64)  
+YOLO26m| Meilleure précision avec un calcul modéré| Petits lots (16-32)  
+YOLO26l| Haute précision lorsque le GPU est disponible| Petits lots (8-16) ou multi-GPU  
+YOLO26x| Précision maximale, déploiement serveur| Petits lots (4-8) ou multi-GPU  
+  
+Pour les options d'exportation et de déploiement, consulte le [guide d'exportation](/fr/modes/export) et les [Options de déploiement de modèle](/fr/guides/model-deployment-options).
+
+## Link to this sectionConclusion#
+
+Les checkpoints YOLO26 sont livrés avec leur recette d'entraînement complète intégrée, donc les hyperparamètres exacts derrière chaque taille de modèle sont toujours accessibles via une simple recherche `train_args`. Commence le fine-tuning avec les paramètres par défaut, ajuste délibérément en utilisant les tableaux de cette page, et vérifie chaque changement par rapport à ton propre jeu de validation. Si des questions surviennent en cours de route, demande à la communauté sur le [dépôt GitHub Ultralytics](https://github.com/ultralytics/ultralytics) ou sur le [serveur Discord Ultralytics](https://discord.com/invite/ultralytics).
+
+## Link to this sectionFAQ#
+
+### Link to this sectionComment voir les hyperparamètres exacts utilisés pour n'importe quel checkpoint ?#
+
+Charge le checkpoint avec `torch.load()` et accède à la clé `train_args`, ou utilise `model.ckpt["train_args"]` avec l'API Ultralytics. Consulte Inspecting YOLO26 Checkpoint Training Args pour des exemples complets.
+
+### Link to this sectionPourquoi le nombre d'époques est-il différent pour chaque taille de modèle ?#
+
+Les modèles plus grands ont généralement eu besoin de moins d'époques sur COCO car leur plus grande capacité accélère la convergence — le modèle X a été entraîné pendant 40 époques contre 245 pour le N — bien que les nombres ne soient pas strictement monotones (S a utilisé 70, M a utilisé 80). Lors du fine-tuning sur ton propre jeu de données, le nombre optimal d'époques dépend de la taille et de la complexité de ton jeu de données, et non de la taille du modèle. Utilise l'arrêt précoce (`patience`) pour trouver automatiquement le bon point d'arrêt.
+
+### Link to this sectionDois-je utiliser MuSGD pour le fine-tuning ?#
+
+Habituellement, tu n'as pas besoin de choisir : avec le paramètre par défaut `optimizer=auto`, Ultralytics sélectionne automatiquement **MuSGD** pour les entraînements plus longs (> 10 000 itérations) et **AdamW** pour les plus courts. Tu peux explicitement définir `optimizer=MuSGD` si tu préfères. Pour en savoir plus sur le fonctionnement de MuSGD, consulte la [documentation d'entraînement](/fr/modes/train#musgd-optimizer).
+
+### Link to this sectionQue sont `muon_w`, `sgd_w`, `cls_w`, `o2m` et `topk` dans le checkpoint ?#
+
+Ce sont des paramètres internes issus du pipeline d'entraînement qui a généré les checkpoints de base, enregistrés dans `train_args` pour des raisons de reproductibilité. Ce ne sont pas des paramètres configurables par l'utilisateur dans `default.yaml`, et les transmettre à `model.train()` provoquera une erreur d'argument invalide — le package public ne les lit pas. Tu n'as pas besoin de les définir lors du fine-tuning ; consulte Paramètres d'entraînement internes pour leurs valeurs par taille de modèle.
+
+### Link to this sectionPuis-je reproduire exactement le pré-entraînement à partir de zéro ?#
+
+Pas exactement — les checkpoints ont été produits en utilisant une branche d'entraînement interne avec des fonctionnalités supplémentaires absentes de la base de code publique (comme des poids `o2m` configurables et `cls_w`). Tu peux obtenir des résultats très proches en utilisant les hyperparamètres documentés sur cette page avec le package Ultralytics public, mais une reproduction exacte nécessite la branche interne.
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo26-training-recipe.md)
+
+[RAraimbekovm2](https://github.com/raimbekovm)[Y-Y-T-G1](https://github.com/Y-T-G)
+
+Créé il y a 2 moisMis à jour la semaine dernière
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

@@ -1,0 +1,322 @@
+---
+source_url: https://docs.ultralytics.com/ko/guides/export-non-yolo-models
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/export-non-yolo-models.md)
+
+# Link to this sectionUltralytics를 사용하여 비 YOLO PyTorch 모델을 내보내는 방법#
+
+PyTorch 모델을 프로덕션에 배포할 때는 일반적으로 타겟마다 다른 내보내기 도구를 사용해야 합니다. 예를 들어 ONNX는 `torch.onnx.export`, Apple 기기는 `coremltools`, TensorFlow는 `onnx2tf`, NCNN은 `pnnx` 등을 사용합니다. 각 도구는 고유한 API, 의존성 특성, 출력 규칙을 가지고 있습니다.
+
+Ultralytics ships standalone export utilities that wrap multiple backends behind one consistent interface. You can export any `torch.nn.Module`, including [timm](https://github.com/huggingface/pytorch-image-models) image models, [torchvision](https://docs.pytorch.org/vision/) classifiers and detectors, or your own custom architectures, to [ONNX](/ko/integrations/onnx), [TorchScript](/ko/integrations/torchscript), [OpenVINO](/ko/integrations/openvino), [CoreML](/ko/integrations/coreml), [NCNN](/ko/integrations/ncnn), [PaddlePaddle](/ko/integrations/paddlepaddle), [MNN](/ko/integrations/mnn), [ExecuTorch](/ko/integrations/executorch), and [TensorFlow SavedModel](/ko/integrations/tf-savedmodel) without learning each backend separately.
+
+## Link to this section비 YOLO 모델 내보내기에 Ultralytics를 사용해야 하는 이유는 무엇입니까?#
+
+  * **10개 형식에 걸친 단일 API:** 수십 개의 호출 규칙 대신 하나의 호출 규칙만 배우면 됩니다.
+  * **공유 유틸리티 표면:** 내보내기 도우미는 `ultralytics.utils.export` 하위에 위치하므로, 백엔드 패키지가 설치되면 형식 전반에서 동일한 호출 패턴을 유지할 수 있습니다.
+  * **YOLO 내보내기와 동일한 코드 경로:** Ultralytics YOLO 내보내기를 구동하는 것과 동일한 도우미가 사용됩니다.
+  * **FP16 및 INT8 양자화** 지원(OpenVINO, CoreML, MNN, NCNN)이 내장되어 있습니다.
+  * **CPU에서 작동:** 내보내기 단계 자체에 GPU가 필요하지 않으므로 모든 노트북에서 로컬로 실행할 수 있습니다.
+
+
+
+## Link to this section빠른 시작#
+
+The fastest path is a two-line export to [ONNX](/ko/integrations/onnx) with no YOLO code and no setup beyond `pip install ultralytics onnx timm`:
+    
+    
+    import timm
+    import torch
+    
+    from ultralytics.utils.export import torch2onnx
+    
+    model = timm.create_model("resnet18", pretrained=True).eval()
+    torch2onnx(model, torch.randn(1, 3, 224, 224), output_file="resnet18.onnx")
+
+## Link to this section지원되는 내보내기 형식#
+
+`torch2*` 함수는 표준 `torch.nn.Module`과 예제 입력 텐서를 사용합니다. MNN, TF SavedModel, TF Frozen Graph는 중간 단계로 ONNX 또는 Keras 아티팩트를 거칩니다. 두 경우 모두 YOLO 특정 속성은 필요하지 않습니다.
+
+형식| 함수| 설치| 출력  
+---|---|---|---  
+ONNX| `torch2onnx()`| `pip install onnx`| `.onnx` 파일  
+TorchScript| `torch2torchscript()`| PyTorch에 포함됨| `.torchscript` 파일  
+OpenVINO| `torch2openvino()`| `pip install openvino`| `_openvino_model/` 디렉터리  
+CoreML| `torch2coreml()`| `pip install coremltools`| `.mlpackage`  
+TF SavedModel| `onnx2saved_model()`| 아래 자세한 요구 사항 참조| `_saved_model/` 디렉터리  
+TF Frozen Graph| `keras2pb()`| 아래 자세한 요구 사항 참조| `.pb` 파일  
+NCNN| `torch2ncnn()`| `pip install ncnn pnnx`| `_ncnn_model/` 디렉터리  
+MNN| `onnx2mnn()`| `pip install MNN`| `.mnn` 파일  
+PaddlePaddle| `torch2paddle()`| `pip install paddlepaddle x2paddle`| `_paddle_model/` 디렉터리  
+ExecuTorch| `torch2executorch()`| `pip install executorch`| `_executorch_model/` 디렉터리  
+  
+중간 형식으로서의 ONNX
+
+[MNN](/ko/integrations/mnn), [TF SavedModel](/ko/integrations/tf-savedmodel) 및 TF Frozen Graph 내보내기는 중간 단계로 ONNX를 거칩니다. 먼저 ONNX로 내보낸 후 변환하십시오.
+
+메타데이터 임베딩
+
+여러 내보내기 함수는 선택적 `metadata` 딕셔너리(예: `torch2torchscript(..., metadata={"author": "me"})`)를 허용하며, 형식이 지원하는 경우 내보낸 아티팩트에 사용자 정의 키-값 쌍을 임베딩합니다.
+
+## Link to this section단계별 예시#
+
+아래의 모든 예시는 동일한 설정을 사용하며, 평가 모드(evaluation mode)인 timm의 사전 훈련된 ResNet-18을 사용합니다:
+    
+    
+    import timm
+    import torch
+    
+    model = timm.create_model("resnet18", pretrained=True).eval()
+    im = torch.randn(1, 3, 224, 224)
+
+내보내기 전 항상 `model.eval()`을 호출하십시오
+
+Dropout, [batch normalization](https://www.ultralytics.com/glossary/batch-normalization) 및 기타 훈련 전용 레이어는 추론 중에 다르게 작동합니다. `.eval()`을 건너뛰면 잘못된 결과로 내보내기가 생성됩니다.
+
+### Link to this sectionONNX로 내보내기#
+    
+    
+    from ultralytics.utils.export import torch2onnx
+    
+    torch2onnx(model, im, output_file="resnet18.onnx")
+
+동적 배치 크기를 위해서는 `dynamic` 딕셔너리를 전달하십시오:
+    
+    
+    torch2onnx(model, im, output_file="resnet18_dyn.onnx", dynamic={"images": {0: "batch_size"}})
+
+기본 opset은 `14`이며 기본 입력 이름은 `"images"`입니다. `opset`, `input_names` 또는 `output_names` 인수로 이를 재정의하십시오.
+
+### Link to this sectionTorchScript로 내보내기#
+
+추가 의존성이 필요하지 않습니다. 내부적으로 `torch.jit.trace`를 사용합니다.
+    
+    
+    from ultralytics.utils.export import torch2torchscript
+    
+    torch2torchscript(model, im, output_file="resnet18.torchscript")
+
+### Link to this sectionOpenVINO로 내보내기#
+    
+    
+    from ultralytics.utils.export import torch2openvino
+    
+    ov_model = torch2openvino(model, im, output_dir="resnet18_openvino_model")
+
+디렉터리에는 고정된 이름의 `model.xml` 및 `model.bin` 쌍이 포함됩니다:
+    
+    
+    resnet18_openvino_model/
+    ├── model.xml
+    └── model.bin
+
+동적 입력 모양을 위해 `dynamic=True`, FP16을 위해 `half=True`, 또는 INT8 양자화를 위해 `int8=True`를 전달하십시오. INT8은 추가로 `calibration_dataset` 인수가 필요합니다.
+
+`openvino>=2024.0.0`(macOS 15.4+에서는 `>=2025.2.0`) 및 `torch>=2.1`이 필요합니다.
+
+### Link to this sectionCoreML로 내보내기#
+    
+    
+    import coremltools as ct
+    
+    from ultralytics.utils.export import torch2coreml
+    
+    inputs = [ct.TensorType("input", shape=(1, 3, 224, 224))]
+    ct_model = torch2coreml(model, inputs, im, classifier_names=None, output_file="resnet18.mlpackage")
+
+[classification](https://www.ultralytics.com/glossary/image-classification) 모델의 경우, 클래스 이름 목록을 `classifier_names`에 전달하여 CoreML 모델에 분류 헤드를 추가하십시오.
+
+`coremltools>=9.0`, `torch>=1.11`, 및 `numpy<=2.3.5`가 필요합니다. Windows에서는 지원되지 않습니다.
+
+`BlobWriter not loaded` 오류
+
+`coremltools>=9.0`은 macOS 및 Linux의 Python 3.10–3.13용 휠을 제공합니다. 더 최신 Python 버전에서는 네이티브 C 확장이 로드되지 않습니다. CoreML 내보내기를 위해 Python 3.10–3.13을 사용하십시오.
+
+### Link to this sectionTensorFlow SavedModel로 내보내기#
+
+TF SavedModel 내보내기는 중간 단계로 ONNX를 거칩니다:
+    
+    
+    from ultralytics.utils.export import onnx2saved_model, torch2onnx
+    
+    torch2onnx(model, im, output_file="resnet18.onnx")
+    keras_model = onnx2saved_model("resnet18.onnx", output_dir="resnet18_saved_model")
+
+이 함수는 Keras 모델을 반환하며 출력 디렉터리 내부에 TFLite 파일(`.tflite`)도 생성합니다:
+    
+    
+    resnet18_saved_model/
+    ├── saved_model.pb
+    ├── variables/
+    ├── resnet18_float32.tflite
+    ├── resnet18_float16.tflite
+    └── resnet18_int8.tflite
+
+요구 사항:
+
+  * `tensorflow>=2.0.0,<=2.19.0`
+  * `onnx2tf>=1.26.3,<1.29.0`
+  * `tf_keras<=2.19.0`
+  * `sng4onnx>=1.0.1`
+  * `onnx_graphsurgeon>=0.3.26` (`--extra-index-url https://pypi.ngc.nvidia.com`으로 설치)
+  * macOS에서는 `ai-edge-litert>=1.2.0,<1.4.0`(다른 플랫폼에서는 `ai-edge-litert>=1.2.0`)
+  * `onnxslim>=0.1.71`
+  * `onnx>=1.12.0,<2.0.0`
+  * `protobuf>=5`
+
+
+
+### Link to this sectionTensorFlow Frozen Graph로 내보내기#
+
+위의 SavedModel 내보내기에 이어, 반환된 Keras 모델을 고정된 `.pb` 그래프로 변환합니다:
+    
+    
+    from pathlib import Path
+    
+    from ultralytics.utils.export import keras2pb
+    
+    keras2pb(keras_model, output_file=Path("resnet18_saved_model/resnet18.pb"))
+
+### Link to this sectionNCNN으로 내보내기#
+    
+    
+    from ultralytics.utils.export import torch2ncnn
+    
+    torch2ncnn(model, im, output_dir="resnet18_ncnn_model")
+
+디렉터리에는 고정된 이름의 param 및 bin 파일과 Python 래퍼가 포함되어 있습니다:
+    
+    
+    resnet18_ncnn_model/
+    ├── model.ncnn.param
+    ├── model.ncnn.bin
+    └── model_ncnn.py
+
+`torch2ncnn()`은 처음 사용할 때 `ncnn`과 `pnnx`를 확인합니다.
+
+### Link to this sectionMNN으로 내보내기#
+
+MNN 내보내기는 입력으로 ONNX 파일이 필요합니다. 먼저 ONNX로 내보낸 후 변환하십시오:
+    
+    
+    from ultralytics.utils.export import onnx2mnn, torch2onnx
+    
+    torch2onnx(model, im, output_file="resnet18.onnx")
+    onnx2mnn("resnet18.onnx", output_file="resnet18.mnn")
+
+FP16의 경우 `half=True`, INT8 양자화의 경우 `int8=True`를 지원합니다. `MNN>=2.9.6` 및 `torch>=1.10`이 필요합니다.
+
+### Link to this sectionPaddlePaddle로 내보내기#
+    
+    
+    from ultralytics.utils.export import torch2paddle
+    
+    torch2paddle(model, im, output_dir="resnet18_paddle_model")
+
+디렉터리에는 PaddlePaddle 모델 및 매개변수 파일이 포함되어 있습니다:
+    
+    
+    resnet18_paddle_model/
+    ├── model.pdmodel
+    └── model.pdiparams
+
+`x2paddle` 및 해당 플랫폼에 맞는 정확한 PaddlePaddle 배포판이 필요합니다:
+
+  * CUDA에서 `paddlepaddle-gpu>=3.0.0,<3.3.0`
+  * ARM64 CPU에서의 `paddlepaddle==3.0.0`
+  * 기타 CPU에서의 `paddlepaddle>=3.0.0,<3.3.0`
+
+
+
+NVIDIA Jetson에서는 지원되지 않습니다.
+
+### Link to this sectionExecuTorch로 내보내기#
+    
+    
+    from ultralytics.utils.export import torch2executorch
+    
+    torch2executorch(model, im, output_dir="resnet18_executorch_model")
+
+내보낸 `.pte` 파일은 출력 디렉토리 내에 저장됩니다:
+    
+    
+    resnet18_executorch_model/
+    └── model.pte
+
+`torch>=2.9.0`과 호환되는 ExecuTorch 런타임(`pip install executorch`)이 필요합니다. 런타임 사용법은 [ExecuTorch 통합](/ko/integrations/executorch)을 참조하십시오.
+
+## Link to this section내보낸 모델 검증#
+
+After exporting, verify numerical parity with the original PyTorch model before shipping. A quick smoke test with `ONNXBackend` from `ultralytics.nn.backends` compares outputs and flags tracing or quantization errors early:
+    
+    
+    import numpy as np
+    import timm
+    import torch
+    
+    from ultralytics.nn.backends import ONNXBackend
+    
+    model = timm.create_model("resnet18", pretrained=True).eval()
+    im = torch.randn(1, 3, 224, 224)
+    with torch.no_grad():
+        pytorch_output = model(im).numpy()
+    
+    onnx_model = ONNXBackend("resnet18.onnx", device=torch.device("cpu"))
+    onnx_output = onnx_model(im)[0]
+    
+    diff = np.abs(pytorch_output - onnx_output).max()
+    print(f"Max difference: {diff:.6f}")  # should be < 1e-5
+
+예상 오차
+
+FP32 내보내기의 경우, 최대 절대 오차는 `1e-5` 미만이어야 합니다. 이보다 큰 오차는 지원되지 않는 연산, 잘못된 입력 형태 또는 평가 모드가 아닌 모델을 의미합니다. FP16 및 INT8 내보내기는 더 여유 있는 허용 오차를 가집니다. 무작위 텐서 대신 실제 데이터를 사용하여 검증하십시오.
+
+다른 런타임의 경우 입력 텐서 이름이 다를 수 있습니다. 예를 들어 OpenVINO는 모델의 forward-argument 이름(일반적인 모델의 경우 보통 `x`)을 사용하며, `torch2onnx`는 기본적으로 `"images"`를 사용합니다.
+
+## Link to this section알려진 제한 사항#
+
+  * **다중 입력 지원이 일정하지 않음** : `torch2onnx` 및 `torch2openvino`는 다중 입력 모델에 대해 예제 텐서의 튜플 또는 리스트를 허용합니다. `torch2torchscript`, `torch2coreml`, `torch2ncnn`, `torch2paddle`, `torch2executorch`는 단일 입력 텐서를 가정합니다.
+  * **ExecuTorch는`flatc`가 필요함**: ExecuTorch 런타임은 FlatBuffers 컴파일러를 필요로 합니다. macOS에서는 `brew install flatbuffers`, Ubuntu에서는 `apt install flatbuffers-compiler`로 설치하십시오.
+  * **Ultralytics를 통한 추론 불가** : 내보낸 비 YOLO 모델은 추론을 위해 `YOLO()`로 다시 로드할 수 없습니다. 각 형식의 네이티브 런타임([ONNX Runtime](/ko/integrations/onnx), [OpenVINO Runtime](/ko/integrations/openvino) 등)을 사용하십시오.
+  * **YOLO 전용 형식** : [Axelera](/ko/integrations/axelera) 및 [Sony IMX500](/ko/integrations/sony-imx500) 내보내기는 YOLO 전용 모델 속성이 필요하며 일반 모델에는 사용할 수 없습니다.
+  * **플랫폼 전용 형식** : [TensorRT](/ko/integrations/tensorrt)는 NVIDIA GPU가 필요합니다. [RKNN](/ko/integrations/rockchip-rknn)은 `rknn-toolkit2` SDK(Linux 전용)가 필요합니다. [Edge TPU](/ko/integrations/edge-tpu)는 `edgetpu_compiler` 바이너리(Linux 전용)가 필요합니다.
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionUltralytics로 어떤 모델을 내보낼 수 있나요?#
+
+모든 `torch.nn.Module`입니다. 여기에는 timm, torchvision 또는 모든 사용자 정의 PyTorch 모델이 포함됩니다. 모델은 내보내기 전에 평가 모드(`model.eval()`)여야 합니다. ONNX 및 OpenVINO는 다중 입력 모델을 위해 추가로 예제 텐서의 튜플을 허용합니다.
+
+### Link to this sectionGPU 없이 작동하는 내보내기 형식은 무엇인가요?#
+
+지원되는 모든 형식(TorchScript, ONNX, OpenVINO, CoreML, TF SavedModel, TF Frozen Graph, NCNN, PaddlePaddle, MNN, ExecuTorch)은 CPU에서 내보낼 수 있습니다. 내보내기 프로세스 자체에는 GPU가 필요하지 않습니다. TensorRT만이 유일하게 NVIDIA GPU를 요구하는 형식입니다.
+
+### Link to this section어떤 Ultralytics 버전이 필요한가요?#
+
+Use Ultralytics `>=8.4.38`, which includes the `ultralytics.utils.export` module and the standardized `output_file`/`output_dir` arguments.
+
+### Link to this sectiontorchvision 모델을 iOS 배포를 위해 CoreML로 내보낼 수 있나요?#
+
+Yes. torchvision classifiers, detectors, and segmentation models export to `.mlpackage` via `torch2coreml`. For image classification models, pass a list of class names to `classifier_names` to bake in a classification head. Run the export on macOS or Linux. CoreML is not supported on Windows. See the [CoreML integration](/ko/integrations/coreml) for iOS deployment details.
+
+### Link to this section내보낸 모델을 INT8 또는 FP16으로 양자화할 수 있나요?#
+
+Yes, for several formats. Pass `half=True` for FP16 or `int8=True` for INT8 when exporting to OpenVINO, CoreML, MNN, or NCNN. INT8 in OpenVINO additionally requires a `calibration_dataset` argument for [post-training quantization](https://www.ultralytics.com/glossary/model-quantization). See each format's integration page for quantization trade-offs.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/export-non-yolo-models.md)
+
+[GLglenn-jocher3](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)[RAraimbekovm1](https://github.com/raimbekovm)
+
+생성됨 지난달업데이트됨 2주 전
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

@@ -1,0 +1,455 @@
+---
+source_url: https://docs.ultralytics.com/ar/guides/model-yaml-config
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-yaml-config.md)
+
+# Link to this sectionدليل إعدادات نموذج YAML#
+
+يعمل ملف إعدادات نموذج YAML كمخطط معماري لشبكات Ultralytics العصبية. وهو يحدد كيفية اتصال الطبقات، وما هي المعاملات التي تستخدمها كل وحدة، وكيف تتوسع الشبكة بأكملها عبر أحجام النماذج المختلفة.
+
+![Model YAML configuration workflow.](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yaml-configuration-guide.avif)
+
+## Link to this sectionهيكل الإعدادات#
+
+يتم تنظيم ملفات YAML الخاصة بالنموذج في ثلاثة أقسام رئيسية تعمل معاً لتحديد البنية.
+
+### Link to this sectionقسم المعاملات (Parameters)#
+
+يحدد قسم **parameters** الخصائص العالمية للنموذج وسلوك القياس:
+    
+    
+    # Parameters
+    nc: 80 # number of classes
+    scales: # compound scaling constants [depth, width, max_channels]
+        n: [0.50, 0.25, 1024] # nano: shallow layers, narrow channels
+        s: [0.50, 0.50, 1024] # small: shallow depth, standard width
+        m: [0.50, 1.00, 512] # medium: moderate depth, full width
+        l: [1.00, 1.00, 512] # large: full depth and width
+        x: [1.00, 1.50, 512] # extra-large: maximum performance
+    kpt_shape: [17, 3] # pose models only
+
+  * `nc` تحدد عدد الفئات التي يتنبأ بها النموذج.
+  * `scales` تحدد عوامل القياس المركبة التي تضبط عمق النموذج، وعرضه، وأقصى عدد للقنوات لإنتاج متغيرات بأحجام مختلفة (من نانو إلى ضخم جداً).
+  * `kpt_shape` تنطبق على نماذج الوضعية (pose). يمكن أن تكون `[N, 2]` لنقاط رئيسية `(x, y)` أو `[N, 3]` لـ `(x, y, visibility)`.
+
+
+
+تقليل التكرار باستخدام `scales`
+
+يسمح لك معامل `scales` بإنشاء أحجام نماذج متعددة من ملف YAML أساسي واحد. على سبيل المثال، عند تحميل `yolo26n.yaml`، يقرأ Ultralytics ملف `yolo26.yaml` الأساسي ويطبق عوامل قياس `n` (`depth=0.50`, `width=0.25`) لبناء متغير النانو.
+
+`nc` و `kpt_shape` يعتمدان على مجموعة البيانات
+
+إذا حددت مجموعة البيانات الخاصة بك قيمة `nc` أو `kpt_shape` مختلفة، سيقوم Ultralytics تلقائياً بتجاوز إعداد النموذج في وقت التشغيل ليتطابق مع YAML الخاصة بمجموعة البيانات.
+
+### Link to this sectionبنية العمود الفقري (Backbone) والرأس (Head)#
+
+تتكون بنية النموذج من أقسام العمود الفقري (استخراج الميزات) والرأس (الخاص بالمهمة):
+    
+    
+    backbone:
+        # [from, repeats, module, args]
+        - [-1, 1, Conv, [64, 3, 2]] # 0: Initial convolution
+        - [-1, 1, Conv, [128, 3, 2]] # 1: Downsample
+        - [-1, 3, C2f, [128, True]] # 2: Feature processing
+    
+    head:
+        - [-1, 1, nn.Upsample, [None, 2, nearest]] # 6: Upsample
+        - [[-1, 2], 1, Concat, [1]] # 7: Skip connection
+        - [-1, 3, C2f, [256]] # 8: Process features
+        - [[8], 1, Detect, [nc]] # 9: Detection layer
+
+## Link to this sectionتنسيق مواصفات الطبقة#
+
+تتبع كل طبقة النمط المتسق: **`[from, repeats, module, args]`**
+
+المكون| الغرض| أمثلة  
+---|---|---  
+**from**|  اتصالات الإدخال| `-1` (السابق)، `6` (الطبقة 6)، `[4, 6, 8]` (مدخلات متعددة)  
+**repeats**|  عدد التكرارات| `1` (فردي)، `3` (تكرار 3 مرات)  
+**module**|  نوع الوحدة| `Conv`, `C2f`, `TorchVision`, `Detect`  
+**args**|  وسائط الوحدة| `[64, 3, 2]` (القنوات، النواة، الخطوة)  
+  
+### Link to this sectionأنماط الاتصال#
+
+ينشئ حقل `from` أنماط تدفق بيانات مرنة عبر شبكتك:
+    
+    
+    - [-1, 1, Conv, [64, 3, 2]]    # Takes input from previous layer
+
+فهرسة الطبقات
+
+يتم فهرسة الطبقات بدءاً من 0. تشير الفهارس السالبة إلى الطبقات السابقة (`-1` = الطبقة السابقة)، بينما تشير الفهارس الموجبة إلى طبقات محددة حسب موقعها.
+
+### Link to this sectionتكرار الوحدة#
+
+ينشئ معامل `repeats` أقسام شبكة أعمق:
+    
+    
+    - [-1, 3, C2f, [128, True]] # Creates 3 consecutive C2f blocks
+    - [-1, 1, Conv, [64, 3, 2]] # Single convolution layer
+
+يتم ضرب عدد التكرارات الفعلي في عامل قياس العمق من إعدادات حجم النموذج الخاص بك.
+
+## Link to this sectionالوحدات المتاحة#
+
+يتم تنظيم الوحدات حسب الوظيفة ويتم تعريفها في [دليل وحدات Ultralytics](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules). تعرض الجداول التالية الوحدات شائعة الاستخدام حسب الفئة، مع وجود العديد منها في الكود المصدري:
+
+### Link to this sectionالعمليات الأساسية#
+
+الوحدة| الغرض| المصدر| الوسائط (Arguments)  
+---|---|---|---  
+`Conv`| التفاف + BatchNorm + تنشيط| [conv.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/conv.py)| `[out_ch, kernel, stride, pad, groups]`  
+`nn.Upsample`| رفع دقة العينة مكانياً| [PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.nn.Upsample.html)| `[size, scale_factor, mode]`  
+`nn.Identity`| عملية تمرير مباشر| [PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.nn.Identity.html)| `[]`  
+  
+### Link to this sectionكتل مركبة#
+
+الوحدة| الغرض| المصدر| الوسائط (Arguments)  
+---|---|---|---  
+`C2f`| عنق زجاجة CSP مع التفافين| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, shortcut, expansion]`  
+`SPPF`| تجميع الهرم المكاني (سريع)| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, kernel_size]`  
+`Concat`| تسلسل القنوات| [conv.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/conv.py)| `[dimension]`  
+  
+### Link to this sectionوحدات متخصصة#
+
+الوحدة| الغرض| المصدر| الوسائط (Arguments)  
+---|---|---|---  
+`TorchVision`| تحميل أي نموذج من torchvision| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, model_name, weights, unwrap, truncate, split]`  
+`Index`| استخراج موتر محدد من القائمة| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, index]`  
+`Detect`| رأس الكشف YOLO| [head.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/head.py)| `[nc]`  
+  
+قائمة الوحدات الكاملة
+
+يمثل هذا مجموعة فرعية من الوحدات المتاحة. للحصول على القائمة الكاملة للوحدات ومعاملاتها، استكشف [دليل الوحدات](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules).
+
+## Link to this sectionميزات متقدمة#
+
+### Link to this sectionتكامل TorchVision#
+
+يسمح نموذج TorchVision بالتكامل السلس لأي [نموذج TorchVision](https://docs.pytorch.org/vision/stable/models.html) كعمود فقري:
+    
+    
+    from ultralytics import YOLO
+    
+    # Model with ConvNeXt backbone
+    model = YOLO("convnext_backbone.yaml")
+    results = model.train(data="coco8.yaml", epochs=100)
+
+ميزات متعددة المقاييس
+
+اضبط المعامل الأخير على `True` للحصول على خرائط ميزات وسيطة للكشف متعدد المقاييس.
+
+### Link to this sectionوحدة الفهرس (Index) لاختيار الميزات#
+
+عند استخدام النماذج التي تخرج خرائط ميزات متعددة، تقوم وحدة الفهرس باختيار مخرجات محددة:
+    
+    
+    backbone:
+        - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]] # Multi-output
+    head:
+        - [0, 1, Index, [192, 4]] # Select 4th feature map (192 channels)
+        - [0, 1, Index, [384, 6]] # Select 6th feature map (384 channels)
+        - [0, 1, Index, [768, 8]] # Select 8th feature map (768 channels)
+        - [[1, 2, 3], 1, Detect, [nc]] # Multi-scale detection
+
+## Link to this sectionنظام دقة الوحدة#
+
+فهم كيفية تحديد موقع الوحدات واستيرادها في Ultralytics أمر بالغ الأهمية للتخصيص:
+
+### Link to this sectionعملية البحث عن الوحدة#
+
+تستخدم Ultralytics نظاماً من ثلاث طبقات في [`parse_model`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py):
+    
+    
+    # Core resolution logic
+    m = (
+        getattr(torch.nn, m[3:])
+        if "nn." in m
+        else getattr(torchvision.ops, m[16:])
+        if "torchvision.ops." in m
+        else globals()[m]
+    )
+
+  1. **وحدات PyTorch** : الأسماء التي تبدأ بـ `'nn.'` ← مساحة اسم `torch.nn`
+  2. **عمليات TorchVision** : الأسماء التي تبدأ بـ `'torchvision.ops.'` ← مساحة اسم `torchvision.ops`
+  3. **وحدات Ultralytics** : جميع الأسماء الأخرى ← مساحة الاسم العامة عبر الاستيرادات
+
+
+
+### Link to this sectionسلسلة استيراد الوحدات#
+
+تصبح الوحدات القياسية متاحة من خلال الاستيرادات في [`tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py):
+    
+    
+    from ultralytics.nn.modules import (  # noqa: F401
+        SPPF,
+        C2f,
+        Conv,
+        Detect,
+        # ... many more modules
+        Index,
+        TorchVision,
+    )
+
+## Link to this sectionتكامل الوحدات المخصصة#
+
+### Link to this sectionتعديل الكود المصدري#
+
+يعد تعديل الكود المصدري الطريقة الأكثر مرونة لدمج وحداتك المخصصة، ولكنه قد يكون معقداً. لتعريف واستخدام وحدة مخصصة، اتبع الخطوات التالية:
+
+  1. **قم بتثبيت Ultralytics في وضع التطوير** باستخدام طريقة استنساخ Git من [دليل البدء السريع](https://docs.ultralytics.com/quickstart#git-clone).
+
+  2. **عرف وحدتك** في [`ultralytics/nn/modules/block.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py):
+         
+         class CustomBlock(nn.Module):
+             """Custom block with Conv-BatchNorm-ReLU sequence."""
+         
+             def __init__(self, c1, c2):
+                 """Initialize CustomBlock with input and output channels."""
+                 super().__init__()
+                 self.layers = nn.Sequential(nn.Conv2d(c1, c2, 3, 1, 1), nn.BatchNorm2d(c2), nn.ReLU())
+         
+             def forward(self, x):
+                 """Forward pass through the block."""
+                 return self.layers(x)
+
+  3. **أظهر وحدتك على مستوى الحزمة** في [`ultralytics/nn/modules/__init__.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/__init__.py):
+         
+         from .block import CustomBlock  # noqa makes CustomBlock available as ultralytics.nn.modules.CustomBlock
+
+  4. **Add to imports** in [`ultralytics/nn/tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py):
+         
+         from ultralytics.nn.modules import CustomBlock  # noqa
+
+  5. **تعامل مع الوسائط الخاصة** (إذا لزم الأمر) داخل [`parse_model()`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) في `ultralytics/nn/tasks.py`:
+         
+         # Add this condition in the parse_model() function
+         if m is CustomBlock:
+             c1, c2 = ch[f], args[0]  # input channels, output channels
+             args = [c1, c2, *args[1:]]
+
+  6. **استخدم الوحدة** في ملف YAML الخاص بالنموذج:
+         
+         # custom_model.yaml
+         nc: 1
+         backbone:
+             - [-1, 1, CustomBlock, [64]]
+         head:
+             - [-1, 1, Classify, [nc]]
+
+  7. **تحقق من عدد عمليات الفاصلة العائمة (FLOPs)** للتأكد من أن عملية التمرير الأمامي تعمل:
+         
+         from ultralytics import YOLO
+         
+         model = YOLO("custom_model.yaml", task="classify")
+         model.info()  # should print non-zero FLOPs if working
+
+
+
+
+## Link to this sectionتكوينات نموذجية#
+
+### Link to this sectionنموذج الكشف الأساسي#
+    
+    
+    # Simple YOLO detection model
+    nc: 80
+    scales:
+        n: [0.33, 0.25, 1024]
+    
+    backbone:
+        - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+        - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+        - [-1, 3, C2f, [128, True]] # 2
+        - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+        - [-1, 6, C2f, [256, True]] # 4
+        - [-1, 1, SPPF, [256, 5]] # 5
+    
+    head:
+        - [-1, 1, Conv, [256, 3, 1]] # 6
+        - [[6], 1, Detect, [nc]] # 7
+
+### Link to this sectionنموذج العمود الفقري (Backbone) لـ TorchVision#
+    
+    
+    # ConvNeXt backbone with YOLO head
+    nc: 80
+    
+    backbone:
+        - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]]
+    
+    head:
+        - [0, 1, Index, [192, 4]] # P3 features
+        - [0, 1, Index, [384, 6]] # P4 features
+        - [0, 1, Index, [768, 8]] # P5 features
+        - [[1, 2, 3], 1, Detect, [nc]] # Multi-scale detection
+
+### Link to this sectionنموذج التصنيف#
+    
+    
+    # Simple classification model
+    nc: 1000
+    
+    backbone:
+        - [-1, 1, Conv, [64, 7, 2, 3]]
+        - [-1, 1, nn.MaxPool2d, [3, 2, 1]]
+        - [-1, 4, C2f, [64, True]]
+        - [-1, 1, Conv, [128, 3, 2]]
+        - [-1, 8, C2f, [128, True]]
+        - [-1, 1, nn.AdaptiveAvgPool2d, [1]]
+    
+    head:
+        - [-1, 1, Classify, [nc]]
+
+## Link to this sectionأفضل الممارسات#
+
+### Link to this sectionنصائح تصميم البنية#
+
+**ابدأ ببساطة** : ابدأ ببنيات أثبتت كفاءتها قبل التخصيص. استخدم تكوينات YOLO الموجودة كقوالب وقم بالتعديل تدريجياً بدلاً من البناء من الصفر.
+
+**اختبر تدريجياً** : تحقق من صحة كل تعديل خطوة بخطوة. أضف وحدة مخصصة واحدة في كل مرة وتأكد من أنها تعمل قبل الانتقال إلى التغيير التالي.
+
+**راقب القنوات** : تأكد من تطابق أبعاد القنوات بين الطبقات المتصلة. يجب أن تتطابق قنوات الإخراج (`c2`) لطبقة واحدة مع قنوات الإدخال (`c1`) للطبقة التالية في التسلسل.
+
+**استخدم وصلات التخطي (Skip Connections)** : استفد من إعادة استخدام الميزات باستخدام أنماط `[[-1, N], 1, Concat, [1]]`. تساعد هذه الوصلات في تدفق التدرج وتسمح للنموذج بدمج الميزات من مستويات مختلفة.
+
+**قم بالتحجيم بشكل مناسب** : اختر أحجام النماذج بناءً على قيودك الحسابية. استخدم الحجم النانوي (`n`) للأجهزة الطرفية، والحجم الصغير (`s`) لتحقيق أداء متوازن، والأحجام الأكبر (`m`, `l`, `x`) لتحقيق أقصى قدر من الدقة.
+
+### Link to this sectionاعتبارات الأداء#
+
+**العمق مقابل العرض** : تلتقط الشبكات العميقة ميزات هرمية معقدة عبر طبقات تحويل متعددة، بينما تعالج الشبكات العريضة مزيداً من المعلومات بالتوازي في كل طبقة. وازن بينها بناءً على تعقيد مهمتك.
+
+**وصلات التخطي** : تحسن تدفق التدرج أثناء التدريب وتمكن من إعادة استخدام الميزات في جميع أنحاء الشبكة. إنها مهمة بشكل خاص في البنيات الأكثر عمقاً لمنع تلاشي التدرجات.
+
+**كتل الاختناق (Bottleneck Blocks)** : تقلل التكلفة الحسابية مع الحفاظ على قدرة تعبير النموذج. تستخدم وحدات مثل `C2f` معلمات أقل من الالتفافات القياسية مع الحفاظ على سعة تعلم الميزات.
+
+**الميزات متعددة المستويات** : ضرورية لاكتشاف الكائنات بأحجام مختلفة في نفس الصورة. استخدم أنماط شبكة هرم الميزات (FPN) مع رؤوس كشف متعددة على مستويات مختلفة.
+
+## Link to this sectionاستكشاف الأخطاء وإصلاحها#
+
+### Link to this sectionالمشكلات الشائعة#
+
+المشكلة| السبب| الحل  
+---|---|---  
+`KeyError: 'ModuleName'`| الوحدة غير مستوردة| أضفها إلى استيرادات [`tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py)  
+عدم تطابق أبعاد القناة| تحديد غير صحيح لـ `args`| تحقق من توافق قنوات الإدخال/الإخراج  
+`AttributeError: 'int' object has no attribute`| نوع وسيطة خاطئ| تحقق من وثائق الوحدة لمعرفة أنواع الوسائط الصحيحة  
+فشل بناء النموذج| مرجع `from` غير صالح| تأكد من وجود الطبقات المشار إليها  
+  
+### Link to this sectionنصائح التصحيح#
+
+عند تطوير بنيات مخصصة، يساعد التصحيح المنهجي في تحديد المشكلات مبكراً:
+
+**استخدم رأس الهوية (Identity Head) للاختبار**
+
+استبدل الرؤوس المعقدة بـ `nn.Identity` لعزل مشكلات العمود الفقري:
+    
+    
+    nc: 1
+    backbone:
+        - [-1, 1, CustomBlock, [64]]
+    head:
+        - [-1, 1, nn.Identity, []] # Pass-through for debugging
+
+هذا يسمح بالفحص المباشر لمخرجات العمود الفقري:
+    
+    
+    import torch
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("debug_model.yaml")
+    output = model.model(torch.randn(1, 3, 640, 640))
+    print(f"Output shape: {output.shape}")  # Should match expected dimensions
+
+**فحص بنية النموذج**
+
+يمكن أن يساعد التحقق من عدد عمليات FLOPs وطباعة كل طبقة في تصحيح مشكلات تكوين النموذج المخصص. يجب ألا يكون عدد FLOPs صفراً ليكون النموذج صالحاً. إذا كان صفراً، فمن المحتمل وجود مشكلة في عملية التمرير الأمامي. سيؤدي إجراء تمرير أمامي بسيط إلى إظهار الخطأ الدقيق الذي تمت مواجهته.
+    
+    
+    from ultralytics import YOLO
+    
+    # Build model with verbose output to see layer details
+    model = YOLO("debug_model.yaml", verbose=True)
+    
+    # Check model FLOPs. Failed forward pass causes 0 FLOPs.
+    model.info()
+    
+    # Inspect individual layers
+    for i, layer in enumerate(model.model.model):
+        print(f"Layer {i}: {layer}")
+
+**التحقق من الصحة خطوة بخطوة**
+
+  1. **ابدأ بأقل قدر ممكن** : اختبر أبسط بنية ممكنة أولاً
+  2. **أضف تدريجياً** : ابْنِ التعقيد طبقة تلو الأخرى
+  3. **تحقق من الأبعاد** : تأكد من توافق القناة وحجم المساحة
+  4. **تحقق من التحجيم** : اختبر بأحجام نماذج مختلفة (`n`, `s`, `m`)
+
+
+
+## Link to this sectionالأسئلة الشائعة#
+
+### Link to this sectionكيف يمكنني تغيير عدد الفئات في نموذجي؟#
+
+اضبط معلمة `nc` في أعلى ملف YAML الخاص بك لتتوافق مع عدد الفئات في مجموعة البيانات الخاصة بك.
+    
+    
+    nc: 5 # 5 classes
+
+### Link to this sectionهل يمكنني استخدام عمود فقري مخصص في ملف YAML الخاص بنموذجي؟#
+
+نعم. يمكنك استخدام أي وحدة مدعومة، بما في ذلك أعمدة TorchVision الفقري، أو تحديد وحدتك المخصصة واستيرادها كما هو موضح في تكامل الوحدات المخصصة.
+
+### Link to this sectionكيف يمكنني تحجيم نموذجي لأحجام مختلفة (نانو، صغير، متوسط، إلخ)؟#
+
+استخدم قسم `scales` في ملف YAML الخاص بك لتحديد عوامل التحجيم للعمق والعرض والحد الأقصى للقنوات. سيقوم النموذج بتطبيق هذه العوامل تلقائياً عند تحميل ملف YAML الأساسي مع إلحاق الحجم باسم الملف (على سبيل المثال، `yolo26n.yaml`).
+
+### Link to this sectionماذا يعني تنسيق `[from, repeats, module, args]`؟#
+
+يحدد هذا التنسيق كيفية بناء كل طبقة:
+
+  * `from`: مصدر الإدخال
+  * `repeats`: عدد مرات تكرار الوحدة
+  * `module`: نوع الطبقة
+  * `args`: وسائط الوحدة
+
+
+
+### Link to this sectionكيف يمكنني استكشاف أخطاء عدم تطابق القناة وإصلاحها؟#
+
+تحقق من أن قنوات إخراج طبقة واحدة تتطابق مع قنوات الإدخال المتوقعة للطبقة التالية. استخدم `print(model.model.model)` لفحص بنية نموذجك.
+
+### Link to this sectionأين يمكنني العثور على قائمة بالوحدات المتاحة ووسائطها؟#
+
+تحقق من الكود المصدري في دليل [`ultralytics/nn/modules`](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules) للحصول على جميع الوحدات المتاحة ووسائطها.
+
+### Link to this sectionكيف يمكنني إضافة وحدة مخصصة إلى تكوين YAML الخاص بي؟#
+
+عرف وحدتك في الكود المصدري، وقم باستيرادها كما هو موضح في تعديل الكود المصدري، وأشر إليها بالاسم في ملف YAML الخاص بك.
+
+### Link to this sectionهل يمكنني استخدام الأوزان المدربة مسبقاً مع ملف YAML مخصص؟#
+
+نعم، يمكنك استخدام `model.load("path/to/weights")` لتحميل الأوزان من نقطة فحص مدربة مسبقاً. ومع ذلك، سيتم تحميل أوزان الطبقات التي تتطابق فقط بنجاح.
+
+### Link to this sectionكيف يمكنني التحقق من صحة تكوين نموذجي؟#
+
+استخدم `model.info()` للتحقق مما إذا كان عدد FLOPs غير صفري. يجب أن يُظهر النموذج الصالح عدداً غير صفري من FLOPs. إذا كان صفراً، فاتبع الاقتراحات في نصائح التصحيح للعثور على المشكلة.
+
+المساهمون
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-yaml-config.md)
+
+[GLglenn-jocher7](https://github.com/glenn-jocher)[Y-Y-T-G2](https://github.com/Y-T-G)[RIRizwanMunawar1](https://github.com/RizwanMunawar)
+
+تم الإنشاء 16 سبتمبر 2025تم التحديث قبل أسبوعين
+
+## التعليقات
+
+في هذه الصفحة
+
+استكشف باستخدام الذكاء الاصطناعي

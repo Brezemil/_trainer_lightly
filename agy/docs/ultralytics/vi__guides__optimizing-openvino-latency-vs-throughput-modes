@@ -1,0 +1,188 @@
+---
+source_url: https://docs.ultralytics.com/vi/guides/optimizing-openvino-latency-vs-throughput-modes
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+# Link to this sectionTối ưu hóa Inference OpenVINO cho YOLO#
+
+![OpenVINO Ecosystem](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/openvino-ecosystem.avif)
+
+## Link to this sectionGiới thiệu#
+
+Khi triển khai các model [deep learning](https://www.ultralytics.com/glossary/deep-learning-dl), đặc biệt là các model [object detection](https://www.ultralytics.com/glossary/object-detection) như Ultralytics YOLO, việc đạt được hiệu suất tối ưu là rất quan trọng. Hướng dẫn này đi sâu vào việc tận dụng [Intel's OpenVINO toolkit](https://docs.ultralytics.com/integrations/openvino) để tối ưu hóa inference, tập trung vào độ trễ (latency) và thông lượng (throughput). Cho dù bạn đang làm việc với các ứng dụng tiêu dùng hay triển khai quy mô lớn, việc hiểu và áp dụng các chiến lược tối ưu hóa này sẽ đảm bảo các model của bạn chạy hiệu quả trên nhiều thiết bị khác nhau.
+
+## Link to this sectionTối ưu hóa cho độ trễ (Latency)#
+
+Tối ưu hóa độ trễ là rất quan trọng đối với các ứng dụng yêu cầu phản hồi tức thì từ một model duy nhất với một đầu vào duy nhất, thường thấy trong các tình huống tiêu dùng. Mục tiêu là giảm thiểu độ trễ giữa đầu vào và kết quả inference. Tuy nhiên, việc đạt được độ trễ thấp đòi hỏi phải cân nhắc kỹ lưỡng, đặc biệt là khi chạy các tác vụ inference đồng thời hoặc quản lý nhiều model.
+
+### Link to this sectionCác chiến lược chính để tối ưu hóa độ trễ:#
+
+  * **Inference đơn trên mỗi thiết bị:** Cách đơn giản nhất để đạt được độ trễ thấp là giới hạn ở một inference tại một thời điểm trên mỗi thiết bị. Việc chạy song song bổ sung thường dẫn đến tăng độ trễ.
+  * **Tận dụng Sub-Devices:** Các thiết bị như CPU đa socket hoặc GPU đa tile có thể thực thi nhiều yêu cầu với mức tăng độ trễ tối thiểu bằng cách sử dụng các sub-device nội bộ của chúng.
+  * **OpenVINO Performance Hints:** Sử dụng thuộc tính `ov::LATENCY` của OpenVINO cho `ov::performance_mode` trong quá trình biên dịch model giúp đơn giản hóa việc điều chỉnh hiệu suất, mang lại phương pháp linh hoạt cho mọi thiết bị và đảm bảo tính tương thích trong tương lai.
+
+
+
+### Link to this sectionQuản lý độ trễ cho lần inference đầu tiên:#
+
+  * **Model Caching:** Để giảm thiểu thời gian tải và biên dịch model ảnh hưởng đến độ trễ, hãy sử dụng caching model ở những nơi có thể. Đối với các trường hợp không thể dùng caching, CPU thường cung cấp thời gian tải model nhanh nhất.
+  * **Model Mapping vs. Reading:** Để giảm thời gian tải, OpenVINO đã thay thế việc đọc model bằng mapping. Tuy nhiên, nếu model nằm trên ổ đĩa tháo rời hoặc ổ mạng, hãy cân nhắc sử dụng `ov::enable_mmap(false)` để chuyển về chế độ đọc.
+  * **AUTO Device Selection:** Chế độ này bắt đầu inference trên CPU, chuyển sang bộ tăng tốc (accelerator) khi đã sẵn sàng, giúp giảm độ trễ cho lần inference đầu tiên một cách liền mạch.
+
+
+
+## Link to this sectionTối ưu hóa cho thông lượng (Throughput)#
+
+Tối ưu hóa thông lượng rất quan trọng đối với các tình huống phục vụ nhiều yêu cầu inference đồng thời, tối đa hóa [resource utilization](https://www.ultralytics.com/blog/measuring-ai-performance-to-weigh-the-impact-of-your-innovations) mà không làm ảnh hưởng đáng kể đến hiệu suất của từng yêu cầu cá nhân.
+
+### Link to this sectionCác phương pháp tiếp cận để tối ưu hóa thông lượng:#
+
+  1. **OpenVINO Performance Hints:** Một phương pháp cấp cao, đảm bảo tương lai để tăng cường thông lượng trên các thiết bị bằng cách sử dụng các gợi ý hiệu suất.
+         
+         import openvino.properties.hint as hints
+         
+         config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+         compiled_model = core.compile_model(model, "GPU", config)
+
+  2. **Explicit Batching và Streams:** Một phương pháp tiếp cận chi tiết hơn bao gồm batching tường minh và sử dụng các stream để tinh chỉnh hiệu suất nâng cao.
+
+
+
+
+### Link to this sectionThiết kế các ứng dụng hướng đến thông lượng:#
+
+Để tối đa hóa thông lượng, các ứng dụng nên:
+
+  * Xử lý đầu vào song song, tận dụng triệt để khả năng của thiết bị.
+  * Phân tách luồng dữ liệu thành các yêu cầu inference đồng thời, được lập lịch để thực thi song song.
+  * Sử dụng Async API với các callback để duy trì hiệu quả và tránh tình trạng thiếu hụt tài nguyên thiết bị.
+
+
+
+### Link to this sectionThực thi đa thiết bị (Multi-Device Execution):#
+
+Chế độ đa thiết bị của OpenVINO đơn giản hóa việc mở rộng thông lượng bằng cách tự động cân bằng các yêu cầu inference giữa các thiết bị mà không cần quản lý thiết bị ở cấp độ ứng dụng.
+
+## Link to this sectionHiệu suất đạt được trong thực tế#
+
+Việc triển khai các tối ưu hóa OpenVINO với các model Ultralytics YOLO có thể mang lại những cải thiện hiệu suất đáng kể. Như đã được chứng minh trong các [benchmarks](https://docs.ultralytics.com/integrations/openvino#openvino-yolov8-benchmarks), người dùng có thể trải nghiệm tốc độ inference nhanh hơn gấp 3 lần trên CPU Intel, với khả năng tăng tốc thậm chí còn lớn hơn trên toàn bộ dòng phần cứng của Intel bao gồm GPU tích hợp, GPU chuyên dụng và VPU.
+
+Ví dụ, khi chạy các model YOLOv8 trên CPU Intel Xeon, các phiên bản được tối ưu hóa bằng OpenVINO liên tục vượt trội hơn so với các phiên bản PyTorch tương ứng về thời gian inference trên mỗi hình ảnh, mà không làm giảm [accuracy](https://www.ultralytics.com/glossary/accuracy).
+
+## Link to this sectionTriển khai thực tế#
+
+Để xuất và tối ưu hóa model Ultralytics YOLO của bạn cho OpenVINO, bạn có thể sử dụng chức năng [export](https://docs.ultralytics.com/modes/export):
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to OpenVINO format
+    model.export(format="openvino", half=True)  # Export with FP16 precision
+
+Sau khi xuất, bạn có thể chạy inference với model đã được tối ưu hóa:
+    
+    
+    # Load the OpenVINO model
+    ov_model = YOLO("yolo26n_openvino_model/")
+    
+    # Run inference with performance hints for latency
+    results = ov_model("path/to/image.jpg", verbose=True)
+
+## Link to this sectionKết luận#
+
+Việc tối ưu hóa các model Ultralytics YOLO cho độ trễ và thông lượng với OpenVINO có thể nâng cao hiệu suất ứng dụng của bạn đáng kể. Bằng cách áp dụng cẩn thận các chiến lược được nêu trong hướng dẫn này, các nhà phát triển có thể đảm bảo model của họ chạy hiệu quả, đáp ứng nhu cầu của các tình huống triển khai khác nhau. Hãy nhớ rằng, việc lựa chọn giữa tối ưu hóa cho độ trễ hay thông lượng phụ thuộc vào nhu cầu ứng dụng cụ thể của bạn và các đặc điểm của môi trường triển khai.
+
+Để biết thêm thông tin kỹ thuật chi tiết và các bản cập nhật mới nhất, hãy tham khảo [tài liệu OpenVINO](https://docs.openvino.ai/2024/index.html) và [kho lưu trữ Ultralytics YOLO](https://github.com/ultralytics/ultralytics). Các tài nguyên này cung cấp các hướng dẫn chuyên sâu, bài hướng dẫn và hỗ trợ cộng đồng để giúp bạn tận dụng tối đa các model deep learning của mình.
+
+* * *
+
+Việc đảm bảo các model của bạn đạt được hiệu suất tối ưu không chỉ là tinh chỉnh các cấu hình; mà còn là hiểu được nhu cầu của ứng dụng và đưa ra các quyết định sáng suốt. Cho dù bạn đang tối ưu hóa cho [phản hồi thời gian thực](https://www.ultralytics.com/blog/real-time-inferences-in-vision-ai-solutions-are-making-an-impact) hay tối đa hóa thông lượng cho xử lý quy mô lớn, sự kết hợp giữa các model Ultralytics YOLO và OpenVINO cung cấp một bộ công cụ mạnh mẽ để các nhà phát triển triển khai các giải pháp AI hiệu suất cao.
+
+## Link to this sectionCâu hỏi thường gặp (FAQ)#
+
+### Link to this sectionLàm cách nào để tôi tối ưu hóa các model Ultralytics YOLO cho độ trễ thấp bằng OpenVINO?#
+
+Tối ưu hóa các model Ultralytics YOLO cho độ trễ thấp bao gồm một số chiến lược chính:
+
+  1. **Inference đơn trên mỗi thiết bị:** Giới hạn inference ở mức một tại một thời điểm trên mỗi thiết bị để giảm thiểu độ trễ.
+  2. **Tận dụng Sub-Devices:** Sử dụng các thiết bị như CPU đa socket hoặc GPU đa tile có thể xử lý nhiều yêu cầu với mức tăng độ trễ tối thiểu.
+  3. **OpenVINO Performance Hints:** Sử dụng `ov::LATENCY` của OpenVINO trong quá trình biên dịch model để tinh chỉnh đơn giản, linh hoạt với mọi thiết bị.
+
+
+
+Để biết thêm các mẹo thực tế về tối ưu hóa độ trễ, hãy xem phần Tối ưu hóa độ trễ trong hướng dẫn của chúng tôi.
+
+### Link to this sectionTại sao tôi nên sử dụng OpenVINO để tối ưu hóa thông lượng Ultralytics YOLO?#
+
+OpenVINO nâng cao thông lượng model Ultralytics YOLO bằng cách tối đa hóa việc sử dụng tài nguyên thiết bị mà không làm giảm hiệu suất. Các lợi ích chính bao gồm:
+
+  * **Performance Hints:** Tinh chỉnh hiệu suất đơn giản, cấp cao trên các thiết bị.
+  * **Explicit Batching và Streams:** Tinh chỉnh cho hiệu suất nâng cao.
+  * **Multi-Device Execution:** Cân bằng tải inference tự động, giảm bớt quản lý ở cấp độ ứng dụng.
+
+
+
+Cấu hình ví dụ:
+    
+    
+    import openvino.properties.hint as hints
+    
+    config = {hints.performance_mode: hints.PerformanceMode.THROUGHPUT}
+    compiled_model = core.compile_model(model, "GPU", config)
+
+Tìm hiểu thêm về tối ưu hóa thông lượng trong phần Tối ưu hóa thông lượng trong hướng dẫn chi tiết của chúng tôi.
+
+### Link to this sectionThực tiễn tốt nhất để giảm độ trễ cho lần inference đầu tiên trong OpenVINO là gì?#
+
+Để giảm độ trễ cho lần inference đầu tiên, hãy xem xét các thực tiễn sau:
+
+  1. **Model Caching:** Sử dụng caching model để giảm thời gian tải và biên dịch.
+  2. **Model Mapping vs. Reading:** Sử dụng mapping (`ov::enable_mmap(true)`) theo mặc định nhưng hãy chuyển sang đọc (`ov::enable_mmap(false)`) nếu model nằm trên ổ đĩa tháo rời hoặc ổ mạng.
+  3. **AUTO Device Selection:** Sử dụng chế độ AUTO để bắt đầu với inference trên CPU và chuyển tiếp sang bộ tăng tốc một cách liền mạch.
+
+
+
+Để biết các chiến lược chi tiết về quản lý độ trễ cho lần inference đầu tiên, hãy tham khảo phần Quản lý độ trễ cho lần inference đầu tiên.
+
+### Link to this sectionLàm cách nào để tôi cân bằng giữa việc tối ưu hóa độ trễ và thông lượng với Ultralytics YOLO và OpenVINO?#
+
+Cân bằng giữa tối ưu hóa độ trễ và thông lượng đòi hỏi sự hiểu biết về nhu cầu ứng dụng của bạn:
+
+  * **Tối ưu hóa độ trễ:** Lý tưởng cho các ứng dụng thời gian thực yêu cầu phản hồi ngay lập tức (ví dụ: các ứng dụng tiêu dùng).
+  * **Tối ưu hóa thông lượng:** Tốt nhất cho các tình huống có nhiều inference đồng thời, tối đa hóa việc sử dụng tài nguyên (ví dụ: các triển khai quy mô lớn).
+
+
+
+Việc sử dụng các gợi ý hiệu suất cấp cao và chế độ đa thiết bị của OpenVINO có thể giúp đạt được sự cân bằng phù hợp. Hãy chọn các [OpenVINO Performance hints](https://docs.ultralytics.com/integrations/openvino#openvino-performance-hints) thích hợp dựa trên các yêu cầu cụ thể của bạn.
+
+### Link to this sectionTôi có thể sử dụng các model Ultralytics YOLO với các framework AI khác ngoài OpenVINO không?#
+
+Có, các model Ultralytics YOLO rất linh hoạt và có thể được tích hợp với nhiều framework AI khác nhau. Các tùy chọn bao gồm:
+
+  * **TensorRT:** Để tối ưu hóa GPU NVIDIA, hãy làm theo [hướng dẫn tích hợp TensorRT](https://docs.ultralytics.com/integrations/tensorrt).
+  * **CoreML:** Cho các thiết bị Apple, hãy tham khảo [hướng dẫn xuất CoreML](https://docs.ultralytics.com/integrations/coreml) của chúng tôi.
+  * **[TensorFlow](https://www.ultralytics.com/glossary/tensorflow).js:** Cho các ứng dụng web và Node.js, hãy xem [hướng dẫn chuyển đổi TF.js](https://docs.ultralytics.com/integrations/tfjs).
+
+
+
+Khám phá thêm các tích hợp trên [trang Tích hợp Ultralytics](https://docs.ultralytics.com/integrations).
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/optimizing-openvino-latency-vs-throughput-modes.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+Đã tạo 17 thg 3, 2024Đã cập nhật tháng trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

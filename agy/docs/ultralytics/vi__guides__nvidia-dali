@@ -1,0 +1,536 @@
+---
+source_url: https://docs.ultralytics.com/vi/guides/nvidia-dali
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/nvidia-dali.md)
+
+# Link to this sectionTiền xử lý tăng tốc bằng GPU với NVIDIA DALI#
+
+## Link to this sectionGiới thiệu#
+
+Khi triển khai các model [Ultralytics YOLO](/vi/models) trong môi trường production, [tiền xử lý](https://www.ultralytics.com/glossary/data-preprocessing) thường trở thành điểm nghẽn. Mặc dù [TensorRT](/vi/integrations/tensorrt) có thể chạy [inference](/vi/modes/predict) model chỉ trong vài mili giây, quá trình tiền xử lý dựa trên CPU (resize, pad, normalize) có thể mất 2-10ms mỗi ảnh, đặc biệt là ở độ phân giải cao. [NVIDIA DALI](https://docs.nvidia.com/deeplearning/dali/user-guide/docs/index.html) (Data Loading Library) giải quyết vấn đề này bằng cách chuyển toàn bộ pipeline tiền xử lý sang GPU.
+
+Hướng dẫn này sẽ giúp bạn xây dựng các pipeline DALI sao chép chính xác quy trình tiền xử lý của Ultralytics YOLO, tích hợp chúng với `model.predict()`, xử lý luồng video và triển khai end-to-end với [Triton Inference Server](/vi/guides/triton-inference-server).
+
+Hướng dẫn này dành cho ai?
+
+Hướng dẫn này dành cho các kỹ sư triển khai model YOLO trong môi trường production nơi tiền xử lý bằng CPU là điểm nghẽn đo lường được — thường là các triển khai [TensorRT](/vi/integrations/tensorrt) trên NVIDIA GPU, các pipeline video có lưu lượng cao, hoặc các thiết lập [Triton Inference Server](/vi/guides/triton-inference-server). Nếu bạn đang chạy inference tiêu chuẩn với `model.predict()` và không gặp điểm nghẽn tiền xử lý, thì pipeline CPU mặc định đã hoạt động tốt.
+
+Tóm tắt nhanh
+
+  * **Đang xây dựng pipeline DALI?** Sử dụng `fn.resize(mode="not_larger")` \+ `fn.crop(out_of_bounds_policy="pad")` \+ `fn.crop_mirror_normalize` để sao chép tiền xử lý letterbox của YOLO trên GPU.
+  * **Đang tích hợp với Ultralytics?** Truyền đầu ra DALI dưới dạng `torch.Tensor` vào `model.predict()` — Ultralytics sẽ tự động bỏ qua bước tiền xử lý ảnh.
+  * **Đang triển khai với Triton?** Sử dụng DALI backend cùng với một ensemble TensorRT để tiền xử lý zero-CPU.
+
+
+
+## Link to this sectionTại sao sử dụng DALI cho tiền xử lý YOLO#
+
+Trong một pipeline inference YOLO điển hình, các bước tiền xử lý chạy trên CPU:
+
+  1. **Giải mã** ảnh (JPEG/PNG)
+  2. **Resize** trong khi vẫn giữ nguyên tỷ lệ khung hình
+  3. **Pad** đến kích thước mục tiêu (letterbox)
+  4. **Normalize** giá trị pixel từ `[0, 255]` về `[0, 1]`
+  5. **Chuyển đổi** bố cục từ HWC sang CHW
+
+
+
+Với DALI, tất cả các thao tác này chạy trên GPU, giúp loại bỏ điểm nghẽn CPU. Điều này đặc biệt có giá trị khi:
+
+Kịch bản| Tại sao DALI giúp ích  
+---|---  
+**Inference GPU nhanh**|  Các engine [TensorRT](/vi/integrations/tensorrt) với inference dưới một mili giây khiến tiền xử lý CPU trở thành chi phí chiếm ưu thế  
+**Đầu vào độ phân giải cao**|  Các luồng video 1080p và 4K yêu cầu các thao tác resize tốn kém  
+**[Batch sizes](https://www.ultralytics.com/glossary/batch-size) lớn**| Inference phía máy chủ xử lý nhiều ảnh song song  
+**Giới hạn CPU core**|  Các thiết bị biên như [NVIDIA Jetson](/vi/guides/nvidia-jetson), hoặc các máy chủ GPU mật độ cao với ít CPU core trên mỗi GPU  
+  
+## Link to this sectionĐiều kiện tiên quyết#
+
+Chỉ dành cho Linux
+
+NVIDIA DALI chỉ hỗ trợ **Linux**. Nó không khả dụng trên Windows hoặc macOS.
+
+Cài đặt các gói cần thiết:
+    
+    
+    pip install ultralytics
+    pip install --extra-index-url https://pypi.nvidia.com nvidia-dali-cuda130
+
+**Yêu cầu:**
+
+  * NVIDIA GPU (compute capability 5.0+ / Maxwell hoặc mới hơn)
+  * CUDA 11.0+, 12.0+ hoặc 13.0+
+  * Python 3.10-3.14
+  * Hệ điều hành Linux
+
+
+
+## Link to this sectionHiểu về tiền xử lý YOLO#
+
+Trước khi xây dựng pipeline DALI, việc hiểu chính xác những gì Ultralytics thực hiện trong quá trình tiền xử lý là rất hữu ích. Lớp quan trọng là `LetterBox` trong [`ultralytics/data/augment.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/data/augment.py):
+    
+    
+    from ultralytics.data.augment import LetterBox
+    
+    letterbox = LetterBox(
+        new_shape=(640, 640),  # Target size
+        center=True,  # Center the image (pad equally on both sides)
+        stride=32,  # Stride alignment
+        padding_value=114,  # Gray padding (114, 114, 114)
+    )
+
+Toàn bộ pipeline tiền xử lý trong [`ultralytics/engine/predictor.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/engine/predictor.py) thực hiện các bước sau:
+
+Bước| Thao tác| Hàm CPU| Tương đương DALI  
+---|---|---|---  
+1| Letterbox resize| `cv2.resize`| `fn.resize(mode="not_larger")`  
+2| Đệm căn giữa| `cv2.copyMakeBorder`| `fn.crop(out_of_bounds_policy="pad")`  
+3| BGR → RGB| `im[..., ::-1]`| `fn.decoders.image(output_type=types.RGB)`  
+4| HWC → CHW + chuẩn hóa /255| `np.transpose` \+ `tensor / 255`| `fn.crop_mirror_normalize(std=[255,255,255])`  
+  
+Thao tác letterbox duy trì tỷ lệ khung hình bằng cách:
+
+  1. Tính tỷ lệ: `r = min(target_h / h, target_w / w)`
+  2. Resize thành `(round(w * r), round(h * r))`
+  3. Đệm phần không gian còn lại bằng màu xám (`114`) để đạt kích thước mục tiêu
+  4. Căn giữa ảnh để phần đệm được phân bổ đều ở cả hai bên
+
+
+
+## Link to this sectionDALI Pipeline cho YOLO#
+
+Sử dụng pipeline căn giữa bên dưới làm tham chiếu mặc định. Nó khớp với hành vi `LetterBox(center=True)` của Ultralytics, đây là hành vi mà inference YOLO tiêu chuẩn sử dụng.
+
+### Link to this sectionPipeline căn giữa (Được khuyến nghị, khớp với Ultralytics LetterBox)#
+
+Phiên bản này sao chép chính xác tiền xử lý Ultralytics mặc định với phần đệm căn giữa, khớp với `LetterBox(center=True)`:
+
+Pipeline DALI với phần đệm căn giữa (khuyến nghị)
+    
+    
+    import nvidia.dali as dali
+    import nvidia.dali.fn as fn
+    import nvidia.dali.types as types
+    
+    @dali.pipeline_def(batch_size=8, num_threads=4, device_id=0)
+    def yolo_dali_pipeline_centered(image_dir, target_size=640):
+        """DALI pipeline replicating YOLO preprocessing with centered padding.
+    
+        Matches Ultralytics LetterBox(center=True) behavior exactly.
+        """
+        # Read and decode images on GPU
+        jpegs, _ = fn.readers.file(file_root=image_dir, random_shuffle=False, name="Reader")
+        images = fn.decoders.image(jpegs, device="mixed", output_type=types.RGB)
+    
+        # Aspect-ratio-preserving resize
+        resized = fn.resize(
+            images,
+            resize_x=target_size,
+            resize_y=target_size,
+            mode="not_larger",
+            interp_type=types.INTERP_LINEAR,
+            antialias=False,  # Match cv2.INTER_LINEAR (no antialiasing)
+        )
+    
+        # Centered padding using fn.crop with out_of_bounds_policy
+        # When crop size > image size, fn.crop centers the image and pads symmetrically
+        padded = fn.crop(
+            resized,
+            crop=(target_size, target_size),
+            out_of_bounds_policy="pad",
+            fill_values=114,  # YOLO padding value
+        )
+    
+        # Normalize and convert layout
+        output = fn.crop_mirror_normalize(
+            padded,
+            dtype=types.FLOAT,
+            output_layout="CHW",
+            mean=[0.0, 0.0, 0.0],
+            std=[255.0, 255.0, 255.0],
+        )
+        return output
+
+Khi nào `fn.pad` là đủ?
+
+Nếu bạn không cần sự tương đương chính xác `LetterBox(center=True)`, bạn có thể đơn giản hóa bước đệm bằng cách sử dụng `fn.pad(...)` thay vì `fn.crop(..., out_of_bounds_policy="pad")`. Biến thể đó chỉ đệm các cạnh **phải và dưới** , điều này có thể chấp nhận được cho các pipeline triển khai tùy chỉnh, nhưng nó sẽ không khớp chính xác với hành vi letterbox căn giữa mặc định của Ultralytics.
+
+Tại sao dùng `fn.crop` cho phần đệm căn giữa?
+
+Toán tử `fn.pad` của DALI chỉ thêm phần đệm vào các cạnh **phải và dưới**. Để có phần đệm căn giữa (khớp với `LetterBox(center=True)` của Ultralytics), hãy sử dụng `fn.crop` với `out_of_bounds_policy="pad"`. Với `crop_pos_x=0.5` và `crop_pos_y=0.5` mặc định, ảnh sẽ tự động được căn giữa với phần đệm đối xứng.
+
+Lệch khử răng cưa (Antialias)
+
+Hàm `fn.resize` của DALI mặc định kích hoạt khử răng cưa (`antialias=True`), trong khi `cv2.resize` của OpenCV với `INTER_LINEAR` thì **không**. Luôn đặt `antialias=False` trong DALI để khớp với pipeline CPU. Việc bỏ qua điều này sẽ gây ra những khác biệt số học nhỏ có thể ảnh hưởng đến [độ chính xác của model](https://www.ultralytics.com/glossary/accuracy).
+
+### Link to this sectionChạy Pipeline#
+
+Xây dựng và chạy pipeline DALI
+    
+    
+    # Build and run the pipeline
+    pipe = yolo_dali_pipeline_centered(image_dir="/path/to/images", target_size=640)
+    pipe.build()
+    
+    # Get a batch of preprocessed images
+    (output,) = pipe.run()
+    
+    # Convert to numpy or PyTorch tensors
+    batch_np = output.as_cpu().as_array()  # Shape: (batch_size, 3, 640, 640)
+    print(f"Output shape: {batch_np.shape}, dtype: {batch_np.dtype}")
+    print(f"Value range: [{batch_np.min():.4f}, {batch_np.max():.4f}]")
+
+## Link to this sectionSử dụng DALI với Ultralytics Predict#
+
+Bạn có thể truyền trực tiếp một tensor [PyTorch](https://www.ultralytics.com/glossary/pytorch) đã được tiền xử lý vào `model.predict()`. Khi một `torch.Tensor` được truyền vào, Ultralytics **sẽ bỏ qua bước tiền xử lý ảnh** (letterbox, BGR→RGB, HWC→CHW và chuẩn hóa /255) và chỉ thực hiện chuyển đổi thiết bị cũng như ép kiểu dữ liệu trước khi gửi đến model.
+
+Vì Ultralytics không có quyền truy cập vào kích thước ảnh gốc trong trường hợp này, các tọa độ hộp phát hiện được trả về trong không gian letterbox 640×640. Để ánh xạ chúng trở lại tọa độ ảnh gốc, hãy sử dụng [`scale_boxes`](/reference/utils/ops), hàm này xử lý logic làm tròn chính xác được sử dụng bởi `LetterBox`:
+    
+    
+    from ultralytics.utils.ops import scale_boxes
+    
+    # boxes: tensor of shape (N, 4) in xyxy format, in 640x640 letterboxed coords
+    # Scale boxes from letterboxed (640, 640) back to original (orig_h, orig_w)
+    boxes = scale_boxes((640, 640), boxes, (orig_h, orig_w))
+
+Điều này áp dụng cho tất cả các đường dẫn tiền xử lý bên ngoài — đầu vào tensor trực tiếp, luồng video và triển khai Triton.
+
+DALI + Ultralytics predict
+    
+    
+    from nvidia.dali.plugin.pytorch import DALIGenericIterator
+    
+    from ultralytics import YOLO
+    
+    # Load model
+    model = YOLO("yolo26n.pt")
+    
+    # Create DALI iterator
+    pipe = yolo_dali_pipeline_centered(image_dir="/path/to/images", target_size=640)
+    pipe.build()
+    dali_iter = DALIGenericIterator(pipe, ["images"], reader_name="Reader")
+    
+    # Run inference with DALI-preprocessed tensors
+    for batch in dali_iter:
+        images = batch[0]["images"]  # Already on GPU, shape (B, 3, 640, 640)
+        results = model.predict(images, verbose=False)
+        for result in results:
+            print(f"Detected {len(result.boxes)} objects")
+
+Zero Preprocessing Overhead
+
+Khi bạn truyền `torch.Tensor` vào `model.predict()`, bước tiền xử lý ảnh chỉ mất ~0.004ms (gần như bằng không) so với ~1-10ms khi tiền xử lý bằng CPU. Tensor phải ở định dạng BCHW, float32 (hoặc float16) và được chuẩn hóa về `[0, 1]`. Ultralytics vẫn sẽ tự động xử lý việc chuyển thiết bị và ép kiểu dữ liệu.
+
+## Link to this sectionDALI với luồng video#
+
+Để xử lý video thời gian thực, hãy sử dụng `fn.external_source` để nạp các khung hình từ bất kỳ nguồn nào — [OpenCV](https://www.ultralytics.com/glossary/opencv), GStreamer hoặc các thư viện chụp ảnh tùy chỉnh:
+
+Pipeline DALI cho tiền xử lý luồng video
+    
+    
+    import nvidia.dali as dali
+    import nvidia.dali.fn as fn
+    import nvidia.dali.types as types
+    
+    @dali.pipeline_def(batch_size=1, num_threads=4, device_id=0)
+    def yolo_video_pipeline(target_size=640):
+        """DALI pipeline for processing video frames from external source."""
+        # External source for feeding frames from OpenCV, GStreamer, etc.
+        frames = fn.external_source(device="cpu", name="input")
+        frames = fn.reshape(frames, layout="HWC")
+    
+        # Move to GPU and preprocess
+        frames_gpu = frames.gpu()
+        resized = fn.resize(
+            frames_gpu,
+            resize_x=target_size,
+            resize_y=target_size,
+            mode="not_larger",
+            interp_type=types.INTERP_LINEAR,
+            antialias=False,
+        )
+        padded = fn.crop(
+            resized,
+            crop=(target_size, target_size),
+            out_of_bounds_policy="pad",
+            fill_values=114,
+        )
+        output = fn.crop_mirror_normalize(
+            padded,
+            dtype=types.FLOAT,
+            output_layout="CHW",
+            mean=[0.0, 0.0, 0.0],
+            std=[255.0, 255.0, 255.0],
+        )
+        return output
+
+## Link to this sectionTriton Inference Server với DALI#
+
+Để triển khai production, hãy kết hợp tiền xử lý DALI với inference [TensorRT](/vi/integrations/tensorrt) trong [Triton Inference Server](/vi/guides/triton-inference-server) sử dụng một ensemble model. Điều này loại bỏ hoàn toàn tiền xử lý CPU — các byte JPEG thô đi vào, các kết quả phát hiện đi ra, với mọi thứ được xử lý trên GPU.
+
+### Link to this sectionCấu trúc kho lưu trữ Model#
+    
+    
+    model_repository/
+    ├── dali_preprocessing/
+    │   ├── 1/
+    │   │   └── model.dali
+    │   └── config.pbtxt
+    ├── yolo_trt/
+    │   ├── 1/
+    │   │   └── model.plan
+    │   └── config.pbtxt
+    └── ensemble_dali_yolo/
+        ├── 1/                  # Empty directory (required by Triton)
+        └── config.pbtxt
+
+### Link to this sectionBước 1: Tạo Pipeline DALI#
+
+Tuần tự hóa (serialize) pipeline DALI cho Triton DALI backend:
+
+Tuần tự hóa pipeline DALI cho Triton
+    
+    
+    import nvidia.dali as dali
+    import nvidia.dali.fn as fn
+    import nvidia.dali.types as types
+    
+    @dali.pipeline_def(batch_size=8, num_threads=4, device_id=0)
+    def triton_dali_pipeline():
+        """DALI preprocessing pipeline for Triton deployment."""
+        # Input: raw encoded image bytes from Triton
+        images = fn.external_source(device="cpu", name="DALI_INPUT_0")
+        images = fn.decoders.image(images, device="mixed", output_type=types.RGB)
+    
+        resized = fn.resize(
+            images,
+            resize_x=640,
+            resize_y=640,
+            mode="not_larger",
+            interp_type=types.INTERP_LINEAR,
+            antialias=False,
+        )
+        padded = fn.crop(
+            resized,
+            crop=(640, 640),
+            out_of_bounds_policy="pad",
+            fill_values=114,
+        )
+        output = fn.crop_mirror_normalize(
+            padded,
+            dtype=types.FLOAT,
+            output_layout="CHW",
+            mean=[0.0, 0.0, 0.0],
+            std=[255.0, 255.0, 255.0],
+        )
+        return output
+    
+    # Serialize pipeline to model repository
+    pipe = triton_dali_pipeline()
+    pipe.serialize(filename="model_repository/dali_preprocessing/1/model.dali")
+
+### Link to this sectionBước 2: Xuất YOLO sang TensorRT#
+
+Xuất model YOLO sang engine TensorRT
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    model.export(format="engine", imgsz=640, half=True, batch=8)
+    # Copy the .engine file to model_repository/yolo_trt/1/model.plan
+
+### Link to this sectionBước 3: Cấu hình Triton#
+
+**dali_preprocessing/config.pbtxt:**
+    
+    
+    name: "dali_preprocessing"
+    backend: "dali"
+    max_batch_size: 8
+    input [
+      {
+        name: "DALI_INPUT_0"
+        data_type: TYPE_UINT8
+        dims: [ -1 ]
+      }
+    ]
+    output [
+      {
+        name: "DALI_OUTPUT_0"
+        data_type: TYPE_FP32
+        dims: [ 3, 640, 640 ]
+      }
+    ]
+
+**yolo_trt/config.pbtxt:**
+    
+    
+    name: "yolo_trt"
+    platform: "tensorrt_plan"
+    max_batch_size: 8
+    input [
+      {
+        name: "images"
+        data_type: TYPE_FP32
+        dims: [ 3, 640, 640 ]
+      }
+    ]
+    output [
+      {
+        name: "output0"
+        data_type: TYPE_FP32
+        dims: [ 300, 6 ]
+      }
+    ]
+
+**ensemble_dali_yolo/config.pbtxt:**
+    
+    
+    name: "ensemble_dali_yolo"
+    platform: "ensemble"
+    max_batch_size: 8
+    input [
+      {
+        name: "INPUT"
+        data_type: TYPE_UINT8
+        dims: [ -1 ]
+      }
+    ]
+    output [
+      {
+        name: "OUTPUT"
+        data_type: TYPE_FP32
+        dims: [ 300, 6 ]
+      }
+    ]
+    ensemble_scheduling {
+      step [
+        {
+          model_name: "dali_preprocessing"
+          model_version: -1
+          input_map {
+            key: "DALI_INPUT_0"
+            value: "INPUT"
+          }
+          output_map {
+            key: "DALI_OUTPUT_0"
+            value: "preprocessed_image"
+          }
+        },
+        {
+          model_name: "yolo_trt"
+          model_version: -1
+          input_map {
+            key: "images"
+            value: "preprocessed_image"
+          }
+          output_map {
+            key: "output0"
+            value: "OUTPUT"
+          }
+        }
+      ]
+    }
+
+Cách thức hoạt động của ánh xạ Ensemble
+
+Ensemble kết nối các model thông qua **tên tensor ảo**. Giá trị `output_map` là `"preprocessed_image"` trong bước DALI khớp với giá trị `input_map` là `"preprocessed_image"` trong bước TensorRT. Đây là những cái tên tùy ý liên kết đầu ra của một bước với đầu vào của bước tiếp theo — chúng không cần phải khớp với bất kỳ tên tensor nội bộ nào của model.
+
+### Link to this sectionBước 4: Gửi các yêu cầu Inference#
+
+Tại sao lại dùng `tritonclient` thay vì `YOLO('http://...')`?
+
+Ultralytics có [hỗ trợ Triton tích hợp](/vi/guides/triton-inference-server#running-inference) giúp tự động xử lý tiền/hậu kỳ. Tuy nhiên, tính năng này sẽ không hoạt động với ensemble DALI vì `YOLO()` gửi đi một tensor float32 đã qua tiền xử lý, trong khi ensemble lại yêu cầu dữ liệu thô JPEG. Hãy sử dụng `tritonclient` trực tiếp cho các ensemble DALI, và sử dụng [tích hợp sẵn](/vi/guides/triton-inference-server) cho các triển khai tiêu chuẩn không sử dụng DALI.
+
+Gửi hình ảnh đến ensemble Triton
+    
+    
+    import numpy as np
+    import tritonclient.http as httpclient
+    
+    client = httpclient.InferenceServerClient(url="localhost:8000")
+    
+    # Load image as raw bytes (JPEG/PNG encoded)
+    image_data = np.fromfile("image.jpg", dtype="uint8")
+    image_data = np.expand_dims(image_data, axis=0)  # Add batch dimension
+    
+    # Create input
+    input_tensor = httpclient.InferInput("INPUT", image_data.shape, "UINT8")
+    input_tensor.set_data_from_numpy(image_data)
+    
+    # Run inference through the ensemble
+    result = client.infer(model_name="ensemble_dali_yolo", inputs=[input_tensor])
+    detections = result.as_numpy("OUTPUT")  # Shape: (1, 300, 6) -> [x1, y1, x2, y2, conf, class_id]
+    
+    # Filter by confidence (no NMS needed — YOLO26 is end-to-end)
+    detections = detections[0]  # First image
+    detections = detections[detections[:, 4] > 0.25]  # Confidence threshold
+    print(f"Detected {len(detections)} objects")
+
+Xử lý theo lô (Batching) hình ảnh JPEG
+
+Khi gửi một lô hình ảnh JPEG đến Triton, hãy đệm (pad) tất cả các mảng byte đã mã hóa về cùng một độ dài (số byte tối đa trong lô). Triton yêu cầu các hình dạng lô đồng nhất cho tensor đầu vào.
+
+## Link to this sectionCác tác vụ được hỗ trợ#
+
+Tiền xử lý DALI hoạt động với tất cả các tác vụ YOLO sử dụng pipeline `LetterBox` tiêu chuẩn:
+
+Tác vụ| Được hỗ trợ| Lưu ý  
+---|---|---  
+[Phát hiện](/vi/tasks/detect)| ✅| Tiền xử lý letterbox tiêu chuẩn  
+[Phân đoạn Instance](/vi/tasks/segment)| ✅| Tiền xử lý tương tự như nhận diện  
+[Phân đoạn ngữ nghĩa](/vi/tasks/semantic)| ✅| Tiền xử lý hình ảnh tương tự như nhận diện  
+[Ước tính tư thế](/vi/tasks/pose)| ✅| Tiền xử lý tương tự như nhận diện  
+[Nhận diện xoay (OBB)](/vi/tasks/obb)| ✅| Tiền xử lý tương tự như nhận diện  
+[Phân loại](/vi/tasks/classify)| ❌| Sử dụng các transform từ torchvision (center crop), không sử dụng letterbox  
+  
+## Link to this sectionHạn chế#
+
+  * **Chỉ dành cho Linux** : DALI không hỗ trợ Windows hoặc macOS
+  * **Yêu cầu NVIDIA GPU** : Không có phương án dự phòng chỉ dùng CPU
+  * **Pipeline tĩnh** : Cấu trúc pipeline được định nghĩa tại thời điểm build và không thể thay đổi linh hoạt
+  * **`fn.pad` chỉ hỗ trợ phải/dưới**: Sử dụng `fn.crop` với `out_of_bounds_policy="pad"` để thực hiện đệm vào chính giữa
+  * **Không có chế độ rect** : Các pipeline DALI tạo ra đầu ra có kích thước cố định (ví dụ: 640×640). Chế độ rect `auto=True` tạo ra đầu ra có kích thước linh hoạt (ví dụ: 384×640) không được hỗ trợ. Lưu ý rằng mặc dù [TensorRT](/vi/integrations/tensorrt) hỗ trợ hình dạng đầu vào động, một pipeline DALI kích thước cố định sẽ kết hợp tốt với engine kích thước cố định để đạt thông lượng tối đa
+  * **Bộ nhớ với nhiều instance** : Việc sử dụng `instance_group` với `count` > 1 trong Triton có thể gây ra mức tiêu thụ bộ nhớ cao. Hãy sử dụng instance group mặc định cho model DALI
+
+
+
+## Link to this sectionCâu hỏi thường gặp#
+
+### Link to this sectionTiền xử lý DALI so với tốc độ tiền xử lý trên CPU như thế nào?#
+
+Lợi ích phụ thuộc vào pipeline của bạn. Khi suy luận trên GPU đã nhanh với [TensorRT](/vi/integrations/tensorrt), tiền xử lý trên CPU ở mức 2-10ms có thể trở thành chi phí chiếm ưu thế. DALI loại bỏ điểm nghẽn này bằng cách chạy tiền xử lý trên GPU. Những cải thiện lớn nhất được thấy với đầu vào độ phân giải cao (1080p, 4K), [kích thước lô](https://www.ultralytics.com/glossary/batch-size) lớn và các hệ thống có số nhân CPU hạn chế trên mỗi GPU.
+
+### Link to this sectionTôi có thể sử dụng DALI với các model PyTorch (không chỉ TensorRT) không?#
+
+Có. Sử dụng `DALIGenericIterator` để nhận đầu ra `torch.Tensor` đã tiền xử lý, sau đó chuyển chúng vào `model.predict()`. Tuy nhiên, lợi ích về hiệu năng đạt mức cao nhất với các model [TensorRT](/vi/integrations/tensorrt) nơi quá trình suy luận vốn đã rất nhanh và tiền xử lý trên CPU trở thành điểm nghẽn.
+
+### Link to this sectionSự khác biệt giữa `fn.pad` và `fn.crop` khi thực hiện đệm là gì?#
+
+`fn.pad` chỉ thêm đệm vào các cạnh **phải và dưới**. `fn.crop` với `out_of_bounds_policy="pad"` đặt hình ảnh vào chính giữa và thêm đệm đối xứng ở tất cả các cạnh, khớp với hành vi `LetterBox(center=True)` của Ultralytics.
+
+### Link to this sectionDALI có tạo ra kết quả giống hệt pixel với tiền xử lý trên CPU không?#
+
+Gần như giống hệt. Hãy đặt `antialias=False` trong `fn.resize` để khớp với `cv2.INTER_LINEAR` của OpenCV. Sự khác biệt nhỏ về dấu phẩy động (< 0.001) có thể xảy ra do sự khác biệt giữa phép toán trên GPU và CPU, nhưng những khác biệt này không có tác động đáng kể đến [độ chính xác](https://www.ultralytics.com/glossary/accuracy) của việc nhận diện.
+
+### Link to this sectionCòn CV-CUDA như một lựa chọn thay thế cho DALI thì sao?#
+
+[CV-CUDA](https://github.com/CVCUDA/CV-CUDA) là một thư viện khác của NVIDIA dành cho xử lý thị giác tăng tốc bằng GPU. Nó cung cấp quyền kiểm soát theo từng toán tử (giống như [OpenCV](https://www.ultralytics.com/glossary/opencv) nhưng trên GPU) thay vì cách tiếp cận theo pipeline của DALI. Hàm `cvcuda.copymakeborder()` của CV-CUDA hỗ trợ đệm rõ ràng cho từng cạnh, giúp việc thực hiện letterbox ở giữa trở nên dễ dàng. Hãy chọn DALI cho các workflow dựa trên pipeline (đặc biệt là với [Triton](/vi/guides/triton-inference-server)), và CV-CUDA cho quyền kiểm soát chi tiết ở cấp độ toán tử trong mã suy luận tùy chỉnh.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/nvidia-dali.md)
+
+[RAraimbekovm2](https://github.com/raimbekovm)[GLglenn-jocher1](https://github.com/glenn-jocher)[ONonuralpszr1](https://github.com/onuralpszr)
+
+Đã tạo tháng trướcĐã cập nhật Hôm qua
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

@@ -1,0 +1,175 @@
+---
+source_url: https://docs.ultralytics.com/ru/yolov5/tutorials/transfer-learning-with-frozen-layers
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/transfer-learning-with-frozen-layers.md)
+
+# Link to this sectionПеренос обучения с замороженными слоями в YOLOv5#
+
+📚 В этом руководстве объясняется, как **заморозить** слои [YOLOv5](https://github.com/ultralytics/yolov5) 🚀 при реализации [переноса обучения](https://www.ultralytics.com/glossary/transfer-learning). Перенос обучения — это мощный метод [машинного обучения (ML)](https://www.ultralytics.com/glossary/machine-learning-ml), который позволяет тебе быстро переобучить модель на новых данных, не обучая всю нейросеть с нуля. Замораживая веса начальных слоев и обновляя параметры только последних слоев, ты можешь значительно сократить потребность в вычислительных ресурсах и время обучения. Однако этот подход может немного повлиять на итоговую [точность](https://www.ultralytics.com/glossary/accuracy) модели.
+
+## Link to this sectionПеред началом#
+
+Сначала клонируй репозиторий YOLOv5 и установи необходимые зависимости, указанные в [`requirements.txt`](https://github.com/ultralytics/yolov5/blob/master/requirements.txt). Убедись, что у тебя установлена среда [**Python >=3.8.0**](https://www.python.org/) с [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). Предобученные [модели](https://github.com/ultralytics/yolov5/tree/master/models) и необходимые [наборы данных](https://github.com/ultralytics/yolov5/tree/master/data) будут загружены автоматически из последнего [релиза](https://github.com/ultralytics/yolov5/releases) YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone repository
+    cd yolov5
+    pip install -r requirements.txt # install dependencies
+
+## Link to this sectionКак работает заморозка слоев#
+
+Когда ты замораживаешь слои в [нейронной сети](https://www.ultralytics.com/glossary/neural-network-nn), ты предотвращаешь обновление их параметров (весов и смещений) в процессе обучения. В PyTorch это достигается путем установки атрибута `requires_grad` тензоров слоя в значение `False`. В результате градиенты для этих слоев не вычисляются во время [обратного распространения ошибки](https://www.ultralytics.com/glossary/backpropagation), что экономит вычислительные ресурсы и память.
+
+Вот как YOLOv5 реализует заморозку слоев в своем [скрипте обучения](https://github.com/ultralytics/yolov5/blob/master/train.py):
+    
+    
+    # Freeze specified layers
+    freeze = [f"model.{x}." for x in range(freeze)]  # Define layers to freeze based on module index
+    for k, v in model.named_parameters():
+        v.requires_grad = True  # Ensure all parameters are initially trainable
+        if any(x in k for x in freeze):
+            print(f"Freezing layer: {k}")
+            v.requires_grad = False  # Disable gradient calculation for frozen layers
+
+## Link to this sectionИзучение архитектуры модели#
+
+Понимание структуры модели YOLOv5 имеет решающее значение для принятия решения о том, какие слои замораживать. Ты можешь изучить названия всех модулей и их параметров, используя следующий фрагмент кода на Python:
+    
+    
+    # Assuming 'model' is your loaded YOLOv5 model instance
+    for name, param in model.named_parameters():
+        print(name)
+    
+    """
+    Example Output:
+    model.0.conv.conv.weight
+    model.0.conv.bn.weight
+    model.0.conv.bn.bias
+    model.1.conv.weight
+    model.1.bn.weight
+    model.1.bn.bias
+    model.2.cv1.conv.weight
+    model.2.cv1.bn.weight
+    ...
+    """
+
+Архитектура YOLOv5 обычно состоит из [backbone](https://www.ultralytics.com/glossary/backbone) (слои 0-9 в стандартных конфигурациях, таких как YOLOv5s/m/l/x), отвечающего за [извлечение признаков](https://www.ultralytics.com/glossary/feature-extraction), и головы (остальные слои), которая выполняет [обнаружение объектов](https://www.ultralytics.com/glossary/object-detection).
+    
+    
+    # Example YOLOv5 v6.0 backbone structure
+    backbone:
+        # [from, number, module, args]
+        - [-1, 1, Conv, [64, 6, 2, 2]]  # Layer 0: Initial convolution (P1/2 stride)
+        - [-1, 1, Conv, [128, 3, 2]] # Layer 1: Downsampling convolution (P2/4 stride)
+        - [-1, 3, C3, [128]]          # Layer 2: C3 module
+        - [-1, 1, Conv, [256, 3, 2]] # Layer 3: Downsampling convolution (P3/8 stride)
+        - [-1, 6, C3, [256]]          # Layer 4: C3 module
+        - [-1, 1, Conv, [512, 3, 2]] # Layer 5: Downsampling convolution (P4/16 stride)
+        - [-1, 9, C3, [512]]          # Layer 6: C3 module
+        - [-1, 1, Conv, [1024, 3, 2]]# Layer 7: Downsampling convolution (P5/32 stride)
+        - [-1, 3, C3, [1024]]         # Layer 8: C3 module
+        - [-1, 1, SPPF, [1024, 5]]    # Layer 9: Spatial Pyramid Pooling Fast
+    
+    # Example YOLOv5 v6.0 head structure
+    head:
+        - [-1, 1, Conv, [512, 1, 1]] # Layer 10
+        - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # Layer 11
+        - [[-1, 6], 1, Concat, [1]] # Layer 12: Concatenate with backbone P4 (from layer 6)
+        - [-1, 3, C3, [512, False]] # Layer 13: C3 module
+        # ... subsequent head layers for feature fusion and detection
+
+## Link to this sectionВарианты заморозки#
+
+Ты можешь управлять тем, какие слои будут заморожены, используя аргумент `--freeze` в команде обучения. Этот аргумент указывает индекс первого _незамороженного_ модуля; у всех модулей перед этим индексом веса будут заморожены. Используй `model.model` (объект `nn.Sequential`), чтобы проверить порядок модулей, если тебе нужно подтвердить, какие индексы соответствуют определенному блоку.
+
+### Link to this sectionЗаморозка только backbone#
+
+Чтобы заморозить весь backbone (слои с 0 по 9), что обычно делается при адаптации модели к новым классам объектов с сохранением общих способностей к извлечению признаков, полученных на большом наборе данных, таком как [COCO](https://docs.ultralytics.com/datasets/detect/coco):
+    
+    
+    python train.py --weights yolov5m.pt --data your_dataset.yaml --freeze 10
+
+Эта стратегия эффективна, когда твой целевой набор данных имеет схожие низкоуровневые визуальные признаки (грани, текстуры) с исходными обучающими данными (например, COCO), но содержит другие категории объектов.
+
+### Link to this sectionЗаморозка всего, кроме финальных слоев обнаружения#
+
+Чтобы заморозить почти всю сеть, оставив обучаемыми только финальные сверточные слои вывода (часть модуля `Detect`, обычно последний модуль, например, модуль 24 в YOLOv5s):
+    
+    
+    python train.py --weights yolov5m.pt --data your_dataset.yaml --freeze 24
+
+Этот подход полезен, когда тебе в основном нужно адаптировать модель под другое количество выходных классов, сохранив подавляющее большинство изученных признаков. Это требует наименьшего количества вычислительных ресурсов для [тонкой настройки](https://www.ultralytics.com/glossary/fine-tuning).
+
+## Link to this sectionСравнение производительности#
+
+Чтобы проиллюстрировать эффекты заморозки слоев, мы обучили YOLOv5m на [наборе данных Pascal VOC](https://docs.ultralytics.com/datasets/detect/voc) в течение 50 [эпох](https://www.ultralytics.com/glossary/epoch), начав с официальных предобученных [весов](https://www.ultralytics.com/glossary/model-weights) COCO (`yolov5m.pt`). Мы сравнили три сценария: обучение всех слоев (`--freeze 0`), заморозка backbone (`--freeze 10`) и заморозка всех слоев, кроме финальных слоев обнаружения (`--freeze 24`).
+    
+    
+    # Example command for training with backbone frozen
+    python train.py --batch 48 --weights yolov5m.pt --data voc.yaml --epochs 50 --cache --img 512 --hyp data/hyps/hyp.VOC.yaml --freeze 10
+
+### Link to this sectionРезультаты точности#
+
+Результаты показывают, что заморозка слоев может значительно ускорить обучение, но может привести к небольшому снижению итогового [mAP (средней точности)](https://www.ultralytics.com/glossary/mean-average-precision-map). Обучение всех слоев обычно дает наилучшую точность, в то время как заморозка большего количества слоев обеспечивает более быстрое обучение ценой потенциально более низкой производительности.
+
+![Результаты mAP50 обучения при сравнении различных стратегий заморозки](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/freezing-training-map50-results.avif) _Сравнение mAP50 во время обучения_
+
+![Результаты mAP50-95 обучения при сравнении различных стратегий заморозки](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/freezing-training-map50-95-results.avif) _Сравнение mAP50-95 во время обучения_
+
+![YOLOv5 frozen layer training performance](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/table-results.avif) *Summary table of performance metrics* 
+
+### Link to this sectionИспользование ресурсов#
+
+Заморозка большего количества слоев существенно снижает требования к памяти [GPU](https://www.ultralytics.com/glossary/gpu-graphics-processing-unit) и общее использование ресурсов. Это делает перенос обучения с замороженными слоями привлекательным вариантом при работе с ограниченными аппаратными ресурсами, позволяя обучать более крупные модели или использовать изображения большего размера, чем это могло бы быть возможно в противном случае.
+
+![Процент выделенной памяти GPU во время обучения](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/training-gpu-memory-allocated-percent.avif) _Выделенная память GPU (%)_
+
+![Процент использования памяти GPU во время обучения](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/training-gpu-memory-utilization-percent.avif) _Использование GPU (%)_
+
+## Link to this sectionКогда использовать заморозку слоев#
+
+Заморозка слоев во время переноса обучения особенно выгодна в нескольких ситуациях:
+
+  1. **Ограниченные вычислительные ресурсы** : Если у тебя есть ограничения по памяти GPU или вычислительной мощности.
+  2. **Маленькие наборы данных** : Когда твой целевой набор данных значительно меньше исходного набора данных для предварительного обучения, заморозка помогает предотвратить [переобучение](https://www.ultralytics.com/glossary/overfitting).
+  3. **Быстрое прототипирование** : Когда тебе нужно быстро адаптировать существующую модель к новой задаче или предметной области для первичной оценки.
+  4. **Схожие предметные области признаков** : Если низкоуровневые признаки в твоем новом наборе данных очень похожи на те, что были в наборе данных, на котором модель была предварительно обучена.
+
+
+
+Узнай больше о нюансах переноса обучения в нашей [статье в глоссарии](https://www.ultralytics.com/glossary/transfer-learning) и рассмотри такие методы, как [настройка гиперпараметров](https://docs.ultralytics.com/guides/hyperparameter-tuning) для оптимизации производительности.
+
+## Link to this sectionПоддерживаемые окружения#
+
+Ultralytics предлагает различные готовые к использованию среды с предустановленными важными зависимостями, такими как [CUDA](https://developer.nvidia.com/cuda), [CuDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/) и [PyTorch](https://pytorch.org/).
+
+  * **Бесплатные GPU ноутбуки** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [Руководство по быстрому запуску в GCP](/ru/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [AWS Quickstart Guide](/ru/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [AzureML Quickstart Guide](/ru/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Docker Quickstart Guide](/ru/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionСтатус проекта#
+
+[![YOLOv5 Continuous Integration Status](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+Этот значок подтверждает, что все тесты непрерывной интеграции (CI) [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) проходят успешно. Эти CI-тесты тщательно оценивают функциональность и производительность YOLOv5 при выполнении ключевых операций: [обучение](https://github.com/ultralytics/yolov5/blob/master/train.py), [валидация](https://github.com/ultralytics/yolov5/blob/master/val.py), [вывод](https://github.com/ultralytics/yolov5/blob/master/detect.py), [экспорт](https://github.com/ultralytics/yolov5/blob/master/export.py) и [бенчмарки](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). Они обеспечивают стабильную и надежную работу на macOS, Windows и Ubuntu, запускаясь автоматически каждые 24 часа и при каждом новом коммите кода.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/transfer-learning-with-frozen-layers.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Создано 3 дня назадОбновлено 3 дня назад
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

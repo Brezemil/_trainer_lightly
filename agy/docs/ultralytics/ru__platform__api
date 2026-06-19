@@ -1,0 +1,2062 @@
+---
+source_url: https://docs.ultralytics.com/ru/platform/api
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+# Link to this sectionСправочник REST API#
+
+[Ultralytics Platform](https://platform.ultralytics.com) предоставляет комплексный REST API для программного доступа к наборам данных, моделям, обучению и развертыванию.
+
+![Обзор API Ultralytics Platform](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/platform/platform-api-overview.avif)
+
+Быстрый старт
+    
+    
+    # List your datasets
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+Интерактивная документация по API
+
+Изучи полный интерактивный справочник по API в [документации Ultralytics Platform API](https://platform.ultralytics.com/api/docs).
+
+## Link to this sectionОбзор API#
+
+API организован вокруг основных ресурсов платформы:
+    
+    
+    graph LR
+        A[API Key] --> B[Datasets]
+        A --> C[Projects]
+        A --> D[Models]
+        A --> E[Deployments]
+        B -->|train on| D
+        C -->|contains| D
+        D -->|deploy to| E
+        D -->|export| F[Exports]
+        B -->|auto-annotate| B
+
+Ресурс| Описание| Основные операции  
+---|---|---  
+[Наборы данных](/ru/platform/data/datasets)| Коллекции размеченных изображений| CRUD, изображения, разметка, экспорт, версии, клонирование  
+[Проекты](/ru/platform/train/projects)| Рабочие области обучения| CRUD, клонирование, значок  
+[Модели](/ru/platform/train/models)| Обученные чекпоинты| CRUD, предсказание, загрузка, клонирование, экспорт  
+[Развертывания](/ru/platform/deploy/endpoints)| Выделенные эндпоинты для вывода| CRUD, запуск/остановка, метрики, логи, состояние  
+[Экспорт](/ru/platform/train/models#export-model)| Задачи преобразования форматов| Создание, статус, загрузка  
+[Обучение](/ru/platform/train/cloud-training)| Облачные задачи обучения на GPU| Запуск, статус, отмена  
+[Биллинг](/ru/platform/account/billing)| Кредиты и подписки| Баланс, пополнение, способы оплаты  
+[Команды](/ru/platform/account/teams)| Коллективная работа в рабочей области| Участники, приглашения, роли  
+  
+## Link to this sectionАутентификация#
+
+API ресурсов, таких как наборы данных, проекты, модели, обучение, экспорт и предсказания, используют аутентификацию по API-ключу. Публичные эндпоинты (просмотр публичных наборов данных, проектов и моделей) поддерживают анонимный доступ на чтение без ключа. Маршруты, ориентированные на учетную запись — включая активность, настройки, команды, биллинг и процедуры GDPR — в настоящее время требуют аутентифицированной сессии браузера и недоступны через API-ключ.
+
+### Link to this sectionПолучение API-ключа#
+
+  1. Перейди в `Settings` > `API Keys`
+  2. Нажми `Create Key`
+  3. Скопируй созданный ключ
+
+
+
+Подробные инструкции см. в разделе [API Keys](/ru/platform/account/api-keys).
+
+### Link to this sectionЗаголовок авторизации#
+
+Добавляй свой API-ключ во все запросы:
+    
+    
+    Authorization: Bearer YOUR_API_KEY
+
+Формат API-ключа
+
+API-ключи имеют формат `ul_`, за которым следуют 40 шестнадцатеричных символов. Храни свой ключ в секрете — никогда не добавляй его в систему контроля версий и не распространяй публично.
+
+### Link to this sectionПример#
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+## Link to this sectionБазовый URL#
+
+Все API-эндпоинты используют:
+
+`https://platform.ultralytics.com/api `
+
+## Link to this sectionОграничения частоты запросов#
+
+API применяет ограничения частоты запросов для каждого API-ключа (скользящее окно, на базе Upstash Redis) для защиты от злоупотреблений при сохранении легитимного использования без ограничений. Анонимный трафик дополнительно защищен средствами контроля злоупотреблений уровня платформы Vercel.
+
+При превышении лимита API возвращает код `429` с метаданными для повторной попытки:
+    
+    
+    Retry-After: 12
+    X-RateLimit-Reset: 2026-02-21T12:34:56.000Z
+
+### Link to this sectionЛимиты на API-ключ#
+
+Ограничения применяются автоматически в зависимости от вызываемого эндпоинта. Для ресурсоемких операций установлены более жесткие лимиты, чтобы предотвратить злоупотребления, в то время как стандартные операции CRUD используют щедрый лимит по умолчанию:
+
+Эндпоинт| Лимит| К чему относится  
+---|---|---  
+**По умолчанию**|  100 запросов/мин| Все эндпоинты, не перечисленные ниже (список, получение, создание, обновление, удаление)  
+**Обучение**|  10 запросов/мин| Запуск облачных задач обучения (`POST /api/training/start`)  
+**Загрузка**|  10 запросов/мин| Загрузка файлов, подписанные URL и импорт наборов данных  
+**Предсказание**|  20 запросов/мин| Совместный вывод модели (`POST /api/models/{id}/predict`)  
+**Экспорт**|  20 запросов/мин| Экспорт форматов моделей (`POST /api/exports`), экспорт NDJSON наборов данных и создание версий  
+**Скачивание**|  30 запросов/мин| Скачивание файлов весов моделей (`GET /api/models/{id}/files`)  
+**Выделенные**| **Безлимитно**| [Выделенные эндпоинты](/ru/platform/deploy/endpoints) — твой собственный сервис, без ограничений API  
+  
+Каждая категория имеет независимый счетчик для каждого API-ключа. Например, выполнение 20 запросов предсказания не влияет на твой лимит в 100 запросов/мин по умолчанию.
+
+### Link to this sectionВыделенные эндпоинты (безлимитные)#
+
+[Выделенные эндпоинты](/ru/platform/deploy/endpoints) **не подпадают под ограничения частоты запросов API-ключа**. Когда ты разворачиваешь модель на выделенном эндпоинте, запросы к этому URL (например, `https://predict-abc123.run.app/predict`) поступают напрямую к твоему сервису без ограничений со стороны платформы. Ты оплачиваешь вычислительные ресурсы, поэтому получаешь пропускную способность, исходя из конфигурации твоего выделенного сервиса, а не общих лимитов API.
+
+Обработка ограничений частоты запросов
+
+Когда ты получаешь код состояния `429`, подожди `Retry-After` (или до `X-RateLimit-Reset`), прежде чем повторять запрос. Смотри FAQ по ограничениям частоты запросов для реализации экспоненциальной задержки.
+
+## Link to this sectionФормат ответа#
+
+### Link to this sectionУспешные ответы#
+
+Ответы возвращают JSON с полями, специфичными для ресурса:
+    
+    
+    {
+        "datasets": [...],
+        "total": 100
+    }
+
+### Link to this sectionОтветы об ошибках#
+    
+    
+    {
+        "error": "Dataset not found"
+    }
+
+HTTP-статус| Значение  
+---|---  
+`200`| Успешно  
+`201`| Создано  
+`400`| Неверный запрос  
+`401`| Требуется аутентификация  
+`403`| Недостаточно прав  
+`404`| Ресурс не найден  
+`409`| Конфликт (дубликат)  
+`429`| Превышен лимит запросов  
+`500`| Ошибка сервера  
+  
+* * *
+
+## Link to this sectionAPI наборов данных#
+
+Создавай, просматривай и управляй размеченными наборами данных изображений для обучения моделей YOLO. Смотри [документацию по наборам данных](/ru/platform/data/datasets).
+
+### Link to this sectionСписок наборов данных#
+    
+    
+    GET /api/datasets
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`username`| string| Фильтр по имени пользователя  
+`slug`| string| Получить отдельный набор данных по slug  
+`limit`| int| Элементов на странице (по умолчанию: 1000, макс: 1000)  
+`owner`| string| Имя пользователя владельца рабочей области  
+      
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=10"
+
+**Ответ:**
+    
+    
+    {
+        "datasets": [
+            {
+                "_id": "dataset_abc123",
+                "name": "my-dataset",
+                "slug": "my-dataset",
+                "task": "detect",
+                "imageCount": 1000,
+                "classCount": 10,
+                "classNames": ["person", "car"],
+                "visibility": "private",
+                "username": "johndoe",
+                "starCount": 3,
+                "isStarred": false,
+                "sampleImages": [
+                    {
+                        "url": "https://storage.example.com/...",
+                        "width": 1920,
+                        "height": 1080,
+                        "labels": [{ "classId": 0, "bbox": [0.5, 0.4, 0.3, 0.6] }]
+                    }
+                ],
+                "createdAt": "2024-01-15T10:00:00Z",
+                "updatedAt": "2024-01-16T08:30:00Z"
+            }
+        ],
+        "total": 1,
+        "region": "us"
+    }
+
+### Link to this sectionПолучить набор данных#
+    
+    
+    GET /api/datasets/{datasetId}
+
+Возвращает полные данные набора, включая метаданные, имена классов и количество разделений.
+
+### Link to this sectionСоздать набор данных#
+    
+    
+    POST /api/datasets
+
+**Тело запроса:**
+    
+    
+    {
+        "slug": "my-dataset",
+        "name": "My Dataset",
+        "task": "detect",
+        "description": "A custom detection dataset",
+        "visibility": "private",
+        "classNames": ["person", "car"]
+    }
+
+Поддерживаемые задачи
+
+Допустимые значения `task`: `detect`, `segment`, `semantic`, `classify`, `pose`, `obb`.
+
+### Link to this sectionОбновить набор данных#
+    
+    
+    PATCH /api/datasets/{datasetId}
+
+**Тело запроса (частичное обновление):**
+    
+    
+    {
+        "name": "Updated Name",
+        "description": "New description",
+        "visibility": "public"
+    }
+
+### Link to this sectionЗначок набора данных#
+
+Загрузи значок набора данных (multipart form с файлом изображения):
+    
+    
+    POST /api/datasets/{datasetId}/icon
+
+Удали значок набора данных:
+    
+    
+    DELETE /api/datasets/{datasetId}/icon
+
+Для обоих требуется активный сеанс браузера платформы — недоступно через API-ключ.
+
+### Link to this sectionУдалить набор данных#
+    
+    
+    DELETE /api/datasets/{datasetId}
+
+Мягкое удаление набора данных (перемещается в [корзину](/ru/platform/account/trash), можно восстановить в течение 30 дней).
+
+### Link to this sectionКлонирование набора данных#
+    
+    
+    POST /api/datasets/{datasetId}/clone
+
+Создает копию набора данных со всеми изображениями и метками. Клонировать можно только публичные, принадлежащие тебе или редактируемые наборы данных рабочей области. Требуется активная сессия браузера на платформе — недоступно через API-ключ.
+
+**Тело запроса (все поля необязательны):**
+    
+    
+    {
+        "name": "cloned-dataset",
+        "description": "My cloned dataset",
+        "visibility": "private",
+        "owner": "team-username"
+    }
+
+### Link to this sectionЭкспортировать набор данных#
+    
+    
+    GET /api/datasets/{datasetId}/export
+
+Возвращает JSON-ответ с подписанной URL-ссылкой для скачивания последней версии экспорта набора данных.
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`v`| integer| Номер версии (начинается с 1). Если пропущено, возвращает последнюю (некэшированную) версию экспорта.  
+  
+**Ответ:**
+    
+    
+    {
+        "downloadUrl": "https://storage.example.com/export.ndjson?signed=...",
+        "cached": true
+    }
+
+### Link to this sectionСоздать версию набора данных#
+    
+    
+    POST /api/datasets/{datasetId}/export
+
+Создай новый нумерованный снимок версии набора данных. Только для владельца. Версия фиксирует текущее количество изображений, классов, аннотаций и распределение по разбиениям, затем генерирует и сохраняет неизменяемый NDJSON-экспорт.
+
+**Тело запроса:**
+    
+    
+    {
+        "description": "Added 500 training images"
+    }
+
+Все поля необязательны. Поле `description` — это пользовательская метка для версии.
+
+**Ответ:**
+    
+    
+    {
+        "version": 3,
+        "downloadUrl": "https://storage.example.com/v3.ndjson?signed=..."
+    }
+
+### Link to this sectionОбновить описание версии#
+    
+    
+    PATCH /api/datasets/{datasetId}/export
+
+Обнови описание существующей версии. Только для владельца.
+
+**Тело запроса:**
+    
+    
+    {
+        "version": 2,
+        "description": "Fixed mislabeled classes"
+    }
+
+**Ответ:**
+    
+    
+    {
+        "ok": true
+    }
+
+### Link to this sectionПолучить статистику классов#
+    
+    
+    GET /api/datasets/{datasetId}/class-stats
+
+Возвращает распределение классов, тепловую карту местоположения и статистику размеров. Результаты кэшируются на срок до 5 минут.
+
+**Ответ:**
+    
+    
+    {
+        "classes": [{ "classId": 0, "count": 1500, "imageCount": 450 }],
+        "imageStats": {
+            "widthHistogram": [{ "bin": 640, "count": 120 }],
+            "heightHistogram": [{ "bin": 480, "count": 95 }],
+            "pointsHistogram": [{ "bin": 4, "count": 200 }]
+        },
+        "locationHeatmap": {
+            "bins": [
+                [5, 10],
+                [8, 3]
+            ],
+            "maxCount": 50
+        },
+        "dimensionHeatmap": {
+            "bins": [
+                [2, 5],
+                [3, 1]
+            ],
+            "maxCount": 12,
+            "minWidth": 10,
+            "maxWidth": 1920,
+            "minHeight": 10,
+            "maxHeight": 1080
+        },
+        "classNames": ["person", "car", "dog"],
+        "cached": true,
+        "sampled": false,
+        "sampleSize": 1000
+    }
+
+### Link to this sectionУправление классами#
+
+Объединение классов (переназначение аннотаций из исходных классов в целевой, затем удаление исходных):
+    
+    
+    POST /api/datasets/{datasetId}/classes/merge
+
+Удаление классов:
+    
+    
+    POST /api/datasets/{datasetId}/classes/delete
+
+### Link to this sectionПерераспределение выборок#
+    
+    
+    POST /api/datasets/{datasetId}/splits/redistribute
+
+Переназначение изображений между выборками train/val/test. Все три операции требуют активной сессии браузера на платформе — недоступно через API-ключ.
+
+### Link to this sectionЭмбеддинги набора данных#
+    
+    
+    GET /api/datasets/{datasetId}/embeddings
+    POST /api/datasets/{datasetId}/embeddings
+    DELETE /api/datasets/{datasetId}/embeddings
+
+GET возвращает текущую сводку анализа UMAP и статус активного задания; POST ставит задание анализа эмбеддингов в очередь; DELETE отменяет активное задание.
+
+### Link to this sectionКластеризация изображений#
+    
+    
+    GET /api/datasets/{datasetId}/images/clustering
+
+Возвращает 2D-макет UMAP и метаданные для каждого изображения для представления кластеризации (с разбивкой на страницы и ограничением скорости запросов).
+
+### Link to this sectionПолучить модели, обученные на наборе данных#
+    
+    
+    GET /api/datasets/{datasetId}/models
+
+Возвращает модели, которые были обучены с использованием этого набора данных.
+
+**Ответ:**
+    
+    
+    {
+        "models": [
+            {
+                "_id": "model_abc123",
+                "name": "experiment-1",
+                "slug": "experiment-1",
+                "status": "completed",
+                "task": "detect",
+                "epochs": 100,
+                "bestEpoch": 87,
+                "projectId": "project_xyz",
+                "projectSlug": "my-project",
+                "projectIconColor": "#3b82f6",
+                "projectIconLetter": "M",
+                "username": "johndoe",
+                "startedAt": "2024-01-14T22:00:00Z",
+                "completedAt": "2024-01-15T10:00:00Z",
+                "createdAt": "2024-01-14T21:55:00Z",
+                "metrics": {
+                    "mAP50": 0.85,
+                    "mAP50-95": 0.72,
+                    "precision": 0.88,
+                    "recall": 0.81
+                }
+            }
+        ],
+        "count": 1
+    }
+
+### Link to this sectionАвтоматическая разметка набора данных#
+    
+    
+    POST /api/datasets/{datasetId}/predict
+
+Запусти YOLO-вывод на изображениях набора данных для автоматической генерации аннотаций. Использует выбранную модель для предсказания меток для неразмеченных изображений.
+
+**Тело запроса:**
+
+Поле| Тип| Обязательно| Описание  
+---|---|---|---  
+`imageHash`| string| Да| Хеш изображения для разметки  
+`modelId`| string| Нет| Модель для использования при инференсе в формате `ul://` URI (например, `ul://username/project/model`). Если не указано, используется модель по умолчанию, специфичная для задачи набора данных.  
+`confidence`| float| Нет| Порог уверенности (по умолчанию: 0.25)  
+`iou`| float| Нет| Порог IoU (по умолчанию: 0.7)  
+  
+### Link to this sectionЗагрузка набора данных#
+    
+    
+    POST /api/datasets/ingest
+
+Создай задание на загрузку набора данных для обработки загруженных ZIP или TAR файлов, включая `.tar.gz` и `.tgz`, содержащих изображения и метки.
+
+Тело запроса должно содержать только один из параметров: `sessionId` (сессия загрузки архива) или `sourceUrl` (URL удаленного ZIP, TAR, TAR.GZ, TGZ или NDJSON), плюс необязательный `targetSplit` (`train`, `val` или `test`) для переопределения структуры разбивки архива.
+    
+    
+    graph LR
+        A[Upload Archive] --> B[POST /api/datasets/ingest]
+        B --> C[Process Archive]
+        C --> D[Extract images]
+        C --> E[Parse labels]
+        C --> F[Generate thumbnails]
+        D & E & F --> G[Dataset ready]
+
+### Link to this sectionИзображения набора данных#
+
+#### Link to this sectionСписок изображений#
+    
+    
+    GET /api/datasets/{datasetId}/images
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`split`| string| Фильтр по разбиению: `train`, `val`, `test`  
+`offset`| int| Смещение пагинации (по умолчанию: 0)  
+`limit`| int| Элементов на странице (по умолчанию: 50, макс: 5000)  
+`sort`| string| Порядок сортировки: `newest`, `oldest`, `name-asc`, `name-desc`, `height-asc`, `height-desc`, `width-asc`, `width-desc`, `size-asc`, `size-desc`, `labels-asc`, `labels-desc` (некоторые отключены для наборов данных >100 тыс. изображений)  
+`hasLabel`| string| Фильтр по статусу наличия меток (`true` или `false`)  
+`hasError`| string| Фильтр по статусу наличия ошибки (`true` или `false`)  
+`search`| string| Поиск по имени файла или хешу изображения  
+`classIds`| string| Идентификаторы классов, разделенные запятыми; возвращает изображения, содержащие любой из указанных классов.  
+`includeThumbnails`| string| Включить подписанные URL миниатюр (по умолчанию: `true`)  
+`includeImageUrls`| string| Включить подписанные URL полных изображений (по умолчанию: `false`)  
+  
+#### Link to this sectionПолучить подписанные URL изображений#
+    
+    
+    POST /api/datasets/{datasetId}/images/urls
+
+Получи подписанные URL для пакета хешей изображений (для отображения в браузере).
+
+#### Link to this sectionУдалить изображение#
+    
+    
+    DELETE /api/datasets/{datasetId}/images/{hash}
+
+#### Link to this sectionПолучить метки изображения#
+    
+    
+    GET /api/datasets/{datasetId}/images/{hash}/labels
+
+Возвращает аннотации и имена классов для конкретного изображения.
+
+#### Link to this sectionОбновить метки изображения#
+    
+    
+    PUT /api/datasets/{datasetId}/images/{hash}/labels
+
+**Тело запроса:**
+    
+    
+    {
+        "labels": [
+            { "classId": 0, "bbox": [0.5, 0.5, 0.2, 0.3] },
+            { "classId": 1, "segments": [0.1, 0.2, 0.3, 0.2, 0.2, 0.4] }
+        ]
+    }
+
+Формат координат
+
+Координаты меток используют нормализованные значения YOLO от 0 до 1. Ограничивающие рамки (BBox) используют `[x_center, y_center, width, height]`. Метки сегментации используют `segments`, сплющенный список вершин многоугольника `[x1, y1, x2, y2, ...]`.
+
+#### Link to this sectionМассовые операции с изображениями#
+
+Перемещай изображения между разбиениями (train/val/test) внутри набора данных:
+    
+    
+    PATCH /api/datasets/{datasetId}/images/bulk
+
+Массовое удаление изображений:
+    
+    
+    DELETE /api/datasets/{datasetId}/images/bulk
+
+* * *
+
+## Link to this sectionAPI проектов#
+
+Организуй свои модели по проектам. Каждая модель принадлежит одному проекту. Смотри [документацию по проектам](/ru/platform/train/projects).
+
+### Link to this sectionСписок проектов#
+    
+    
+    GET /api/projects
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`username`| string| Фильтр по имени пользователя  
+`limit`| int| Элементов на странице  
+`owner`| string| Имя пользователя владельца рабочей области  
+  
+### Link to this sectionПолучить проект#
+    
+    
+    GET /api/projects/{projectId}
+
+### Link to this sectionСоздать проект#
+    
+    
+    POST /api/projects
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"name": "my-project", "slug": "my-project", "description": "Detection experiments"}' \
+      https://platform.ultralytics.com/api/projects
+
+### Link to this sectionОбновить проект#
+    
+    
+    PATCH /api/projects/{projectId}
+
+### Link to this sectionУдалить проект#
+    
+    
+    DELETE /api/projects/{projectId}
+
+Мягкое удаление проекта (перемещается в [корзину](/ru/platform/account/trash)).
+
+### Link to this sectionКлонировать проект#
+    
+    
+    POST /api/projects/{projectId}/clone
+
+Клонирует публичный проект (со всеми его моделями) в твою рабочую область. Требуется активная сессия браузера платформы — недоступно через API-ключ.
+
+### Link to this sectionЗначок проекта#
+
+Загрузи значок проекта (multipart form с файлом изображения):
+    
+    
+    POST /api/projects/{projectId}/icon
+
+Удали значок проекта:
+    
+    
+    DELETE /api/projects/{projectId}/icon
+
+Для обоих требуется активный сеанс браузера платформы — недоступно через API-ключ.
+
+* * *
+
+## Link to this sectionAPI моделей#
+
+Управляй обученными моделями YOLO: просматривай метрики, скачивай веса, запускай инференс и экспортируй в другие форматы. См. [документацию по моделям](/ru/platform/train/models).
+
+### Link to this sectionСписок моделей#
+    
+    
+    GET /api/models
+
+**Параметры запроса:**
+
+Параметр| Тип| Обязательно| Описание  
+---|---|---|---  
+`projectId`| string| Да| ID проекта (обязательно)  
+`fields`| string| Нет| Набор полей: `summary`, `charts`  
+`ids`| string| Нет| ID моделей через запятую  
+`limit`| int| Нет| Макс. количество результатов (по умолчанию 20, макс. 100)  
+  
+### Link to this sectionСписок завершенных моделей#
+    
+    
+    GET /api/models/completed
+
+Возвращает модели, обучение которых завершено (для использования в селекторах моделей и развертывании).
+
+### Link to this sectionПолучить модель#
+    
+    
+    GET /api/models/{modelId}
+
+### Link to this sectionСоздать модель#
+    
+    
+    POST /api/models
+
+**JSON тело:**
+
+Поле| Тип| Обязательно| Описание  
+---|---|---|---  
+`projectId`| string| Да| ID целевого проекта  
+`slug`| string| Нет| URL-слаг (строчные буквы, цифры и дефисы)  
+`name`| string| Нет| Отображаемое имя (макс. 100 символов)  
+`description`| string| Нет| Описание модели (макс. 1000 символов)  
+`task`| string| Нет| Тип задачи (detect, segment, semantic, pose, obb, classify)  
+  
+Загрузка файла модели
+
+Загрузка `.pt` файлов моделей выполняется отдельно. Используй интерфейс платформы для перетаскивания файлов моделей в проект.
+
+### Link to this sectionОбновить модель#
+    
+    
+    PATCH /api/models/{modelId}
+
+### Link to this sectionУдалить модель#
+    
+    
+    DELETE /api/models/{modelId}
+
+### Link to this sectionСкачать файлы модели#
+    
+    
+    GET /api/models/{modelId}/files
+
+Возвращает подписанные URL-адреса для скачивания файлов модели.
+
+### Link to this sectionКлонирование модели#
+    
+    
+    POST /api/models/{modelId}/clone
+
+Клонируй публичную модель в один из своих проектов. Требуется активный сеанс браузера платформы — недоступно через API-ключ.
+
+**Тело запроса:**
+    
+    
+    {
+        "targetProjectSlug": "my-project",
+        "modelName": "cloned-model",
+        "description": "Cloned from public model",
+        "owner": "team-username"
+    }
+
+Поле| Тип| Обязательно| Описание  
+---|---|---|---  
+`targetProjectSlug`| string| Да| Слаг целевого проекта  
+`modelName`| string| Нет| Имя для клонированной модели  
+`description`| string| Нет| Описание модели  
+`owner`| string| Нет| Имя пользователя команды (для клонирования рабочей области)  
+  
+### Link to this sectionОтслеживать скачивания#
+    
+    
+    POST /api/models/{modelId}/track-download
+
+Отслеживай аналитику скачиваний модели.
+
+### Link to this sectionЗапусти вывод#
+    
+    
+    POST /api/models/{modelId}/predict
+
+**Multipart Form:**
+
+Поле| Тип| Описание  
+---|---|---  
+`file`| файл| Файл изображения или видео (например, JPG, PNG, WebP, BMP, TIFF; MP4, MOV, AVI)  
+`conf`| float| Порог уверенности (по умолчанию: 0.25)  
+`iou`| float| Порог IoU (по умолчанию: 0.7)  
+`imgsz`| int| Размер изображения в пикселях (по умолчанию: 640)  
+`source`| string| URL изображения или изображение в формате base64 (альтернатива `file`)  
+  
+Максимальный размер загрузки составляет 100 МБ.
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -F "file=@image.jpg" \
+      -F "conf=0.5" \
+      https://platform.ultralytics.com/api/models/MODEL_ID/predict
+
+**Ответ:**
+    
+    
+    {
+        "images": [
+            {
+                "shape": [1080, 1920],
+                "results": [
+                    {
+                        "class": 0,
+                        "name": "person",
+                        "confidence": 0.92,
+                        "box": { "x1": 100, "y1": 50, "x2": 300, "y2": 400 }
+                    }
+                ]
+            }
+        ],
+        "metadata": {
+            "imageCount": 1
+        }
+    }
+
+### Link to this sectionПолучить токен предсказания#
+    
+    
+    POST /api/models/{modelId}/predict/token
+
+Только сеанс браузера
+
+Этот маршрут используется внутри приложения на вкладке Predict для выдачи кратковременных токенов инференса для прямых вызовов браузер → predict-service (меньшая задержка, отсутствие API-прокси). Для этого требуется активный сеанс браузера платформы; недоступно через API-ключ. Для программного инференса вызывай `POST /api/models/{modelId}/predict` со своим API-ключом.
+
+### Link to this sectionПрогрев модели#
+    
+    
+    POST /api/models/{modelId}/predict/warmup
+
+Только сеанс браузера
+
+Маршрут прогрева используется вкладкой Predict для предварительной загрузки весов модели в службу предсказаний перед первым инференсом пользователя. Требуется активный сеанс браузера платформы; недоступно через API-ключ.
+
+* * *
+
+## Link to this sectionAPI обучения#
+
+Запускай обучение YOLO на облачных GPU (26 типов GPU от RTX 2000 Ada до B300) и отслеживай прогресс в режиме реального времени. Смотри [документацию по облачному обучению](/ru/platform/train/cloud-training).
+    
+    
+    graph LR
+        A[POST /training/start] --> B[Job Created]
+        B --> C{Training}
+        C -->|progress| D[GET /models/id/training]
+        C -->|cancel| E[DELETE /models/id/training]
+        C -->|complete| F[Model Ready]
+        F --> G[Deploy or Export]
+
+### Link to this sectionНачать обучение#
+    
+    
+    POST /api/training/start
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "modelId": "MODEL_ID",
+        "projectId": "PROJECT_ID",
+        "gpuType": "rtx-4090",
+        "trainArgs": {
+          "model": "yolo26n.pt",
+          "data": "ul://username/datasets/my-dataset",
+          "epochs": 100,
+          "imgsz": 640,
+          "batch": 16
+        }
+      }' \
+      https://platform.ultralytics.com/api/training/start
+
+Типы GPU
+
+Доступные типы GPU включают `rtx-4090`, `a100-80gb-pcie`, `a100-80gb-sxm`, `h100-sxm`, `rtx-pro-6000`, `b300` и другие. См. [Облачное обучение](/ru/platform/train/cloud-training) для получения полного списка с ценами.
+
+### Link to this sectionПолучить доступность GPU#
+    
+    
+    GET /api/training/gpu-availability
+
+Возвращает текущий статус наличия GPU (`High`, `Medium`, `Low` или `null`), отсортированный по ID типа GPU. Публично, аутентификация не требуется; кэшируется на 5 минут.
+
+### Link to this sectionПолучить статус обучения#
+    
+    
+    GET /api/models/{modelId}/training
+
+Возвращает текущий статус задания обучения, метрики и прогресс модели. Публичные проекты доступны анонимно; для приватных проектов требуется активный сеанс браузера платформы (этот маршрут не принимает аутентификацию по API-ключу).
+
+### Link to this sectionОтменить обучение#
+    
+    
+    DELETE /api/models/{modelId}/training
+
+Завершает запущенный вычислительный экземпляр и помечает задание как отмененное. Требуется активный сеанс браузера платформы — недоступно через API-ключ.
+
+* * *
+
+## Link to this sectionAPI развертываний#
+
+Развертывай модели на выделенных эндпоинтах инференса с проверками работоспособности и мониторингом. Новые развертывания по умолчанию используют масштабирование до нуля, API принимает необязательный объект `resources`. См. [документацию по эндпоинтам](/ru/platform/deploy/endpoints).
+
+Поддержка API-ключей по маршрутам
+
+Только `GET /api/deployments`, `POST /api/deployments`, `GET /api/deployments/{deploymentId}` и `DELETE /api/deployments/{deploymentId}` поддерживают аутентификацию по API-ключу. Подмаршруты `predict`, `health`, `logs`, `metrics`, `start` и `stop` требуют активного сеанса браузера платформы — это удобные прокси для UI приложения. Для программного инференса вызывай URL эндпоинта развертывания (например, `https://predict-abc123.run.app/predict`) напрямую со своим API-ключом. [Выделенные эндпоинты](/ru/platform/deploy/endpoints#using-endpoints) не имеют ограничений по частоте запросов.
+    
+    
+    graph LR
+        A[Create] --> B[Deploying]
+        B --> C[Ready]
+        C -->|stop| D[Stopped]
+        D -->|start| C
+        C -->|delete| E[Deleted]
+        D -->|delete| E
+        C -->|predict| F[Inference Results]
+
+### Link to this sectionСписок развертываний#
+    
+    
+    GET /api/deployments
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`modelId`| string| Фильтр по модели  
+`status`| string| Фильтр по статусу  
+`limit`| int| Макс. количество результатов (по умолчанию: 20, макс.: 100)  
+`owner`| string| Имя пользователя владельца рабочей области  
+  
+### Link to this sectionСоздать развертывание#
+    
+    
+    POST /api/deployments
+
+**Тело запроса:**
+    
+    
+    {
+        "modelId": "model_abc123",
+        "name": "my-deployment",
+        "region": "us-central1",
+        "resources": {
+            "cpu": 1,
+            "memoryGi": 2,
+            "minInstances": 0,
+            "maxInstances": 1
+        }
+    }
+
+Поле| Тип| Обязательно| Описание  
+---|---|---|---  
+`modelId`| string| Да| ID модели для развертывания  
+`name`| string| Да| Имя развертывания  
+`region`| string| Да| Регион развертывания  
+`resources`| объект| Нет| Конфигурация ресурсов (`cpu`, `memoryGi`, `minInstances`, `maxInstances`)  
+  
+Создает выделенный эндпоинт инференса в указанном регионе. Эндпоинт глобально доступен через уникальный URL.
+
+Ресурсы по умолчанию
+
+Диалоговое окно развертывания в настоящее время отправляет фиксированные значения по умолчанию: `cpu=1`, `memoryGi=2`, `minInstances=0` и `maxInstances=1`. Маршрут API принимает объект `resources`, но лимиты плана ограничивают `minInstances` на уровне `0`, а `maxInstances` на уровне `1`.
+
+Выбор региона
+
+Выбирай регион, ближайший к твоим пользователям, для наименьшей задержки. UI платформы показывает оценки задержки для всех 43 доступных регионов.
+
+### Link to this sectionПолучить развертывание#
+    
+    
+    GET /api/deployments/{deploymentId}
+
+### Link to this sectionУдалить развертывание#
+    
+    
+    DELETE /api/deployments/{deploymentId}
+
+### Link to this sectionЗапустить развертывание#
+    
+    
+    POST /api/deployments/{deploymentId}/start
+
+Возобновить остановленное развертывание.
+
+### Link to this sectionОстановить развертывание#
+    
+    
+    POST /api/deployments/{deploymentId}/stop
+
+Приостановить запущенное развертывание (останавливает биллинг).
+
+### Link to this sectionПроверка работоспособности#
+    
+    
+    GET /api/deployments/{deploymentId}/health
+
+Возвращает статус работоспособности эндпоинта развертывания.
+
+### Link to this sectionЗапустить инференс на развертывании#
+    
+    
+    POST /api/deployments/{deploymentId}/predict
+
+Отправь изображение напрямую на эндпоинт развертывания для инференса. Функционально эквивалентно предсказанию модели, но маршрутизируется через выделенный эндпоинт для уменьшения задержки.
+
+**Multipart Form:**
+
+Поле| Тип| Описание  
+---|---|---  
+`file`| файл| Файл изображения (JPEG, PNG, WebP)  
+`conf`| float| Порог уверенности (по умолчанию: 0.25)  
+`iou`| float| Порог IoU (по умолчанию: 0.7)  
+`imgsz`| int| Размер изображения в пикселях (по умолчанию: 640)  
+  
+### Link to this sectionПолучить метрики#
+    
+    
+    GET /api/deployments/{deploymentId}/metrics
+
+Возвращает количество запросов, задержку и показатели частоты ошибок с данными спарклайна.
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`range`| string| Временной диапазон: `1h`, `6h`, `24h` (по умолчанию), `7d`, `30d`  
+`sparkline`| string| Установи `true` для оптимизированных данных спарклайна для вида панели мониторинга  
+  
+### Link to this sectionПолучить логи#
+    
+    
+    GET /api/deployments/{deploymentId}/logs
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`severity`| string| Фильтр через запятую: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`  
+`limit`| int| Количество записей (по умолчанию: 50, макс.: 200)  
+`pageToken`| string| Токен пагинации из предыдущего ответа  
+  
+* * *
+
+## Link to this sectionAPI мониторинга#
+
+Только сеанс браузера
+
+`GET /api/monitoring` — это маршрут только для пользовательского интерфейса, требующий активного сеанса браузера на платформе. Он не поддерживает аутентификацию по API-ключу. Получай метрики отдельных развертываний через маршруты для конкретных развертываний (которые также доступны только через сеанс браузера) или используй [Cloud Monitoring exports](https://cloud.google.com/monitoring) в развернутой службе Cloud Run для программного доступа.
+
+### Link to this sectionАгрегированные метрики#
+    
+    
+    GET /api/monitoring
+
+Возвращает агрегированные метрики по всем развертываниям пользователя: общее количество запросов, активные развертывания, частоту ошибок и среднюю задержку.
+
+* * *
+
+## Link to this sectionAPI экспорта#
+
+Конвертируй модели в оптимизированные форматы, такие как ONNX, TensorRT, CoreML и TFLite для развертывания на периферийных устройствах. См. [документацию по развертыванию](/ru/platform/deploy).
+
+### Link to this sectionСписок экспортов#
+    
+    
+    GET /api/exports
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`modelId`| string| ID модели (обязательно)  
+`status`| string| Фильтр по статусу  
+`limit`| int| Макс. количество результатов (по умолчанию: 20, макс.: 100)  
+  
+### Link to this sectionСоздать экспорт#
+    
+    
+    POST /api/exports
+
+**Тело запроса:**
+
+Поле| Тип| Обязательно| Описание  
+---|---|---|---  
+`modelId`| string| Да| ID исходной модели  
+`format`| string| Да| Формат экспорта (см. таблицу ниже)  
+`gpuType`| string| Условный параметр| Обязательно, если `format` имеет значение `engine` (TensorRT)  
+`args`| объект| Нет| Аргументы экспорта (`imgsz`, `half`, `dynamic` и т. д.)  
+      
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"modelId": "MODEL_ID", "format": "onnx"}' \
+      https://platform.ultralytics.com/api/exports
+
+**Поддерживаемые форматы:**
+
+Формат| Значение| Вариант использования  
+---|---|---  
+ONNX| `onnx`| Кроссплатформенный инференс  
+TorchScript| `torchscript`| Развертывание PyTorch  
+OpenVINO| `openvino`| Оборудование Intel  
+TensorRT| `engine`| Оптимизация для NVIDIA GPU  
+CoreML| `coreml`| Устройства Apple  
+TFLite| `tflite`| Мобильные и встроенные системы  
+TF SavedModel| `saved_model`| TensorFlow Serving  
+TF GraphDef| `pb`| Замороженный граф TensorFlow  
+PaddlePaddle| `paddle`| Baidu PaddlePaddle  
+NCNN| `ncnn`| Мобильная нейронная сеть  
+Edge TPU| `edgetpu`| Устройства Google Coral  
+TF.js| `tfjs`| Инференс в браузере  
+MNN| `mnn`| Мобильный инференс Alibaba  
+RKNN| `rknn`| Rockchip NPU  
+Qualcomm| `qnn`| Qualcomm Snapdragon NPU  
+IMX| `imx`| Сенсор Sony IMX500  
+Axelera| `axelera`| Ускорители Axelera AI  
+ExecuTorch| `executorch`| Среда выполнения Meta ExecuTorch  
+DeepX| `deepx`| Ускорители DeepX NPU  
+  
+### Link to this sectionПолучить статус экспорта#
+    
+    
+    GET /api/exports/{exportId}
+
+### Link to this sectionОтменить экспорт#
+    
+    
+    DELETE /api/exports/{exportId}
+
+### Link to this sectionОтследить скачивание экспорта#
+    
+    
+    POST /api/exports/{exportId}/track-download
+
+* * *
+
+## Link to this sectionAPI активности#
+
+Просматривай ленту недавних действий в своем аккаунте — запуски обучения, загрузки и многое другое. См. [документацию по активности](/ru/platform/account/activity).
+
+Только для сеанса браузера
+
+Маршруты активности работают на основе запросов с аутентификацией через браузер из пользовательского интерфейса платформы. Они не представлены как публичный API, не принимают аутентификацию по API-ключу, а описание маршрутов ниже приведено только для справки. Используй ленту активности в интерфейсе платформы, чтобы просматривать, помечать или архивировать события.
+
+### Link to this sectionСписок активности#
+    
+    
+    GET /api/activity
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`limit`| int| Размер страницы (по умолчанию: 20, макс: 100)  
+`page`| int| Номер страницы (по умолчанию: 1)  
+`archived`| boolean| `true` для вкладки «Архив», `false` для «Входящие»  
+`search`| string| Поиск по полям событий без учета регистра  
+  
+### Link to this sectionПометить события как просмотренные#
+    
+    
+    POST /api/activity/mark-seen
+
+**Тело запроса:**
+    
+    
+    {
+        "all": true
+    }
+
+Или передай конкретные ID:
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"]
+    }
+
+### Link to this sectionАрхивировать события#
+    
+    
+    POST /api/activity/archive
+
+**Тело запроса:**
+    
+    
+    {
+        "all": true,
+        "archive": true
+    }
+
+Или передай конкретные ID:
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"],
+        "archive": false
+    }
+
+* * *
+
+## Link to this sectionAPI корзины#
+
+Просматривай и восстанавливай удаленные элементы. Элементы окончательно удаляются через 30 дней. См. [документацию по корзине](/ru/platform/account/trash).
+
+### Link to this sectionСписок корзины#
+    
+    
+    GET /api/trash
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`type`| string| Фильтр: `all`, `project`, `dataset`, `model`  
+`page`| int| Номер страницы (по умолчанию: 1)  
+`limit`| int| Элементов на странице (по умолчанию: 50, макс: 200)  
+`owner`| string| Имя пользователя владельца рабочей области  
+  
+### Link to this sectionВосстановить элемент#
+    
+    
+    POST /api/trash
+
+**Тело запроса:**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+### Link to this sectionБезвозвратно удалить элемент#
+    
+    
+    DELETE /api/trash
+
+**Тело запроса:**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+Необратимо
+
+Безвозвратное удаление нельзя отменить. Ресурс и все связанные с ним данные будут удалены.
+
+### Link to this sectionОчистить корзину#
+    
+    
+    DELETE /api/trash/empty
+
+Безвозвратно удаляет все элементы в корзине.
+
+Аутентификация
+
+`DELETE /api/trash/empty` требует сеанса браузера с аутентификацией и не доступен через API-ключ. Используй кнопку **Очистить корзину** в интерфейсе.
+
+* * *
+
+## Link to this sectionAPI биллинга#
+
+Проверяй свой баланс кредитов, покупай кредиты, просматривай историю транзакций и настраивай автоматическое пополнение. См. [документацию по биллингу](/ru/platform/account/billing).
+
+Валютные единицы
+
+Суммы в биллинге указаны в центах (`creditsCents`), где `100 = $1.00`.
+
+### Link to this sectionПолучить баланс#
+    
+    
+    GET /api/billing/balance
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`owner`| string| Имя пользователя владельца рабочей области  
+  
+**Ответ:**
+    
+    
+    {
+        "creditsCents": 2500,
+        "plan": "free"
+    }
+
+### Link to this sectionПолучить сводку использования#
+    
+    
+    GET /api/billing/usage-summary
+
+Возвращает детали плана, лимиты и метрики использования.
+
+### Link to this sectionПолучить транзакции#
+    
+    
+    GET /api/billing/transactions
+
+Возвращает историю транзакций (сначала самые новые).
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`owner`| string| Имя пользователя владельца рабочей области  
+  
+### Link to this sectionСоздать сеанс оформления заказа#
+    
+    
+    POST /api/billing/checkout-session
+
+**Тело запроса:**
+    
+    
+    {
+        "amount": 25,
+        "owner": "team-username"
+    }
+
+Поле| Тип| Обязательно| Описание  
+---|---|---|---  
+`amount`| number| Да| Сумма в долларах ($5-$1000)  
+`owner`| string| Нет| Имя пользователя команды для пополнения рабочего пространства (требуется роль администратора)  
+  
+Создает сеанс оформления заказа для покупки кредитов.
+
+### Link to this sectionСоздать оформление подписки#
+    
+    
+    POST /api/billing/subscription-checkout
+
+Создает сеанс оформления заказа для обновления до Pro-подписки.
+
+**Тело запроса:**
+    
+    
+    {
+        "planId": "pro",
+        "billingCycle": "monthly",
+        "owner": "team-username"
+    }
+
+Поле| Тип| Обязательно| Описание  
+---|---|---|---  
+`planId`| string| Да| План подписки (`pro`)  
+`billingCycle`| string| Нет| Расчетный период: `monthly` (по умолчанию) или `yearly`  
+`owner`| string| Нет| Имя пользователя команды для обновления рабочих пространств (требуется роль администратора)  
+  
+### Link to this sectionОтменить или возобновить подписку#
+    
+    
+    DELETE /api/billing/subscription-checkout
+
+По умолчанию отменяет Pro-подписку в конце периода. Отправь `{"resume": true}`, чтобы возобновить уже запланированную отмену до окончания периода выставления счета.
+
+**Тело запроса:**
+    
+    
+    {
+        "resume": true
+    }
+
+### Link to this sectionАвтоматическое пополнение#
+
+Автоматически пополняй баланс при падении ниже установленного порога.
+
+#### Link to this sectionПолучить конфигурацию автопополнения#
+    
+    
+    GET /api/billing/auto-topup
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`owner`| string| Имя пользователя владельца рабочей области  
+  
+#### Link to this sectionОбновить конфигурацию автопополнения#
+    
+    
+    PATCH /api/billing/auto-topup
+
+**Тело запроса:**
+    
+    
+    {
+        "enabled": true,
+        "thresholdCents": 500,
+        "amountCents": 2500
+    }
+
+### Link to this sectionСпособы оплаты#
+
+#### Link to this sectionСписок способов оплаты#
+    
+    
+    GET /api/billing/payment-methods
+
+#### Link to this sectionСоздать Setup Intent#
+    
+    
+    POST /api/billing/payment-methods/setup
+
+Возвращает секретный ключ клиента для добавления нового способа оплаты.
+
+#### Link to this sectionУстановить способ оплаты по умолчанию#
+    
+    
+    POST /api/billing/payment-methods/default
+
+**Тело запроса:**
+    
+    
+    {
+        "paymentMethodId": "pm_123"
+    }
+
+#### Link to this sectionОбновить платежную информацию#
+    
+    
+    PATCH /api/billing/payment-methods
+
+**Тело запроса:**
+    
+    
+    {
+        "name": "Jane Doe",
+        "address": {
+            "line1": "123 Main St",
+            "city": "San Francisco",
+            "state": "CA",
+            "postal_code": "94105",
+            "country": "US"
+        }
+    }
+
+#### Link to this sectionУдалить способ оплаты#
+    
+    
+    DELETE /api/billing/payment-methods/{id}
+
+* * *
+
+## Link to this sectionStorage API#
+
+Проверяй распределение использования хранилища по категориям (наборы данных, модели, экспорты) и просматривай самые большие элементы.
+
+Только сеанс браузера
+
+Маршруты хранилища требуют активного сеанса браузера на платформе и недоступны через API key. Используй страницу [Settings > Profile](/ru/platform/account/settings#storage-usage) в пользовательском интерфейсе для интерактивного анализа.
+
+### Link to this sectionПолучить информацию о хранилище#
+    
+    
+    GET /api/storage
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`details`| boolean| Установи `true`, чтобы включить `topItems` (самые большие наборы данных, модели, экспорты).  
+  
+**Ответ:**
+    
+    
+    {
+        "tier": "free",
+        "usage": {
+            "storage": {
+                "current": 1073741824,
+                "limit": 107374182400,
+                "percent": 1.0
+            }
+        },
+        "region": "us",
+        "username": "johndoe",
+        "updatedAt": "2024-01-15T10:00:00Z",
+        "breakdown": {
+            "byCategory": {
+                "datasets": { "bytes": 536870912, "count": 2 },
+                "models": { "bytes": 268435456, "count": 4 },
+                "exports": { "bytes": 268435456, "count": 3 }
+            },
+            "topItems": [
+                {
+                    "_id": "dataset_abc123",
+                    "name": "my-dataset",
+                    "slug": "my-dataset",
+                    "sizeBytes": 536870912,
+                    "type": "dataset"
+                },
+                {
+                    "_id": "model_def456",
+                    "name": "experiment-1",
+                    "slug": "experiment-1",
+                    "sizeBytes": 134217728,
+                    "type": "model",
+                    "parentName": "My Project",
+                    "parentSlug": "my-project"
+                }
+            ]
+        }
+    }
+
+* * *
+
+## Link to this sectionUpload API#
+
+Загружай файлы напрямую в облачное хранилище с помощью подписанных URL для быстрой и надежной передачи. Используется двухэтапный процесс: получение подписанного URL, затем загрузка файла. См. [Data documentation](/ru/platform/data).
+
+### Link to this sectionПолучить подписанный URL для загрузки#
+    
+    
+    POST /api/upload/signed-url
+
+Запроси подписанный URL для прямой загрузки файла в облачное хранилище. Подписанный URL позволяет обойти API-сервер при передаче больших файлов.
+
+**Тело запроса:**
+    
+    
+    {
+        "assetType": "images",
+        "assetId": "abc123",
+        "filename": "my-image.jpg",
+        "contentType": "image/jpeg",
+        "totalBytes": 5242880
+    }
+
+Поле| Тип| Описание  
+---|---|---  
+`assetType`| string| Тип актива: `models`, `datasets`, `images`, `videos`  
+`assetId`| string| ID целевого актива  
+`filename`| string| Исходное имя файла  
+`contentType`| string| MIME-тип  
+`totalBytes`| int| Размер файла в байтах  
+  
+**Ответ:**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "uploadUrl": "https://storage.example.com/...",
+        "gcsPath": "gs://bucket/users/user123/images/abc123/my-image.jpg",
+        "downloadUrl": "https://cdn.example.com/...",
+        "expiresAt": "2026-02-22T12:00:00Z"
+    }
+
+### Link to this sectionЗавершить загрузку#
+    
+    
+    POST /api/upload/complete
+
+Уведомь платформу о завершении загрузки файла, чтобы она могла начать обработку.
+
+**Тело запроса:**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "checksum": "<optional sha-256 hex>"
+    }
+
+* * *
+
+## Link to this sectionAPI интеграций#
+
+Импорт наборов данных из сторонних сервисов. См. [документацию по интеграциям](/ru/platform/integrations).
+
+### Link to this sectionПредпросмотр импорта из Roboflow#
+    
+    
+    POST /api/integrations/roboflow/preview
+
+Преобразует API-ключ Roboflow в план массового импорта: информация о рабочей области, проекты, которые будут импортированы впервые, количество уже импортированных версий (пропущены) и неподдерживаемые типы проектов. API-ключ Roboflow передается в теле запроса и не сохраняется.
+
+### Link to this sectionИмпорт из Roboflow#
+    
+    
+    POST /api/integrations/roboflow/import
+
+Поставить в очередь задания на прием набора данных для импорта выбранных проектов Roboflow в твою рабочую область. Требуется свободное место в хранилище, и каждый набор данных должен соответствовать лимиту размера на импорт твоего плана.
+
+* * *
+
+## Link to this sectionAPI Keys API#
+
+Управляй своими API keys для программного доступа. См. [API Keys documentation](/ru/platform/account/api-keys).
+
+### Link to this sectionСписок API keys#
+    
+    
+    GET /api/api-keys
+
+### Link to this sectionСоздать API key#
+    
+    
+    POST /api/api-keys
+
+**Тело запроса:**
+    
+    
+    {
+        "name": "training-server"
+    }
+
+### Link to this sectionУдалить API key#
+    
+    
+    DELETE /api/api-keys
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`keyId`| string| ID отзываемого API key  
+  
+**Пример:**
+    
+    
+    curl -X DELETE \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/api-keys?keyId=KEY_ID"
+
+* * *
+
+## Link to this sectionTeams & Members API#
+
+Создавай рабочие пространства команд, приглашай участников и управляй ролями для совместной работы. См. [Teams documentation](/ru/platform/account/teams).
+
+### Link to this sectionСписок команд#
+    
+    
+    GET /api/teams
+
+### Link to this sectionСоздать команду#
+    
+    
+    POST /api/teams/create
+
+**Тело запроса:**
+    
+    
+    {
+        "username": "my-team",
+        "fullName": "My Team"
+    }
+
+### Link to this sectionСписок участников#
+    
+    
+    GET /api/members
+
+Возвращает участников текущего рабочего пространства.
+
+### Link to this sectionПригласить участника#
+    
+    
+    POST /api/members
+
+**Тело запроса:**
+    
+    
+    {
+        "email": "user@example.com",
+        "role": "editor"
+    }
+
+Роли участников
+
+Роль| Разрешения  
+---|---  
+`viewer`| Доступ к ресурсам рабочего пространства только для чтения  
+`editor`| Создание, редактирование и удаление ресурсов  
+`admin`| Управление участниками, выставлением счетов и всеми ресурсами (назначается только владельцем команды)  
+  
+Владелец (`owner`) команды является ее создателем и не может быть приглашен. Передача прав владельца осуществляется отдельно через `POST /api/members/transfer-ownership`. Полные сведения о ролях см. в [Teams](/ru/platform/account/teams).
+
+### Link to this sectionОбновить роль участника#
+    
+    
+    PATCH /api/members/{userId}
+
+### Link to this sectionУдалить участника#
+    
+    
+    DELETE /api/members/{userId}
+
+### Link to this sectionПередача прав владения#
+    
+    
+    POST /api/members/transfer-ownership
+
+### Link to this sectionПриглашения#
+
+#### Link to this sectionПринять приглашение#
+    
+    
+    POST /api/invites/accept
+
+#### Link to this sectionПолучить информацию о приглашении#
+    
+    
+    GET /api/invites/info
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`token`| string| Токен приглашения  
+  
+#### Link to this sectionОтозвать приглашение#
+    
+    
+    DELETE /api/invites/{inviteId}
+
+#### Link to this sectionОтправить приглашение повторно#
+    
+    
+    POST /api/invites/{inviteId}/resend
+
+* * *
+
+## Link to this sectionExplore API#
+
+Ищи и просматривай общедоступные наборы данных и проекты, которыми делится сообщество. См. [Explore documentation](/ru/platform/explore).
+
+### Link to this sectionПоиск общедоступного контента#
+    
+    
+    GET /api/explore/search
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`q`| string| Поисковый запрос  
+`type`| string| Тип ресурса: `all` (по умолчанию), `projects`, `datasets`  
+`sort`| string| Порядок сортировки: `newest` (по умолчанию), `stars`, `oldest`, `name-asc`, `name-desc`, `count-desc`, `count-asc`  
+`offset`| int| Смещение пагинации (по умолчанию: 0). Результаты возвращаются по 20 элементов на страницу.  
+`task`| string| Необязательно: типы задач YOLO, разделенные запятыми, для фильтрации наборов данных (`detect`, `segment`, `semantic`, `classify`, `pose`, `obb`)  
+  
+### Link to this sectionДанные боковой панели#
+    
+    
+    GET /api/explore/sidebar
+
+Возвращает отобранный контент для боковой панели Explore.
+
+* * *
+
+## Link to this sectionUser & Settings APIs#
+
+Управляй своим профилем, API keys, использованием хранилища и настройками конфиденциальности данных. См. [Settings documentation](/ru/platform/account/settings).
+
+### Link to this sectionПолучить пользователя по имени пользователя#
+    
+    
+    GET /api/users
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`username`| string| Имя пользователя для поиска  
+  
+### Link to this sectionПодписаться или отписаться от пользователя#
+    
+    
+    PATCH /api/users
+
+**Тело запроса:**
+    
+    
+    {
+        "username": "target-user",
+        "followed": true
+    }
+
+### Link to this sectionПроверить доступность имени пользователя#
+    
+    
+    GET /api/username/check
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`username`| string| Имя пользователя для проверки  
+`suggest`| bool| Опционально: `true`, чтобы включить предложение, если имя занято  
+  
+### Link to this sectionНастройки#
+    
+    
+    GET /api/settings
+    POST /api/settings
+
+Получи или обнови настройки профиля пользователя (отображаемое имя, биография, ссылки на соцсети и т.д.).
+
+### Link to this sectionЗначок профиля#
+    
+    
+    POST /api/settings/icon
+    DELETE /api/settings/icon
+
+Загрузи или удали аватар профиля.
+
+### Link to this sectionОнбординг#
+    
+    
+    POST /api/onboarding
+
+Заверши процесс онбординга (установка региона данных, имени пользователя).
+
+* * *
+
+## Link to this sectionGDPR API#
+
+Запроси экспорт всех своих данных или безвозвратно удали аккаунт. См. [Settings documentation](/ru/platform/account/settings).
+
+### Link to this sectionПолучить статус задания GDPR#
+    
+    
+    GET /api/gdpr
+
+**Параметры запроса:**
+
+Параметр| Тип| Описание  
+---|---|---  
+`jobId`| string| ID задания GDPR для проверки  
+  
+Возвращает статус задания. Для завершенных заданий на экспорт ответ включает `downloadUrl`.
+
+### Link to this sectionНачать процесс экспорта или удаления#
+    
+    
+    POST /api/gdpr
+
+**Тело запроса:**
+    
+    
+    {
+        "action": "export"
+    }
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE"
+    }
+
+Опционально для рабочих пространств команд:
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE",
+        "teamUsername": "my-team"
+    }
+
+Необратимое действие
+
+Удаление аккаунта является окончательным и не может быть отменено. Все данные, модели и развертывания будут удалены.
+
+* * *
+
+## Link to this sectionКоды ошибок#
+
+Код| HTTP-статус| Описание  
+---|---|---  
+`UNAUTHORIZED`| 401| Неверный или отсутствующий API-ключ  
+`FORBIDDEN`| 403| Недостаточно прав  
+`NOT_FOUND`| 404| Ресурс не найден  
+`VALIDATION_ERROR`| 400| Неверные данные запроса  
+`RATE_LIMITED`| 429| Слишком много запросов  
+`INTERNAL_ERROR`| 500| Ошибка сервера  
+  
+* * *
+
+## Link to this sectionИнтеграция с Python#
+
+Для упрощения интеграции используй пакет Python от Ultralytics, который автоматически обрабатывает аутентификацию, загрузку и потоковую передачу метрик в реальном времени.
+
+### Link to this sectionУстановка и настройка#
+    
+    
+    pip install ultralytics
+
+Проверь установку:
+    
+    
+    yolo check
+
+Требование к версии пакета
+
+Интеграция с платформой требует **ultralytics >=8.4.60**. Более старые версии НЕ будут работать с платформой.
+
+### Link to this sectionАутентификация#
+    
+    
+    yolo settings api_key=YOUR_API_KEY
+
+### Link to this sectionИспользование датасетов платформы#
+
+Ссылайся на датасеты с помощью URI `ul://`:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Train on your Platform dataset
+    model.train(
+        data="ul://your-username/datasets/your-dataset",
+        epochs=100,
+        imgsz=640,
+    )
+
+**Формат URI:**
+
+Шаблон| Описание  
+---|---  
+`ul://username/datasets/slug`| Датасет  
+`ul://username/project-name`| Проект  
+`ul://username/project/model-name`| Конкретная модель  
+`ul://ultralytics/yolo26/yolo26n`| Официальная модель  
+  
+### Link to this sectionОтправка на платформу#
+
+Отправляй результаты в проект на платформе:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Results automatically sync to Platform
+    model.train(
+        data="coco8.yaml",
+        epochs=100,
+        project="your-username/my-project",
+        name="experiment-1",
+    )
+
+**Что синхронизируется:**
+
+  * Метрики обучения (в реальном времени)
+  * Финальные веса модели
+  * Графики валидации
+  * Вывод консоли
+  * Системные метрики
+
+
+
+### Link to this sectionПримеры API#
+
+**Загрузи модель с платформы:**
+    
+    
+    # Your own model
+    model = YOLO("ul://username/project/model-name")
+    
+    # Official model
+    model = YOLO("ul://ultralytics/yolo26/yolo26n")
+
+**Запусти инференс:**
+    
+    
+    results = model("image.jpg")
+    
+    # Access results
+    for r in results:
+        boxes = r.boxes  # Detection boxes
+        masks = r.masks  # Segmentation masks
+        keypoints = r.keypoints  # Pose keypoints
+        probs = r.probs  # Classification probabilities
+
+**Экспорт модели:**
+    
+    
+    # Export to ONNX
+    model.export(format="onnx", imgsz=640, half=True)
+    
+    # Export to TensorRT
+    model.export(format="engine", imgsz=640, half=True)
+    
+    # Export to CoreML
+    model.export(format="coreml", imgsz=640)
+
+**Валидация:**
+    
+    
+    metrics = model.val(data="ul://username/datasets/my-dataset")
+    
+    print(f"mAP50: {metrics.box.map50}")
+    print(f"mAP50-95: {metrics.box.map}")
+
+* * *
+
+## Link to this sectionВебхуки#
+
+Платформа использует внутренние вебхуки для передачи метрик обучения в реальном времени из Python SDK `ultralytics` (работающего на облачных GPU или удаленных/локальных машинах) обратно на платформу — loss по эпохам, mAP, системную статистику и статус завершения. Эти вебхуки аутентифицируются через HMAC `webhookSecret`, предоставляемый для каждой задачи обучения, и не предназначены для использования пользовательскими приложениями.
+
+Работа на твоей стороне
+
+**Все тарифные планы** : Ход обучения через SDK `ultralytics` (метрики в реальном времени, уведомления о завершении) работает автоматически на любом тарифе — просто установи `project=username/my-project name=my-run` при обучении, и SDK начнет передавать события обратно на платформу. Регистрация вебхуков на стороне пользователя не требуется.
+
+**Пользовательские подписки на вебхуки** (POST-обратные вызовы на контролируемый тобой URL) находятся в плане развития Enterprise и в настоящее время недоступны. Тем временем опрашивай `GET /api/models/{modelId}/training` для получения статуса или используй ленту активности в интерфейсе.
+
+* * *
+
+## Link to this sectionFAQ#
+
+### Link to this sectionКак мне использовать пагинацию для больших результатов?#
+
+Большинство эндпоинтов используют параметр `limit` для контроля количества результатов, возвращаемых за один запрос:
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=50"
+
+Эндпоинты Activity и Trash также поддерживают параметр `page` для постраничной пагинации:
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/activity?page=2&limit=20"
+
+Эндпоинт Explore Search использует `offset` вместо `page` с фиксированным размером страницы, равным 20:
+    
+    
+    curl "https://platform.ultralytics.com/api/explore/search?type=datasets&offset=20&sort=stars"
+
+### Link to this sectionМогу ли я использовать API без SDK?#
+
+Да, весь функционал доступен через REST. Python SDK — это удобная обертка, добавляющая такие функции, как потоковая передача метрик в реальном времени и автоматическая загрузка моделей. Ты также можешь изучить все эндпоинты в интерактивном режиме на [platform.ultralytics.com/api/docs](https://platform.ultralytics.com/api/docs).
+
+### Link to this sectionСуществуют ли клиентские библиотеки API?#
+
+В настоящее время используй пакет Python от Ultralytics или делай прямые HTTP-запросы. Официальные клиентские библиотеки для других языков планируются.
+
+### Link to this sectionКак мне обрабатывать лимиты запросов?#
+
+Используй заголовок `Retry-After` из ответа 429, чтобы подождать нужное количество времени:
+    
+    
+    import time
+    
+    import requests
+    
+    def api_request_with_retry(url, headers, max_retries=3):
+        for attempt in range(max_retries):
+            response = requests.get(url, headers=headers)
+            if response.status_code != 429:
+                return response
+            wait = int(response.headers.get("Retry-After", 2**attempt))
+            time.sleep(wait)
+        raise Exception("Rate limit exceeded")
+
+### Link to this sectionКак найти ID моей модели или датасета?#
+
+ID ресурсов возвращаются при создании ресурсов через API. Ты также можешь найти их в URL платформы:
+    
+    
+    https://platform.ultralytics.com/username/project/model-name
+                                      ^^^^^^^^ ^^^^^^^ ^^^^^^^^^^
+                                      username project   model
+
+Используй эндпоинты списка для поиска по имени или фильтрации по проекту.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[MYmykolaxboiko2](https://github.com/mykolaxboiko)[LAlaodouya1](https://github.com/laodouya)[RAraimbekovm1](https://github.com/raimbekovm)[SEsergiuwaxmann1](https://github.com/sergiuwaxmann)[LALaughing-q1](https://github.com/Laughing-q)
+
+Создано 5 месяцев назадОбновлено 4 часа назад
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

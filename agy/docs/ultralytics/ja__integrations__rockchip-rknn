@@ -1,0 +1,240 @@
+---
+source_url: https://docs.ultralytics.com/ja/integrations/rockchip-rknn
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/rockchip-rknn.md)
+
+# Link to this sectionUltralytics YOLO26 モデルの Rockchip RKNN エクスポート#
+
+組み込みデバイス、特に Rockchip プロセッサを搭載したデバイスにコンピュータビジョンモデルをデプロイする場合、互換性のあるモデル形式が不可欠です。[Ultralytics YOLO26](https://github.com/ultralytics/ultralytics) モデルを RKNN 形式にエクスポートすることで、最適化されたパフォーマンスと Rockchip ハードウェアとの互換性が保証されます。このガイドでは、YOLO26 モデルを RKNN 形式（浮動小数点および INT8 量子化エクスポートを含む）に変換し、Rockchip プラットフォーム上で効率的にデプロイする方法を説明します。
+
+![Rockchip RKNN export for NPU deployment](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/rockchip-rknn-overview.avif)
+
+注意
+
+このガイドは、Rockchip RK3588 を搭載した [Radxa Rock 5B](https://radxa.com/products/rock5/5b/) および Rockchip RK3566 を搭載した [Radxa Zero 3W](https://radxa.com/products/zeros/zero3w/) でテスト済みです。RK3576、RK3568、RK3562、RK2118、RV1126B、RV1103、RV1106、RV1103B、RV1106B など、[rknn-toolkit2](https://github.com/airockchip/rknn-toolkit2) をサポートする他の Rockchip ベースのデバイスでも動作するはずです。RV1103 や RV1106 のような INT8 専用ターゲットでは、`int8=True` が必要です。
+
+## Link to this sectionRockchip とは#
+
+汎用性が高く電力効率に優れたソリューションを提供する Rockchip は、幅広いコンシューマー向けエレクトロニクス、産業用アプリケーション、AI テクノロジーを支える高度な System-on-Chip (SoC) を設計しています。ARM ベースのアーキテクチャ、内蔵 Neural Processing Unit (NPU)、および高解像度マルチメディアサポートにより、Rockchip SoC はタブレット、スマート TV、IoT システム、[エッジ AI アプリケーション](https://www.ultralytics.com/blog/understanding-the-real-world-applications-of-edge-ai) などのデバイスに最先端のパフォーマンスをもたらします。Radxa、ASUS、Pine64、Orange Pi、Odroid、Khadas、Banana Pi といった企業が Rockchip SoC をベースにした多様な製品を提供しており、さまざまな市場でその影響力を広げています。
+
+## Link to this sectionRKNN Toolkit#
+
+[RKNN Toolkit](https://github.com/airockchip/rknn-toolkit2) は、Rockchip が提供するツールおよびライブラリのセットであり、同社のハードウェアプラットフォーム上でのディープラーニングモデルのデプロイを容易にします。RKNN (Rockchip Neural Network) は、これらのツールで使用される独自のフォーマットです。RKNN モデルは、Rockchip の NPU (Neural Processing Unit) が提供するハードウェアアクセラレーションを最大限に活用するように設計されており、RK3588、RK3566、RV1103、RV1106、およびその他の Rockchip 搭載システムで AI タスクの高性能を実現します。
+
+## Link to this sectionRKNN モデルの主な機能#
+
+RKNN モデルには、Rockchip プラットフォームへのデプロイにおいていくつかの利点があります。
+
+  * **NPU 向けに最適化** : RKNN モデルは Rockchip の NPU で実行するために特別に最適化されており、最大限のパフォーマンスと効率を確保します。
+  * **低レイテンシ** : RKNN 形式は推論レイテンシを最小限に抑えます。これはエッジデバイスでのリアルタイムアプリケーションにおいて極めて重要です。
+  * **プラットフォーム固有のカスタマイズ** : RKNN モデルは特定の Rockchip プラットフォームに合わせて調整でき、ハードウェアリソースをより有効に活用できます。
+  * **電力効率** : 専用の NPU ハードウェアを活用することで、RKNN モデルは CPU や GPU ベースの処理よりも消費電力が少なく、ポータブルデバイスのバッテリー寿命を延ばします。
+
+
+
+## Link to this sectionRockchip ハードウェアへの OS の書き込み#
+
+Rockchip ベースのデバイスを入手した後の最初のステップは、ハードウェアが動作環境で起動するように OS を書き込むことです。このガイドでは、テストに使用した Radxa Rock 5B と Radxa Zero 3W の開始ガイドを参照します。
+
+  * [Radxa Rock 5B 開始ガイド](https://docs.radxa.com/en/rock5/rock5b)
+  * [Radxa Zero 3W 開始ガイド](https://docs.radxa.com/en/zero/zero3)
+
+
+
+## Link to this sectionRKNN へのエクスポート：YOLO26 モデルの変換#
+
+Ultralytics YOLO26 モデルを RKNN 形式にエクスポートし、エクスポートしたモデルで推論を実行します。
+
+注意
+
+Rockchip ベースのデバイス (ARM64) でのエクスポートはサポートされていないため、必ず X86 ベースの Linux PC を使用してモデルを RKNN にエクスポートしてください。
+
+### Link to this sectionインストール#
+
+必要なパッケージをインストールするには、以下を実行します。
+
+インストール
+    
+    
+    # Install the required package for YOLO26
+    pip install ultralytics
+
+インストールプロセスに関する詳細な手順とベストプラクティスについては、[Ultralytics インストールガイド](/ja/quickstart) をご確認ください。YOLO26 用の必要なパッケージをインストールする際に問題が発生した場合は、[共通の問題ガイド](/ja/guides/yolo-common-issues) で解決策やヒントを参照してください。
+
+### Link to this section使用方法#
+
+注意
+
+エクスポートは現在、検出モデルに対してのみサポートされています。今後、より多くのモデルがサポートされる予定です。
+
+RKNN 形式は [Export](/ja/modes/export)、[Predict](/ja/modes/predict)、および [Validate](/ja/modes/val) モードをサポートしています。推論と検証は Rockchip NPU ハードウェア上で実行されます。モデルをエクスポートし、そのエクスポートされたモデルを読み込んで推論を実行するか、精度を検証します。デフォルトでは、RKNN エクスポートは FP16 対応の Rockchip ターゲットに対して `half=True` を含む既存の浮動小数点ビルドパスを使用します。キャリブレーションデータを使用して INT8 量子化された RKNN モデルを構築するには `int8=True` を使用してください。RKNN エクスポートは個別の FP32 モードを公開していません。`int8=False` のままにしても FP32 が要求されるわけではありません。
+
+Export
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to RKNN format
+    model.export(format="rknn", name="rk3588")  # creates '/yolo26n_rknn_model'
+    
+    # Export an INT8-quantized RKNN model with calibration data
+    model.export(format="rknn", name="rk3588", int8=True, data="coco8.yaml")
+
+Predict
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported RKNN model
+    model = YOLO("./yolo26n_rknn_model")
+    
+    # Run inference
+    results = model("https://ultralytics.com/images/bus.jpg")
+
+Validate
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported RKNN model
+    model = YOLO("./yolo26n_rknn_model")
+    
+    # Validate accuracy on the COCO8 dataset
+    metrics = model.val(data="coco8.yaml")
+
+### Link to this sectionエクスポート引数#
+
+引数| 型| デフォルト| 説明  
+---|---|---|---  
+`format`| `str`| `'rknn'`| エクスポートされたモデルのターゲット形式。Rockchip デプロイ環境との互換性を定義します。  
+`imgsz`| `int` または `tuple`| `640`| モデル入力に希望する画像サイズ。正方形の画像の場合は整数、特定の寸法の場合はタプル `(height, width)` を指定できます。  
+`batch`| `int`| `1`| エクスポートされたモデルのバッチ推論サイズ、または `predict` モードでエクスポートされたモデルが同時に処理する画像の最大数を指定します。  
+`name`| `str`| `'rk3588'`| rk3588, rk3576, rk3566, rk3568, rk3562, rk2118, rv1126b, rv1103, rv1106, rv1103b, rv1106b などの Rockchip ターゲットを指定します。  
+`half`| `bool`| `True`| FP16 対応ターゲット向けのデフォルトの浮動小数点 RKNN エクスポートパスを有効にします。`int8=True` とは相互排他的です。  
+`int8`| `bool`| `False`| INT8 量子化を有効にします。RV1103 や RV1106 のような INT8 専用ターゲットに必要です。`False` の場合、RKNN Toolkit は FP16 対応ターゲット用に浮動小数点モデルを構築します（FP32 ではありません）。  
+`data`| `str`| `None`| INT8 キャリブレーションに使用するデータセット YAML。`int8=True` で省略された場合、Ultralytics はモデルタスクのデフォルトのキャリブレーションデータセットを選択します。  
+`fraction`| `float`| `1.0`| INT8 量子化に使用するキャリブレーション画像の割合。  
+`device`| `str`| `None`| エクスポート用のデバイスを指定します: GPU (`device=0`), CPU (`device=cpu`)。  
+  
+ヒント
+
+RKNN へのエクスポートには、必ず x86 Linux マシンを使用してください。
+
+エクスポートプロセスの詳細については、[Ultralytics エクスポートに関するドキュメントページ](/ja/modes/export) をご覧ください。
+
+## Link to this sectionエクスポートされた YOLO26 RKNN モデルのデプロイ#
+
+Ultralytics YOLO26 モデルを RKNN 形式に正常にエクスポートしたら、次のステップはこれらのモデルを Rockchip ベースのデバイスにデプロイすることです。
+
+### Link to this sectionインストール#
+
+必要なパッケージをインストールするには、以下を実行します。
+
+インストール
+    
+    
+    # Install the required package for YOLO26
+    pip install ultralytics
+
+インストール後、上記の 使用法 セクションに示されている通りに、Rockchip デバイス上で推論と検証を実行します。エクスポートされた `_rknn_model` は `YOLO(...)` で直接読み込まれます。
+
+注意
+
+RKNN ランタイムバージョンと RKNN Toolkit バージョンが一致しないというログメッセージが表示され、推論が失敗する場合は、`/usr/lib/librknnrt.so` を公式の [librknnrt.so ファイル](https://github.com/airockchip/rknn-toolkit2/blob/master/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so) に置き換えてください。
+
+![RKNN エクスポートのスクリーンショット](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/rockchip-rknn-export-log.avif)
+
+## Link to this section実際のアプリケーション#
+
+YOLO26 RKNN モデルを搭載した Rockchip デバイスは、さまざまなアプリケーションで使用できます。
+
+  * **スマート監視** : セキュリティ監視のための効率的な物体検出システムを低消費電力でデプロイします。
+  * **産業オートメーション** : 組み込みデバイス上で品質管理と欠陥検出を直接実行します。
+  * **小売アナリティクス** : クラウドへの依存なしに、リアルタイムで顧客行動の追跡や在庫管理を行います。
+  * **スマート農業** : [農業におけるコンピュータビジョン](https://www.ultralytics.com/solutions/ai-in-agriculture) を使用して、作物の健康状態を監視し、害虫を検出します。
+  * **自律型ロボット** : リソースに制限のあるプラットフォーム上で、ビジョンベースのナビゲーションと障害物検出を可能にします。
+
+
+
+## Link to this sectionベンチマーク#
+
+以下の YOLO26 ベンチマークは、Ultralytics チームが Rockchip RK3588 ベースの Radxa Rock 5B 上で `rknn` モデル形式を使用して速度と精度を測定したものです。
+
+パフォーマンス
+
+モデル| 形式| ステータス| サイズ (MB)| mAP50-95(B)| 推論時間 (ms/im)  
+---|---|---|---|---|---  
+YOLO26n| `rknn`| ✅| 7.1| 0.479| 65.7  
+YOLO26s| `rknn`| ✅| 20.9| 0.571| 99.2  
+YOLO26m| `rknn`| ✅| 42.5| 0.610| 235.3  
+YOLO26l| `rknn`| ✅| 52.1| 0.630| 280.5  
+YOLO26x| `rknn`| ✅| 112.2| 0.666| 669.1  
+  
+`ultralytics 8.4.23` を使用してベンチマークを測定しました。
+
+注意
+
+上記のベンチマークの検証は、COCO128データセットを使用して行われました。推論時間には前処理および後処理の時間は含まれていません。
+
+## Link to this sectionまとめ#
+
+本ガイドでは、Rockchipプラットフォームでのデプロイメントを強化するために、Ultralytics YOLO26モデルをRKNNフォーマットにエクスポートする方法を学びました。また、RKNN ToolkitおよびエッジAIアプリケーションでRKNNモデルを使用する具体的な利点についても紹介しました。
+
+[Ultralytics YOLO26](https://platform.ultralytics.com/ultralytics/yolo26) とRockchipのNPU技術を組み合わせることで、組み込みデバイス上で高度なコンピュータビジョンタスクを実行するための効率的なソリューションが提供されます。このアプローチにより、低消費電力かつ高性能なリアルタイムの[物体検出](https://www.ultralytics.com/blog/a-guide-to-deep-dive-into-object-detection-in-2025)やその他のビジョンAIアプリケーションが可能になります。
+
+使用方法の詳細については、[RKNN公式ドキュメント](https://github.com/airockchip/rknn-toolkit2)をご覧ください。
+
+また、他のUltralytics YOLO26インテグレーションについて詳しく知りたい場合は、[インテグレーションガイドページ](/ja/integrations)をご覧ください。そこには、多くの有益なリソースや洞察がまとめられています。
+
+## Link to this sectionFAQ#
+
+### Link to this sectionUltralytics YOLOモデルをRKNNフォーマットにエクスポートするにはどうすればよいですか？#
+
+Ultralytics Pythonパッケージの `export()` メソッド、またはコマンドラインインターフェース (CLI) を使用して、Ultralytics YOLOモデルを簡単にRKNNフォーマットにエクスポートできます。エクスポートプロセスにはx86ベースのLinux PCを使用してください。RockchipなどのARM64デバイスはこの操作をサポートしていません。ターゲットとなるRockchipプラットフォームは、`name` 引数（`rk3588`、`rk3566` など）を使用して指定できます。このプロセスにより、Rockchipデバイス上での加速推論のためにNeural Processing Unit (NPU) を活用する、デプロイ準備が整った最適化済みRKNNモデルが生成されます。
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load your YOLO model
+    model = YOLO("yolo26n.pt")
+    
+    # Export to RKNN format for a specific Rockchip platform
+    model.export(format="rknn", name="rk3588")
+
+### Link to this sectionRockchipデバイスでRKNNモデルを使用する利点は何ですか？#
+
+RKNNモデルは、RockchipのNeural Processing Unit (NPU) のハードウェア加速能力を活用するように特別に設計されています。この最適化により、同じハードウェア上でONNXやTensorFlow Liteのような汎用モデルフォーマットを実行する場合と比較して、推論速度が大幅に向上し、レイテンシが低減します。RKNNモデルを使用することでデバイスのリソースをより効率的に利用でき、低消費電力かつ優れたパフォーマンスを実現します。これは特に、エッジデバイスでのリアルタイムアプリケーションにおいて重要です。Ultralytics YOLOモデルをRKNNに変換することで、RK3588やRK3566などのRockchip SoCを搭載したデバイス上で最適なパフォーマンスを達成できます。
+
+### Link to this sectionNVIDIAやGoogleなど、他のメーカーのデバイスにRKNNモデルをデプロイできますか？#
+
+RKNNモデルは、Rockchipプラットフォームとその内蔵NPU向けに特別に最適化されています。技術的にはソフトウェアエミュレーションを使用して他のプラットフォームでRKNNモデルを実行することも可能ですが、Rockchipデバイスが提供するハードウェア加速の恩恵を受けることはできません。他のプラットフォームで最適なパフォーマンスを得るには、NVIDIA GPU用のTensorRTやGoogleのEdge TPU用の[TensorFlow Lite](https://docs.ultralytics.com/integrations/tflite)など、それらのプラットフォーム専用に設計されたフォーマットにUltralytics YOLOモデルをエクスポートすることを推奨します。Ultralyticsは幅広いフォーマットへのエクスポートをサポートしており、さまざまなハードウェアアクセラレータとの互換性を確保しています。
+
+### Link to this sectionRKNNモデルのデプロイメントでサポートされているRockchipプラットフォームはどれですか？#
+
+Ultralytics YOLOのRKNNフォーマットへのエクスポートは、RK3588、RK3576、RK3566、RK3568、RK3562、RK2118、RV1126Bなど、浮動小数点RKNNビルドに対応したRockchipプラットフォームをサポートしています。また、`int8=True` を使用したINT8量子化RKNNエクスポートもサポートしており、これはRV1103、RV1106、RV1103B、RV1106BなどのINT8専用ターゲットで必要となります。これらのプラットフォームはRadxa、ASUS、Pine64、Orange Pi、Odroid、Khadas、Banana Piなどのメーカーのデバイスに一般的に搭載されており、シングルボードコンピュータから産業用システムまで、さまざまなRockchip搭載デバイスに最適化されたRKNNモデルをデプロイできます。
+
+### Link to this sectionRockchipデバイスにおけるRKNNモデルのパフォーマンスは、他のフォーマットと比較してどうですか？#
+
+RKNNモデルはRockchipのNPU向けに最適化されているため、一般的にRockchipデバイス上ではONNXやTensorFlow Liteといった他のフォーマットよりも優れたパフォーマンスを発揮します。例えば、Radxa Rock 5B (RK3588) でのベンチマークでは、RKNNフォーマットの[YOLO26n](https://platform.ultralytics.com/ultralytics/yolo26)の推論時間は画像あたり65.7msを達成しており、他のフォーマットよりも大幅に高速です。このパフォーマンス上の優位性は、ベンチマークセクションで示されている通り、すべてのYOLO26モデルサイズで一貫しています。専用のNPUハードウェアを活用することで、RKNNモデルはレイテンシを最小限に抑え、スループットを最大化するため、Rockchipベースのエッジデバイスでのリアルタイムアプリケーションに最適です。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/rockchip-rknn.md)
+
+[GLglenn-jocher12](https://github.com/glenn-jocher)[LAlakshanthad10](https://github.com/lakshanthad)[LALaughing-q1](https://github.com/Laughing-q)[RIRizwanMunawar1](https://github.com/RizwanMunawar)[ODoDestroyeRo1](https://github.com/oDestroyeRo)[IVIvorZhu3311](https://github.com/IvorZhu331)
+
+作成日 2025年1月21日更新日 2 週間前
+
+## コメント
+
+このページの内容
+
+AIで探索

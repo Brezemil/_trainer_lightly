@@ -1,0 +1,162 @@
+---
+source_url: https://docs.ultralytics.com/reference/nn/backends/ncnn
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/reference/nn/backends/ncnn.md)
+
+# Link to this sectionReference for `ultralytics/nn/backends/ncnn.py`#
+
+Improvements
+
+This page is sourced from <https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/backends/ncnn.py>. Have an improvement or example to add? Open a [Pull Request](https://docs.ultralytics.com/help/contributing) — thank you! 🙏
+
+  
+
+
+Summary
+
+  * `NCNNBackend`
+
+
+
+## Link to this sectionClass `ultralytics.nn.backends.ncnn.NCNNBackend`#
+    
+    
+    NCNNBackend()
+
+**Bases:** `BaseBackend`
+
+Tencent NCNN inference backend for mobile and embedded deployment.
+
+Loads and runs inference with Tencent NCNN models (*_ncnn_model/ directories). Optimized for mobile platforms with optional Vulkan GPU acceleration when available.
+
+**Methods**
+
+Name| Description  
+---|---  
+`forward`| Run inference using the NCNN runtime.  
+`load_model`| Load an NCNN model from a .param/.bin file pair or model directory.  
+  
+Source code in `ultralytics/nn/backends/ncnn.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/backends/ncnn.py#L16-L72)
+    
+    
+    class NCNNBackend(BaseBackend):
+
+  
+
+
+### Link to this sectionMethod `ultralytics.nn.backends.ncnn.NCNNBackend.forward`#
+    
+    
+    def forward(self, im: torch.Tensor) -> list[np.ndarray]
+
+Run inference using the NCNN runtime.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`im`| `torch.Tensor`| Input image tensor in BCHW format, normalized to [0, 1].| _required_  
+  
+**Returns**
+
+Type| Description  
+---|---  
+`list[np.ndarray]`| Model predictions as a list of numpy arrays, one per output layer.  
+  
+Source code in `ultralytics/nn/backends/ncnn.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/backends/ncnn.py#L58-L72)
+    
+    
+    def forward(self, im: torch.Tensor) -> list[np.ndarray]:
+        """Run inference using the NCNN runtime.
+    
+        Args:
+            im (torch.Tensor): Input image tensor in BCHW format, normalized to [0, 1].
+    
+        Returns:
+            (list[np.ndarray]): Model predictions as a list of numpy arrays, one per output layer.
+        """
+        mat_in = self.pyncnn.Mat(im[0].cpu().numpy())
+        with self.net.create_extractor() as ex:
+            ex.input(self.net.input_names()[0], mat_in)
+            # Sort output names as temporary fix for pnnx issue
+            y = [np.array(ex.extract(x)[1])[None] for x in sorted(self.net.output_names())]
+        return y
+
+  
+
+
+### Link to this sectionMethod `ultralytics.nn.backends.ncnn.NCNNBackend.load_model`#
+    
+    
+    def load_model(self, weight: str | Path) -> None
+
+Load an NCNN model from a .param/.bin file pair or model directory.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`weight`| `str| Path`| Path to the .param file or directory containing NCNN model files.  
+  
+Source code in `ultralytics/nn/backends/ncnn.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/backends/ncnn.py#L23-L56)
+    
+    
+    def load_model(self, weight: str | Path) -> None:
+        """Load an NCNN model from a .param/.bin file pair or model directory.
+    
+        Args:
+            weight (str | Path): Path to the .param file or directory containing NCNN model files.
+        """
+        LOGGER.info(f"Loading {weight} for NCNN inference...")
+        check_requirements("ncnn", cmds="--no-deps")
+        import ncnn as pyncnn
+    
+        self.pyncnn = pyncnn
+        self.net = pyncnn.Net()
+    
+        # Setup Vulkan if available
+        if isinstance(self.device, str) and self.device.startswith("vulkan"):
+            self.net.opt.use_vulkan_compute = True
+            self.net.set_vulkan_device(int(self.device.split(":")[1]))
+            self.device = torch.device("cpu")
+        else:
+            self.net.opt.use_vulkan_compute = False
+    
+        w = Path(weight)
+        if not w.is_file():
+            w = next(w.glob("*.param"))
+    
+        self.net.load_param(str(w))
+        self.net.load_model(str(w.with_suffix(".bin")))
+    
+        # Load metadata
+        metadata_file = w.parent / "metadata.yaml"
+        if metadata_file.exists():
+            from ultralytics.utils import YAML
+    
+            self.apply_metadata(YAML.load(metadata_file))
+
+  
+  
+
+
+Contributors
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/reference/nn/backends/ncnn.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)
+
+Created 3 months agoUpdated 1 month ago
+
+On This Page
+
+Explore with AI

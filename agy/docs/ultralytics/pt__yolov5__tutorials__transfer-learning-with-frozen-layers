@@ -1,0 +1,175 @@
+---
+source_url: https://docs.ultralytics.com/pt/yolov5/tutorials/transfer-learning-with-frozen-layers
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/transfer-learning-with-frozen-layers.md)
+
+# Link to this sectionTransfer Learning com Camadas Congeladas no YOLOv5#
+
+📚 Este guia explica como **congelar** camadas do [YOLOv5](https://github.com/ultralytics/yolov5) 🚀 ao implementar [transfer learning](https://www.ultralytics.com/glossary/transfer-learning). O transfer learning é uma técnica poderosa de [machine learning (ML)](https://www.ultralytics.com/glossary/machine-learning-ml) que te permite treinar novamente um modelo em novos dados rapidamente sem precisar treinar toda a rede do zero. Ao congelar os pesos das camadas iniciais e atualizar apenas os parâmetros das camadas posteriores, podes reduzir significativamente os requisitos de recursos computacionais e o tempo de treino. No entanto, essa abordagem pode impactar ligeiramente a [precisão](https://www.ultralytics.com/glossary/accuracy) final do modelo.
+
+## Link to this sectionAntes de começar#
+
+Primeiro, clona o repositório YOLOv5 e instala as dependências necessárias listadas em [`requirements.txt`](https://github.com/ultralytics/yolov5/blob/master/requirements.txt). Certifica-te de que tens um ambiente [**Python >=3.8.0**](https://www.python.org/) com [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/) instalado. [Modelos](https://github.com/ultralytics/yolov5/tree/master/models) pré-treinados e os [datasets](https://github.com/ultralytics/yolov5/tree/master/data) necessários serão descarregados automaticamente a partir do [release](https://github.com/ultralytics/yolov5/releases) mais recente do YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone repository
+    cd yolov5
+    pip install -r requirements.txt # install dependencies
+
+## Link to this sectionComo Funciona o Congelamento de Camadas#
+
+Quando congelas camadas numa [neural network](https://www.ultralytics.com/glossary/neural-network-nn), impedes que os seus parâmetros (pesos e biases) sejam atualizados durante o processo de treino. No PyTorch, isto é alcançado definindo o atributo `requires_grad` dos tensores da camada como `False`. Consequentemente, os gradientes não são computados para estas camadas durante a [backpropagation](https://www.ultralytics.com/glossary/backpropagation), poupando computação e memória.
+
+Eis como o YOLOv5 implementa o congelamento de camadas no seu [training script](https://github.com/ultralytics/yolov5/blob/master/train.py):
+    
+    
+    # Freeze specified layers
+    freeze = [f"model.{x}." for x in range(freeze)]  # Define layers to freeze based on module index
+    for k, v in model.named_parameters():
+        v.requires_grad = True  # Ensure all parameters are initially trainable
+        if any(x in k for x in freeze):
+            print(f"Freezing layer: {k}")
+            v.requires_grad = False  # Disable gradient calculation for frozen layers
+
+## Link to this sectionExplorando a Arquitetura do Modelo#
+
+Compreender a estrutura do modelo YOLOv5 é crucial para decidir quais camadas congelar. Podes inspecionar os nomes de todos os módulos e os seus parâmetros usando o seguinte snippet de Python:
+    
+    
+    # Assuming 'model' is your loaded YOLOv5 model instance
+    for name, param in model.named_parameters():
+        print(name)
+    
+    """
+    Example Output:
+    model.0.conv.conv.weight
+    model.0.conv.bn.weight
+    model.0.conv.bn.bias
+    model.1.conv.weight
+    model.1.bn.weight
+    model.1.bn.bias
+    model.2.cv1.conv.weight
+    model.2.cv1.bn.weight
+    ...
+    """
+
+A arquitetura do YOLOv5 consiste tipicamente num [backbone](https://www.ultralytics.com/glossary/backbone) (camadas 0-9 em configurações padrão como YOLOv5s/m/l/x) responsável pela [feature extraction](https://www.ultralytics.com/glossary/feature-extraction), e um head (as camadas restantes) que realiza a [object detection](https://www.ultralytics.com/glossary/object-detection).
+    
+    
+    # Example YOLOv5 v6.0 backbone structure
+    backbone:
+        # [from, number, module, args]
+        - [-1, 1, Conv, [64, 6, 2, 2]]  # Layer 0: Initial convolution (P1/2 stride)
+        - [-1, 1, Conv, [128, 3, 2]] # Layer 1: Downsampling convolution (P2/4 stride)
+        - [-1, 3, C3, [128]]          # Layer 2: C3 module
+        - [-1, 1, Conv, [256, 3, 2]] # Layer 3: Downsampling convolution (P3/8 stride)
+        - [-1, 6, C3, [256]]          # Layer 4: C3 module
+        - [-1, 1, Conv, [512, 3, 2]] # Layer 5: Downsampling convolution (P4/16 stride)
+        - [-1, 9, C3, [512]]          # Layer 6: C3 module
+        - [-1, 1, Conv, [1024, 3, 2]]# Layer 7: Downsampling convolution (P5/32 stride)
+        - [-1, 3, C3, [1024]]         # Layer 8: C3 module
+        - [-1, 1, SPPF, [1024, 5]]    # Layer 9: Spatial Pyramid Pooling Fast
+    
+    # Example YOLOv5 v6.0 head structure
+    head:
+        - [-1, 1, Conv, [512, 1, 1]] # Layer 10
+        - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # Layer 11
+        - [[-1, 6], 1, Concat, [1]] # Layer 12: Concatenate with backbone P4 (from layer 6)
+        - [-1, 3, C3, [512, False]] # Layer 13: C3 module
+        # ... subsequent head layers for feature fusion and detection
+
+## Link to this sectionOpções de Congelamento#
+
+Podes controlar quais camadas são congeladas usando o argumento `--freeze` no comando de treino. Este argumento especifica o índice do primeiro módulo _não congelado_ ; todos os módulos anteriores a este índice terão os seus pesos congelados. Usa `model.model` (um `nn.Sequential`) para inspecionar a ordem dos módulos se precisares de confirmar quais índices correspondem a um bloco específico.
+
+### Link to this sectionCongelar Apenas o Backbone#
+
+Para congelar o backbone inteiro (camadas 0 a 9), o que é comum ao adaptar o modelo a novas classes de objetos enquanto reténs capacidades gerais de extração de características aprendidas de um grande dataset como o [COCO](https://docs.ultralytics.com/datasets/detect/coco):
+    
+    
+    python train.py --weights yolov5m.pt --data your_dataset.yaml --freeze 10
+
+Esta estratégia é eficaz quando o teu dataset de destino partilha características visuais de baixo nível semelhantes (bordas, texturas) com os dados de treino originais (por exemplo, COCO), mas contém categorias de objetos diferentes.
+
+### Link to this sectionCongelar Tudo Exceto as Camadas Finais de Deteção#
+
+Para congelar quase toda a rede, deixando apenas as camadas de convolução de saída final (parte do módulo `Detect`, tipicamente o último módulo, por exemplo, o módulo 24 no YOLOv5s) treináveis:
+    
+    
+    python train.py --weights yolov5m.pt --data your_dataset.yaml --freeze 24
+
+Esta abordagem é útil quando precisas principalmente de ajustar o modelo para um número diferente de classes de saída, mantendo a grande maioria das características aprendidas intactas. Requer menos recursos computacionais para [fine-tuning](https://www.ultralytics.com/glossary/fine-tuning).
+
+## Link to this sectionComparação de Desempenho#
+
+Para ilustrar os efeitos do congelamento de camadas, treinámos o YOLOv5m no [Pascal VOC dataset](https://docs.ultralytics.com/datasets/detect/voc) durante 50 [epochs](https://www.ultralytics.com/glossary/epoch), começando pelos [weights](https://www.ultralytics.com/glossary/model-weights) pré-treinados oficiais do COCO (`yolov5m.pt`). Comparámos três cenários: treinar todas as camadas (`--freeze 0`), congelar o backbone (`--freeze 10`) e congelar tudo exceto as camadas finais de deteção (`--freeze 24`).
+    
+    
+    # Example command for training with backbone frozen
+    python train.py --batch 48 --weights yolov5m.pt --data voc.yaml --epochs 50 --cache --img 512 --hyp data/hyps/hyp.VOC.yaml --freeze 10
+
+### Link to this sectionResultados de Precisão#
+
+Os resultados mostram que congelar camadas pode acelerar significativamente o treino, mas pode levar a uma ligeira redução no [mAP (mean Average Precision)](https://www.ultralytics.com/glossary/mean-average-precision-map) final. Treinar todas as camadas geralmente produz a melhor precisão, enquanto congelar mais camadas oferece um treino mais rápido ao custo de um desempenho potencialmente menor.
+
+![Resultados de mAP50 de treino comparando diferentes estratégias de congelamento](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/freezing-training-map50-results.avif) _Comparação de mAP50 durante o treino_
+
+![Resultados de mAP50-95 de treino comparando diferentes estratégias de congelamento](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/freezing-training-map50-95-results.avif) _Comparação de mAP50-95 durante o treino_
+
+![YOLOv5 frozen layer training performance](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/table-results.avif) *Summary table of performance metrics* 
+
+### Link to this sectionUtilização de Recursos#
+
+Congelar mais camadas reduz substancialmente os requisitos de memória [GPU](https://www.ultralytics.com/glossary/gpu-graphics-processing-unit) e a utilização geral. Isto torna o transfer learning com camadas congeladas uma opção atraente ao trabalhar com recursos de hardware limitados, permitindo treinar modelos maiores ou usar tamanhos de imagem maiores do que seria possível de outra forma.
+
+![Percentagem de memória GPU alocada durante o treino](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/training-gpu-memory-allocated-percent.avif) _Memória GPU Alocada (%)_
+
+![Percentagem de utilização de memória GPU durante o treino](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/training-gpu-memory-utilization-percent.avif) _Utilização de GPU (%)_
+
+## Link to this sectionQuando Usar Congelamento de Camadas#
+
+O congelamento de camadas durante o transfer learning é particularmente vantajoso em várias situações:
+
+  1. **Recursos Computacionais Limitados** : Se tens restrições na memória da GPU ou no poder de processamento.
+  2. **Datasets Pequenos** : Quando o teu dataset de destino é significativamente menor do que o dataset de pré-treino original, o congelamento ajuda a prevenir o [overfitting](https://www.ultralytics.com/glossary/overfitting).
+  3. **Prototipagem Rápida** : Quando precisas de adaptar rapidamente um modelo existente a uma nova tarefa ou domínio para uma avaliação inicial.
+  4. **Domínios de Características Semelhantes** : Se as características de baixo nível no teu novo dataset forem muito semelhantes às do dataset no qual o modelo foi pré-treinado.
+
+
+
+Explora mais sobre as nuances do transfer learning na nossa [entrada do glossário](https://www.ultralytics.com/glossary/transfer-learning) e considera técnicas como [hyperparameter tuning](https://docs.ultralytics.com/guides/hyperparameter-tuning) para otimizar o desempenho.
+
+## Link to this sectionAmbientes suportados#
+
+A Ultralytics oferece vários ambientes prontos a usar com dependências essenciais como [CUDA](https://developer.nvidia.com/cuda), [CuDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/) e [PyTorch](https://pytorch.org/) pré-instalados.
+
+  * **Notebooks de GPU Grátis** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [Guia de Início Rápido do GCP](/pt/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [AWS Quickstart Guide](/pt/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [AzureML Quickstart Guide](/pt/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Docker Quickstart Guide](/pt/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionStatus do projeto#
+
+[![YOLOv5 Continuous Integration Status](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+Este badge confirma que todos os testes de Integração Contínua (CI) do [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) estão a passar com sucesso. Estes testes de CI avaliam rigorosamente a funcionalidade e o desempenho do YOLOv5 em operações chave: [training](https://github.com/ultralytics/yolov5/blob/master/train.py), [validation](https://github.com/ultralytics/yolov5/blob/master/val.py), [inference](https://github.com/ultralytics/yolov5/blob/master/detect.py), [export](https://github.com/ultralytics/yolov5/blob/master/export.py) e [benchmarks](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). Eles garantem uma operação consistente e fiável no macOS, Windows e Ubuntu, executando automaticamente a cada 24 horas e em cada novo commit de código.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/transfer-learning-with-frozen-layers.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Criado há 3 diasAtualizado há 3 dias
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

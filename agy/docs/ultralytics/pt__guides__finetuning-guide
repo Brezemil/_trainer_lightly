@@ -1,0 +1,194 @@
+---
+source_url: https://docs.ultralytics.com/pt/guides/finetuning-guide
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+# Link to this sectionComo fazer o fine-tuning do YOLO em um dataset personalizado#
+
+[Fine-tuning](https://www.ultralytics.com/glossary/fine-tuning) adapta um modelo pré-treinado para reconhecer novas classes começando a partir de pesos aprendidos em vez de inicialização aleatória. Em vez de treinar do zero por centenas de épocas, o fine-tuning aproveita características do [COCO](/pt/datasets/detect/coco) pré-treinado e converge em dados personalizados em uma fração do tempo.
+
+Este guia aborda o fine-tuning do [YOLO26](/pt/models/yolo26) em datasets personalizados, desde o uso básico até técnicas avançadas como congelamento de camadas e treinamento em dois estágios.
+
+## Link to this sectionFine-Tuning vs Treinamento do zero#
+
+Um modelo pré-treinado já aprendeu características visuais gerais - detecção de bordas, reconhecimento de textura, compreensão de formas - a partir de milhões de imagens. O [Transfer learning](https://www.ultralytics.com/glossary/transfer-learning) via fine-tuning reutiliza esse conhecimento e apenas ensina ao modelo como são as novas classes, motivo pelo qual ele converge mais rápido e requer menos dados. Treinar do zero descarta tudo isso e força o modelo a aprender tudo a partir de padrões de nível de pixel, o que exige significativamente mais recursos.
+
+| Fine-Tuning| Treinamento do zero  
+---|---|---  
+**Pesos iniciais**|  Pré-treinado no COCO (80 classes)| Inicialização aleatória  
+**Comando**| `YOLO("yolo26n.pt")`| `YOLO("yolo26n.yaml")`  
+**Convergência**|  Mais rápida - a espinha dorsal (backbone) já está treinada| Mais lenta - todas as camadas aprendem do zero  
+**Requisitos de dados**|  Menores - características pré-treinadas compensam a falta de dados| Maiores - o modelo precisa aprender todas as características apenas a partir do dataset  
+**Quando usar**|  Classes personalizadas com imagens naturais| Domínios fundamentalmente diferentes do COCO (médico, satélite, radar)  
+  
+O fine-tuning não requer código extra
+
+Quando um arquivo `.pt` é carregado com `YOLO("yolo26n.pt")`, os pesos pré-treinados são armazenados no modelo. Chamar `.train(data="custom.yaml")` logo em seguida transfere automaticamente todos os pesos compatíveis para a nova arquitetura do modelo, reinicializa quaisquer camadas que não correspondam (como a cabeça de detecção quando o número de classes difere) e inicia o treinamento. Nenhum carregamento manual de pesos, manipulação de camadas ou código personalizado de transfer learning é necessário.
+
+### Link to this sectionComo a transferência de pesos pré-treinados funciona#
+
+Quando um modelo pré-treinado é ajustado em um dataset com um número diferente de classes (por exemplo, 80 classes do COCO para 5 classes personalizadas), o Ultralytics realiza a transferência de pesos sensível à forma:
+
+  1. **Transferência total da espinha dorsal (backbone) e pescoço (neck)** \- estas camadas extraem características visuais gerais e suas formas são independentes do número de classes.
+  2. **A cabeça de detecção (detection head) é parcialmente reinicializada** \- as camadas de saída de classificação (`cv3`, `one2one_cv3`) possuem formas vinculadas à contagem de classes (80 vs 5), portanto, não podem ser transferidas e são inicializadas aleatoriamente. Camadas de regressão de caixa (`cv2`, `one2one_cv2`) na cabeça possuem formas fixas independentemente da contagem de classes, portanto são transferidas normalmente.
+  3. **A grande maioria dos pesos é transferida** ao alterar a contagem de classes. Apenas as camadas específicas de classificação na cabeça de detecção são reinicializadas - a espinha dorsal, o pescoço e os ramos de regressão de caixa permanecem intactos.
+
+
+
+Para datasets com o mesmo número de classes que o modelo pré-treinado (por exemplo, fazer fine-tuning de pesos pré-treinados no COCO em outro dataset de 80 classes), 100% dos pesos são transferidos, incluindo a cabeça de detecção.
+
+## Link to this sectionExemplo básico de Fine-Tuning#
+
+Exemplo
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load pretrained model
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+
+### Link to this sectionEscolhendo um tamanho de modelo#
+
+Modelos maiores têm mais capacidade, mas também mais parâmetros para atualizar, o que pode aumentar o risco de overfitting quando os dados de treinamento são limitados. Começar com um modelo menor (YOLO26n ou YOLO26s) e aumentar apenas se as métricas de validação estagnarem é uma abordagem prática. O tamanho ideal do modelo depende da complexidade da tarefa, do número de classes, da diversidade do dataset e do hardware disponível para implantação. Consulte a [página do modelo YOLO26](/pt/models/yolo26) para ver os tamanhos disponíveis e os benchmarks de desempenho.
+
+## Link to this sectionSeleção de otimizador e taxa de aprendizado#
+
+A configuração padrão `optimizer=auto` seleciona o otimizador e a taxa de aprendizado com base no número total de iterações de treinamento:
+
+  * **< 10.000 iterações** (datasets pequenos ou poucas épocas): AdamW com uma taxa de aprendizado baixa e calculada automaticamente
+  * **> 10.000 iterações** (datasets grandes): [MuSGD](/reference/optim/muon) (um otimizador híbrido Muon+SGD) com lr=0.01
+
+
+
+Para a maioria das tarefas de fine-tuning, a configuração padrão funciona bem sem nenhum ajuste manual. Considere definir o otimizador explicitamente quando:
+
+  * **O treinamento está instável** (a perda dispara ou diverge): tente `optimizer=AdamW, lr0=0.001` para uma convergência mais estável
+  * **Fazendo fine-tuning de um modelo grande em um dataset pequeno** : uma taxa de aprendizado menor como `lr0=0.001` ajuda a preservar características pré-treinadas
+
+
+
+O otimizador automático substitui o lr0 manual
+
+Quando `optimizer=auto`, os valores `lr0` e `momentum` são ignorados. Para controlar a taxa de aprendizado manualmente, defina o otimizador explicitamente: `optimizer=SGD, lr0=0.005`.
+
+## Link to this sectionCongelando camadas#
+
+O congelamento impede que camadas específicas sejam atualizadas durante o treinamento. Isso acelera o treinamento e reduz o [overfitting](https://www.ultralytics.com/glossary/overfitting) quando o dataset é pequeno em relação à capacidade do modelo.
+
+O parâmetro `freeze` aceita um número inteiro ou uma lista. Um número inteiro `freeze=10` congela as primeiras 10 camadas (de 0 a 9, o que corresponde à espinha dorsal no YOLO26). Uma lista pode conter índices de camada como `freeze=[0, 3, 5]` para congelamento parcial da espinha dorsal, ou strings de nomes de módulo como `freeze=["23.cv2"]` para controle detalhado sobre ramos específicos dentro de uma camada.
+
+Exemplo
+    
+    
+    model.train(data="custom.yaml", epochs=50, freeze=10)
+
+A profundidade de congelamento correta depende de quão similar o domínio alvo é aos dados pré-treinados e quanto dado de treinamento está disponível:
+
+Cenário| Recomendação| Fundamentação  
+---|---|---  
+Dataset grande, domínio similar| `freeze=None` (padrão)| Dados suficientes para adaptar todas as camadas sem overfitting  
+Dataset pequeno, domínio similar| `freeze=10`| Preserva características da espinha dorsal, reduz parâmetros treináveis  
+Dataset muito pequeno| `freeze=23`| Apenas a cabeça de detecção treina, minimizando o risco de overfitting  
+Domínio longe do COCO| `freeze=None`| As características da espinha dorsal podem não ser transferidas bem e precisam de retreinamento  
+  
+A profundidade de congelamento também pode ser tratada como um hiperparâmetro - tentar alguns valores (0, 5, 10) e comparar o mAP de validação é uma maneira prática de encontrar a melhor configuração para um dataset específico.
+
+## Link to this sectionPrincipais hiperparâmetros para Fine-Tuning#
+
+O fine-tuning geralmente requer menos ajustes de hiperparâmetros do que o treinamento do zero. Os parâmetros que mais importam são:
+
+  * **`epochs`** : O fine-tuning converge mais rápido que o treinamento do zero. Comece com um valor moderado e use `patience` para parar precocemente quando as métricas de validação estagnarem.
+  * **`patience`** : O padrão de 100 é projetado para execuções de treinamento longas. Reduzir para 10-20 evita desperdiçar tempo em execuções que já convergiram.
+  * **`warmup_epochs`** : O warmup padrão (3 épocas) aumenta gradualmente a taxa de aprendizado a partir de zero, o que evita que grandes atualizações de gradiente danifiquem características pré-treinadas nas iterações iniciais. Manter o padrão é recomendado mesmo para fine-tuning.
+
+
+
+Para a lista completa de parâmetros de treinamento, veja a [referência de configuração de treinamento](/pt/usage/cfg).
+
+## Link to this sectionFine-Tuning em dois estágios#
+
+O fine-tuning em dois estágios divide o treinamento em duas fases. O primeiro estágio congela a espinha dorsal e treina apenas o pescoço e a cabeça, permitindo que as camadas de detecção se adaptem às novas classes sem interromper as características pré-treinadas. O segundo estágio descongela todas as camadas e treina o modelo completo com uma taxa de aprendizado menor para refinar a espinha dorsal para o domínio alvo.
+
+Esta abordagem é particularmente útil quando o domínio alvo difere significativamente do COCO (imagens médicas, imagens aéreas, microscopia), onde a espinha dorsal pode precisar de adaptação, mas treinar tudo de uma vez causa instabilidade. Para descongelamento automático com uma abordagem baseada em callback, veja [Congelando e Descongelando a Espinha Dorsal](/pt/guides/custom-trainer#freezing-and-unfreezing-the-backbone).
+
+Fine-tuning em dois estágios
+    
+    
+    from ultralytics import YOLO
+    
+    # Stage 1: freeze backbone, train head and neck
+    model = YOLO("yolo26n.pt")
+    model.train(data="custom.yaml", epochs=20, freeze=10, name="stage1", exist_ok=True)
+    
+    # Stage 2: unfreeze all, fine-tune with lower lr
+    model = YOLO("runs/detect/stage1/weights/best.pt")
+    model.train(data="custom.yaml", epochs=30, lr0=0.001, name="stage2", exist_ok=True)
+
+## Link to this sectionArmadilhas comuns#
+
+### Link to this sectionO modelo não produz previsões#
+
+  * **Dados de treinamento insuficientes** : treinar com pouquíssimas amostras é a causa mais comum - o modelo não consegue aprender ou generalizar a partir de poucos dados. Garanta exemplos diversos suficientes por classe antes de investigar outras causas.
+  * **Verifique os caminhos do dataset** : caminhos incorretos em `data.yaml` produzem silenciosamente zero rótulos. Execute `yolo detect val model=yolo26n.pt data=your_data.yaml` antes do treinamento para confirmar que os rótulos carregam corretamente.
+  * **Limiar de confiança menor** : se existirem previsões, mas estiverem sendo filtradas, tente `conf=0.1` durante a inferência.
+  * **Verifique a contagem de classes** : certifique-se de que `nc` em `data.yaml` corresponda ao número real de classes nos arquivos de rótulo.
+
+
+
+### Link to this sectionO mAP de validação estagna precocemente#
+
+  * **Adicione mais dados** : o fine-tuning beneficia-se significativamente de dados de treinamento adicionais, especialmente exemplos diversos com ângulos, iluminação e fundos variados.
+  * **Verifique o equilíbrio das classes** : classes sub-representadas terão AP baixo. Use `cls_pw` para aplicar ponderação de classe por frequência inversa (comece com `cls_pw=0.25` para desequilíbrio moderado, aumente para `1.0` para desequilíbrio severo).
+  * **Reduza a aumentação** : para datasets muito pequenos, aumentação pesada pode prejudicar mais do que ajudar. Tente `mosaic=0.5` ou `mosaic=0.0`.
+  * **Aumente a resolução** : para datasets com objetos pequenos, tente `imgsz=1280` para preservar detalhes.
+
+
+
+### Link to this sectionO desempenho degrada nas classes originais após o fine-tuning#
+
+Isso é conhecido como esquecimento catastrófico - o modelo perde conhecimentos aprendidos anteriormente quando ajustado exclusivamente em novos dados. O esquecimento é quase inevitável sem incluir imagens do dataset original junto com novos dados. Para mitigar isso:
+
+  * **Mesclar datasets** : inclua exemplos das classes originais junto com as novas classes durante o fine-tuning. Esta é a única maneira confiável de evitar o esquecimento.
+  * **Congelar espinha dorsal e pescoço** : congelar tanto a espinha dorsal quanto o pescoço para que apenas a cabeça de detecção treine ajuda em execuções curtas de fine-tuning com uma taxa de aprendizado muito baixa.
+  * **Treinar por menos épocas** : quanto mais tempo o modelo treina exclusivamente em novos dados, mais o esquecimento aumenta.
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionDe quantas imagens preciso para fazer o fine-tuning do YOLO?#
+
+Não há um mínimo fixo - os resultados dependem da complexidade da tarefa, do número de classes e de quão similar o domínio é ao COCO. Imagens mais diversas (iluminação, ângulos, fundos variados) importam mais do que a quantidade bruta. Comece com o que você tem e aumente se as métricas de validação forem insuficientes.
+
+### Link to this sectionComo faço o fine-tuning do YOLO26 em um dataset personalizado?#
+
+Carregue um arquivo `.pt` pré-treinado e chame `.train()` com o caminho para um `data.yaml` personalizado. O Ultralytics gerencia automaticamente a [transferência de pesos](https://www.ultralytics.com/glossary/transfer-learning), a reinicialização da cabeça de detecção e a seleção do otimizador. Veja a seção Exemplo Básico de Fine-Tuning para o exemplo de código completo.
+
+### Link to this sectionPor que meu modelo YOLO ajustado não está detectando nada?#
+
+As causas mais comuns são caminhos incorretos em `data.yaml` (o que produz silenciosamente zero rótulos), uma incompatibilidade entre `nc` no YAML e os arquivos de rótulo reais, ou um limiar de confiança muito alto. Veja Armadilhas Comuns para uma lista de verificação completa de solução de problemas.
+
+### Link to this sectionQuais camadas do YOLO devo congelar para fine-tuning?#
+
+Depende do tamanho do dataset e da similaridade do domínio. Para datasets pequenos com um domínio similar ao COCO, congelar a espinha dorsal (`freeze=10`) evita o overfitting. Para domínios muito diferentes do COCO, deixar todas as camadas descongeladas (`freeze=None`) permite que a espinha dorsal se adapte. Veja Congelando Camadas para recomendações detalhadas.
+
+### Link to this sectionComo evito o esquecimento catastrófico ao fazer o fine-tuning do YOLO em novas classes?#
+
+Inclua exemplos das classes originais nos dados de treinamento junto com as novas classes. Se isso não for possível, congelar mais camadas (`freeze=10` ou superior) e usar uma taxa de aprendizado menor ajuda a preservar o conhecimento pré-treinado. Veja O desempenho degrada nas classes originais para mais detalhes.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+[RAraimbekovm1](https://github.com/raimbekovm)
+
+Criado mês passadoAtualizado mês passado
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

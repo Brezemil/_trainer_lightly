@@ -1,0 +1,248 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/coral-edge-tpu-on-raspberry-pi
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coral-edge-tpu-on-raspberry-pi.md)
+
+# Link to this section如何使用 Coral Edge TPU 在 Raspberry Pi 上运行 Ultralytics YOLO26#
+
+![Raspberry Pi with Edge TPU accelerator](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/edge-tpu-usb-accelerator-and-pi.avif)
+
+[Raspberry Pi](/zh/guides/raspberry-pi) 是一个节能且实惠的平台，适合在边缘端进行计算机视觉处理，但即使使用 [ONNX](/zh/integrations/onnx) 或 [OpenVINO](/zh/integrations/openvino) 等优化格式，设备上的推理速度仍然很慢。将 Raspberry Pi 与 Coral Edge TPU 协处理器配合使用，可以将推理任务卸载到专用硬件上，从而显著提升速度。本指南将向你展示如何安装运行时、将 Ultralytics YOLO26 模型导出为 Edge TPU 格式并运行加速推理。
+
+  
+
+
+  
+**Watch:** How to Run Inference on Raspberry Pi using Google Coral Edge TPU 
+
+## Link to this section为什么要使用 Coral Edge TPU？#
+
+Coral Edge TPU 是一款紧凑型设备，通过为你的系统增加一个 Edge TPU 协处理器，能够为 TensorFlow Lite 模型实现低功耗、高性能的机器学习推理。它非常适合那些仅靠 CPU 无法满足需求的嵌入式和移动端部署场景：
+
+  * **更快的推理速度** — Edge TPU 对量化模型的加速效果远超 Raspberry Pi CPU 自身的能力。
+  * **低功耗** — 它能提供极高的单位功率吞吐量，非常适合电池或太阳能供电的部署环境。
+  * **即插即用** — [USB Accelerator](https://developers.google.com/coral) 通过 USB 3.0 连接，无需进行额外的硬件集成。
+
+
+
+针对当前 TensorFlow Lite 的更新运行时
+
+[官方 Coral 指南](https://gweb-coral-full.uc.r.appspot.com/docs/accelerator/get-started/) 已经过时：原始的 Coral 运行时构建版本不再适用于当前的 TensorFlow Lite 运行时版本，且该项目在 2021 年至 2025 年间没有任何更新。本指南使用了持续维护的 Edge TPU 运行时以及最新的 `tflite-runtime`，以确保加速器能在当前的 Raspberry Pi OS 安装中正常工作。
+
+## Link to this section前提条件#
+
+  * [Raspberry Pi 4B](https://www.raspberrypi.com/products/raspberry-pi-4-model-b/)（建议 2GB 或以上）或 [Raspberry Pi 5](https://www.raspberrypi.com/products/raspberry-pi-5/)（推荐）
+  * [Raspberry Pi OS](https://www.raspberrypi.com/software/) Bullseye/Bookworm (64-bit) 桌面版（推荐）
+  * [Coral USB Accelerator](https://developers.google.com/coral)
+  * 一个非 ARM 平台（Google Colab、x86_64 Linux 机器或 [Ultralytics Docker 容器](/zh/guides/docker-quickstart)）用于导出模型，因为 Edge TPU 编译器在 ARM 上不可用
+
+
+
+本指南假设你已经安装好可用的 Raspberry Pi OS，并且安装了 `ultralytics` 及其依赖项。如果尚未安装，请先参考 [快速入门指南](/zh/quickstart)。
+
+准备好前提条件后，工作流包含三个步骤：在 Pi 上 安装 Edge TPU 运行时，在非 ARM 机器上 导出模型，以及回到 Pi 上 运行推理。
+
+## Link to this section安装 Edge TPU 运行时#
+
+运行时提供多种构建版本，请选择与你的操作系统相匹配的版本。高频构建版本会让 Edge TPU 以更高的时钟速度运行以获得更好的性能，但这可能会导致热节流——如果你选择该版本，请使用某种形式的散热措施。
+
+Raspberry Pi OS| 高频模式| 下载版本  
+---|---|---  
+Bullseye 32bit| 否| `libedgetpu1-std_ ... .bullseye_armhf.deb`  
+Bullseye 64bit| 否| `libedgetpu1-std_ ... .bullseye_arm64.deb`  
+Bullseye 32bit| 是| `libedgetpu1-max_ ... .bullseye_armhf.deb`  
+Bullseye 64bit| 是| `libedgetpu1-max_ ... .bullseye_arm64.deb`  
+Bookworm 32bit| 否| `libedgetpu1-std_ ... .bookworm_armhf.deb`  
+Bookworm 64bit| 否| `libedgetpu1-std_ ... .bookworm_arm64.deb`  
+Bookworm 32bit| 是| `libedgetpu1-max_ ... .bookworm_armhf.deb`  
+Bookworm 64bit| 是| `libedgetpu1-max_ ... .bookworm_arm64.deb`  
+  
+[从此处下载最新版本](https://github.com/feranick/libedgetpu/releases)，然后安装 `.deb` 包：
+    
+    
+    sudo dpkg -i path/to/package.deb
+
+安装运行时后，将 Coral Edge TPU 插入 Raspberry Pi 的 USB 3.0 端口，以便新的 `udev` 规则生效。
+
+首先移除任何现有的运行时
+
+如果你已经安装了 Coral Edge TPU 运行时，请在安装新版本之前将其卸载。
+    
+    
+    # If you installed the standard version
+    sudo apt remove libedgetpu1-std
+    
+    # If you installed the high-frequency version
+    sudo apt remove libedgetpu1-max
+
+## Link to this section将模型导出为 Edge TPU 格式#
+
+要使用 Edge TPU，请将你的模型转换为兼容格式。请在非 ARM 平台上运行导出操作（如 Google Colab、x86_64 Linux 机器、官方 [Ultralytics Docker 容器](/zh/guides/docker-quickstart) 或 [Ultralytics Platform](/zh/platform/quickstart)），因为 Edge TPU 编译器在 ARM 上不可用。请参阅 [导出模式](/zh/modes/export) 以了解可用的参数。
+
+导出模型
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/model.pt")  # Load an official model or custom model
+    
+    # Export the model
+    model.export(format="edgetpu")
+
+导出的模型会保存在 `<model_name>_saved_model/` 文件夹中，文件名为 `<model_name>_full_integer_quant_edgetpu.tflite`。
+
+保留 `_edgetpu.tflite` 后缀
+
+文件名必须以 `_edgetpu.tflite` 结尾。如果你将其重命名为其他名称，Ultralytics 将会把它作为普通的 TensorFlow Lite 模型加载，而不会检测到 Edge TPU，加速器也将无法使用。
+
+## Link to this section在 Edge TPU 上运行推理#
+
+在运行模型之前，请在 Raspberry Pi 上安装正确的库。如果已经安装了 TensorFlow，请先卸载它：
+    
+    
+    pip uninstall tensorflow tensorflow-aarch64
+
+然后安装或更新 `tflite-runtime`：
+    
+    
+    pip install -U tflite-runtime
+
+现在你可以运行推理了：
+
+运行模型
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/<model_name>_full_integer_quant_edgetpu.tflite")  # Load an official model or custom model
+    
+    # Run Prediction
+    model.predict("path/to/source.png")
+
+在 [预测](/zh/modes/predict) 页面查找有关预测模式的完整详细信息。
+
+使用多个 Edge TPU 进行推理
+
+如果你有多个 Edge TPU，可以使用 `device` 参数选择特定的设备。
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/<model_name>_full_integer_quant_edgetpu.tflite")  # Load an official model or custom model
+    
+    # Run Prediction
+    model.predict("path/to/source.png")  # Inference defaults to the first TPU
+    
+    model.predict("path/to/source.png", device="tpu:0")  # Select the first TPU
+    
+    model.predict("path/to/source.png", device="tpu:1")  # Select the second TPU
+
+## Link to this section基准测试#
+
+下表数据是使用 Raspberry Pi OS Bookworm 64-bit 和一个 USB Coral Edge TPU 测得的。这些数据仅显示推理时间（不包括预处理/后处理），并作为 Edge TPU 在不同 Pi 模型和模式下提供加速的相对参考。
+
+关于这些数据
+
+这些基准测试记录使用的是 YOLOv8 模型。绝对推理时间会因模型版本和图像大小而异，但 Pi 模型和时钟模式之间的相对速度提升是有效的。
+
+图像大小| 模型| 标准推理时间 (ms)| 高频推理时间 (ms)  
+---|---|---|---  
+320| YOLOv8n| 32.2| 26.7  
+320| YOLOv8s| 47.1| 39.8  
+512| YOLOv8n| 73.5| 60.7  
+512| YOLOv8s| 149.6| 125.3  
+  
+平均而言：
+
+  * 在标准模式下，Raspberry Pi 5 比 Raspberry Pi 4B 快 22%。
+  * 在高频模式下，Raspberry Pi 5 比 Raspberry Pi 4B 快 30.2%。
+  * 高频模式比标准模式快 28.4%。
+
+
+
+## Link to this section结论#
+
+Coral Edge TPU 将 Raspberry Pi 转变为一款功能强大的 Ultralytics YOLO26 低功耗推理设备。在非 ARM 机器上导出你的模型，保留 `_edgetpu.tflite` 后缀，并在 Pi 上使用 `tflite-runtime` 运行它，即可获得加速的边缘推理。如需更多部署选项，请参阅 [Raspberry Pi](/zh/guides/raspberry-pi) 指南。
+
+## Link to this section常见问题解答#
+
+### Link to this section什么是 Coral Edge TPU？它如何通过 Ultralytics YOLO26 提升 Raspberry Pi 的性能？#
+
+Coral Edge TPU 是一款紧凑型设备，为你的系统添加了 Edge TPU 协处理器。该协处理器实现了低功耗、高性能的机器学习推理，特别针对 TensorFlow Lite 模型进行了优化。在 Raspberry Pi 上，它能将推理速度提升至远超 CPU 单独处理的水平，从而显著增强 Ultralytics YOLO26 模型的性能。
+
+### Link to this section如何在 Raspberry Pi 上安装 Coral Edge TPU 运行时？#
+
+Download the appropriate `.deb` package for your Raspberry Pi OS version from [this link](https://github.com/feranick/libedgetpu/releases), then install it:
+    
+    
+    sudo dpkg -i path/to/package.deb
+
+请务必按照 安装 Edge TPU 运行时 部分中的步骤，卸载任何之前的 Coral Edge TPU 运行时版本。
+
+### Link to this section我可以将我的 Ultralytics YOLO26 模型导出为兼容 Coral Edge TPU 的格式吗？#
+
+可以。请在 Google Colab、x86_64 Linux 机器或 [Ultralytics Docker 容器](/zh/guides/docker-quickstart) 上运行导出；你也可以使用 [Ultralytics Platform](/zh/platform/quickstart)。以下是如何使用 Python 和 CLI 进行导出的方法：
+
+导出模型
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/model.pt")  # Load an official model or custom model
+    
+    # Export the model
+    model.export(format="edgetpu")
+
+更多信息，请参考 [导出模式](/zh/modes/export) 文档。
+
+### Link to this section如果我的 Raspberry Pi 上已经安装了 TensorFlow，但我现在想改用 tflite-runtime，该怎么办？#
+
+如果你已经安装了 TensorFlow 并且需要切换到 `tflite-runtime`，请先卸载 TensorFlow：
+    
+    
+    pip uninstall tensorflow tensorflow-aarch64
+
+然后安装或更新 `tflite-runtime`：
+    
+    
+    pip install -U tflite-runtime
+
+有关详细说明，请参考 在 Edge TPU 上运行推理 部分。
+
+### Link to this section如何使用 Coral Edge TPU 在 Raspberry Pi 上运行导出的 YOLO26 模型推理？#
+
+将 YOLO26 模型导出为 Edge TPU 兼容格式后，使用以下代码片段运行推理。模型文件必须保留 `_edgetpu.tflite` 后缀，这样 Ultralytics 才能将其加载到 Edge TPU 上：
+
+运行模型
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("path/to/<model_name>_full_integer_quant_edgetpu.tflite")  # Load an official model or custom model
+    
+    # Run Prediction
+    model.predict("path/to/source.png")
+
+有关预测模式的全面详细信息，请访问 [预测](/zh/modes/predict) 页面。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/coral-edge-tpu-on-raspberry-pi.md)
+
+[GLglenn-jocher19](https://github.com/glenn-jocher)[RIRizwanMunawar3](https://github.com/RizwanMunawar)[SKSkillnoob2](https://github.com/Skillnoob)[RAraimbekovm1](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)[LAlalayants1](https://github.com/lalayants)[JKjk4e1](https://github.com/jk4e)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+已创建 2024年2月12日已更新 上周
+
+## 评论
+
+本页内容
+
+使用 AI 探索

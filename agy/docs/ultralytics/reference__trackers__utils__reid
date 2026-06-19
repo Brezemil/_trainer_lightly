@@ -1,0 +1,356 @@
+---
+source_url: https://docs.ultralytics.com/reference/trackers/utils/reid
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/reference/trackers/utils/reid.md)
+
+# Link to this sectionReference for `ultralytics/trackers/utils/reid.py`#
+
+Improvements
+
+This page is sourced from <https://github.com/ultralytics/ultralytics/blob/main/ultralytics/trackers/utils/reid.py>. Have an improvement or example to add? Open a [Pull Request](https://docs.ultralytics.com/help/contributing) — thank you! 🙏
+
+  
+
+
+Summary
+
+  * `ReID`
+
+
+
+## Link to this sectionClass `ultralytics.trackers.utils.reid.ReID`#
+    
+    
+    ReID(self, model: str, imgsz: int = 224, device: str | torch.device | None = None, fp16: bool = False)
+
+ReID encoder. Routes `.pt` to the YOLO predictor path; everything else to `AutoBackend`.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`model`| `str`| Path to a ReID model. `.pt` runs through the YOLO predictor (embed-layer extraction); other  
+extensions go through `AutoBackend`.| _required_  
+`imgsz`| `int`| Square input size used for crop preprocessing on the AutoBackend path. Overridden by the  
+model's own static input size when one is detected.| `224`  
+`device`| `str| torch.device| None`  
+`fp16`| `bool`| Use half precision when the backend supports it.| `False`  
+  
+**Methods**
+
+Name| Description  
+---|---  
+`__call__`| Extract embeddings for detected objects.  
+`_crop_detections`| Crop detection regions from image, converting xywh to xyxy first.  
+`_crops_to_tensor`| Crop detections from img and stack into a normalized BCHW float tensor at self.imgsz.  
+  
+Source code in `ultralytics/trackers/utils/reid.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/trackers/utils/reid.py#L23-L116)
+    
+    
+    class ReID:
+        """ReID encoder. Routes `.pt` to the YOLO predictor path; everything else to `AutoBackend`."""
+    
+        def __init__(self, model: str, imgsz: int = 224, device: str | torch.device | None = None, fp16: bool = False):
+            """Initialize encoder for re-identification.
+    
+            Args:
+                model (str): Path to a ReID model. `.pt` runs through the YOLO predictor (embed-layer extraction); other
+                    extensions go through `AutoBackend`.
+                imgsz (int): Square input size used for crop preprocessing on the AutoBackend path. Overridden by the
+                    model's own static input size when one is detected.
+                device (str | torch.device | None): Inference device; defaults to CUDA if available.
+                fp16 (bool): Use half precision when the backend supports it.
+            """
+            self.imgsz = imgsz
+            self.batch_size = None
+            self.device = (
+                torch.device(device) if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            )
+            self.is_pt = str(model).endswith(".pt")
+    
+            if self.is_pt:
+                from ultralytics import YOLO
+    
+                self.model = YOLO(model)
+                # Initialize predictor with embed=[idx] so subsequent calls return embeddings.
+                self.model(embed=[len(self.model.model.model) - 2], verbose=False, save=False)
+                self.fp16 = False
+            else:
+                from pathlib import Path
+    
+                if Path(str(model)).name in REID_ASSETS:
+                    from ultralytics.utils.downloads import attempt_download_asset
+    
+                    model = attempt_download_asset(str(model))
+                self.model = AutoBackend(str(model), device=self.device, fp16=fp16, verbose=False)
+                self.fp16 = self.model.fp16
+    
+                # Get model's input size for a fixed batch and crop size or detect dynamic batch and crop sizes.
+                session = getattr(self.model, "session", None)
+                shape = session.get_inputs()[0].shape if session is not None else ()
+                if len(shape) == 4:
+                    if isinstance(shape[0], int) and shape[0] > 0:
+                        self.batch_size = shape[0]
+                    if isinstance(shape[2], int) and shape[2] > 0:
+                        self.imgsz = shape[2]
+
+  
+
+
+### Link to this sectionMethod `ultralytics.trackers.utils.reid.ReID.__call__`#
+    
+    
+    def __call__(self, img: np.ndarray, dets: np.ndarray) -> list[np.ndarray]
+
+Extract embeddings for detected objects.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`img`| `np.ndarray`| |  _required_  
+`dets`| `np.ndarray`| |  _required_  
+  
+Source code in `ultralytics/trackers/utils/reid.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/trackers/utils/reid.py#L96-L116)
+    
+    
+    @torch.no_grad()
+    def __call__(self, img: np.ndarray, dets: np.ndarray) -> list[np.ndarray]:
+        """Extract embeddings for detected objects."""
+        if self.is_pt:
+            crops = self._crop_detections(img, dets)
+            feats = self.model.predictor(crops)
+            if len(feats) != dets.shape[0] and feats[0].shape[0] == dets.shape[0]:
+                feats = feats[0]  # batched prediction with non-PyTorch backend
+            return [f.cpu().numpy() for f in feats]
+        batch = self._crops_to_tensor(img, dets)
+        bs, n = self.batch_size, batch.shape[0]
+        if bs is None or n == bs:
+            feats = self.model(batch)
+        else:  # fixed-batch model (e.g. static ONNX): run in chunks of bs, padding the last partial chunk
+            outs = []
+            for s in range(0, n, bs):
+                chunk = batch[s : s + bs]
+                if chunk.shape[0] < bs:
+                    chunk = torch.cat([chunk, chunk[-1:].expand(bs - chunk.shape[0], *chunk.shape[1:])], 0)
+                outs.append(self.model(chunk))
+            feats = torch.cat(outs, 0)[:n]
+        return [f.cpu().numpy() for f in feats]
+
+  
+
+
+### Link to this sectionMethod `ultralytics.trackers.utils.reid.ReID._crop_detections`#
+    
+    
+    def _crop_detections(img: np.ndarray, dets: np.ndarray) -> list[np.ndarray]
+
+Crop detection regions from image, converting xywh to xyxy first.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`img`| `np.ndarray`| BGR image.| _required_  
+`dets`| `np.ndarray`| Detections in xywh format (first 4 columns used).| _required_  
+  
+**Returns**
+
+Type| Description  
+---|---  
+`list[np.ndarray]`| Cropped image patches.  
+  
+Source code in `ultralytics/trackers/utils/reid.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/trackers/utils/reid.py#L71-L81)
+    
+    
+    @staticmethod
+    def _crop_detections(img: np.ndarray, dets: np.ndarray) -> list[np.ndarray]:
+        """Crop detection regions from image, converting xywh to xyxy first.
+    
+        Args:
+            img (np.ndarray): BGR image.
+            dets (np.ndarray): Detections in xywh format (first 4 columns used).
+    
+        Returns:
+            (list[np.ndarray]): Cropped image patches.
+        """
+        return [save_one_box(det, img, save=False) for det in xywh2xyxy(torch.from_numpy(dets[:, :4]))]
+
+  
+
+
+### Link to this sectionMethod `ultralytics.trackers.utils.reid.ReID._crops_to_tensor`#
+    
+    
+    def _crops_to_tensor(self, img: np.ndarray, dets: np.ndarray) -> torch.Tensor
+
+Crop detections from img and stack into a normalized BCHW float tensor at self.imgsz.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`img`| `np.ndarray`| |  _required_  
+`dets`| `np.ndarray`| |  _required_  
+  
+Source code in `ultralytics/trackers/utils/reid.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/trackers/utils/reid.py#L83-L93)
+    
+    
+    def _crops_to_tensor(self, img: np.ndarray, dets: np.ndarray) -> torch.Tensor:
+        """Crop detections from img and stack into a normalized BCHW float tensor at self.imgsz."""
+        crops = self._crop_detections(img, dets)
+        batch = torch.empty(len(crops), 3, self.imgsz, self.imgsz, dtype=torch.float32)
+        for i, c in enumerate(crops):
+            t = torch.from_numpy(np.ascontiguousarray(c[..., ::-1])).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+            batch[i] = torch.nn.functional.interpolate(
+                t, size=(self.imgsz, self.imgsz), mode="bilinear", align_corners=False
+            )[0]
+        batch = batch.to(self.device)
+        return batch.half() if self.fp16 else batch
+
+  
+  
+
+
+* * *
+
+  
+
+
+## Link to this sectionFunction `ultralytics.trackers.utils.reid.build_encoder`#
+    
+    
+    def build_encoder(with_reid: bool, model: str | None)
+
+Return a ReID encoder, the native-features pass-through, or None.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`with_reid`| `bool`| Whether ReID is enabled at all.| _required_  
+`model`| `str| None`| `"auto"` returns a callable that converts pre-extracted backbone features to numpy arrays;  
+any other value loads a `ReID` model from that path. Ignored when `with_reid` is False.  
+  
+**Returns**
+
+Type| Description  
+---|---  
+`Callable| None`  
+  
+Source code in `ultralytics/trackers/utils/reid.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/trackers/utils/reid.py#L119-L140)
+    
+    
+    def build_encoder(with_reid: bool, model: str | None):
+        """Return a ReID encoder, the native-features pass-through, or None.
+    
+        Args:
+            with_reid (bool): Whether ReID is enabled at all.
+            model (str | None): `"auto"` returns a callable that converts pre-extracted backbone features to numpy arrays;
+                any other value loads a `ReID` model from that path. Ignored when `with_reid` is False.
+    
+        Returns:
+            (Callable | None): A `(img, dets) -> list[np.ndarray]` encoder, or None when ReID is disabled.
+        """
+        if not with_reid:
+            return None
+        if model == "auto":
+    
+            def _auto_encoder(feats, _dets):
+                if isinstance(feats, np.ndarray):
+                    return [f for f in feats]
+                return [f.cpu().numpy() for f in feats]
+    
+            return _auto_encoder
+        return ReID(model)
+
+  
+  
+
+
+* * *
+
+  
+
+
+## Link to this sectionFunction `ultralytics.trackers.utils.reid.smooth_feature`#
+    
+    
+    def smooth_feature(
+        feat: np.ndarray, smooth: np.ndarray | None, alpha: float
+    ) -> tuple[np.ndarray | None, np.ndarray | None]
+
+L2-normalize `feat` and blend it into `smooth` via exponential moving average.
+
+**Args**
+
+Name| Type| Description| Default  
+---|---|---|---  
+`feat`| `np.ndarray`| New (un-normalized) appearance feature.| _required_  
+`smooth`| `np.ndarray| None`| Current smoothed feature, or None on the first update.  
+`alpha`| `float`| EMA weight on the existing `smooth` (`1.0` keeps it unchanged).| _required_  
+  
+**Returns**
+
+Type| Description  
+---|---  
+`curr (np.ndarray| None)`  
+`smooth (np.ndarray| None)`  
+  
+Source code in `ultralytics/trackers/utils/reid.py`
+
+[__View on GitHub](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/trackers/utils/reid.py#L143-L165)
+    
+    
+    def smooth_feature(
+        feat: np.ndarray, smooth: np.ndarray | None, alpha: float
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """L2-normalize `feat` and blend it into `smooth` via exponential moving average.
+    
+        Args:
+            feat (np.ndarray): New (un-normalized) appearance feature.
+            smooth (np.ndarray | None): Current smoothed feature, or None on the first update.
+            alpha (float): EMA weight on the existing `smooth` (``1.0`` keeps it unchanged).
+    
+        Returns:
+            curr (np.ndarray | None): The normalized current feature, or None when `feat` is zero-norm (carries no
+                appearance information, so the caller should leave its features unchanged).
+            smooth (np.ndarray | None): The updated, renormalized smoothed feature.
+        """
+        norm = np.linalg.norm(feat)
+        if norm < 1e-12:  # zero-norm feature has no appearance info; signal the caller to keep its current features
+            return None, smooth
+        feat = feat / norm
+        if smooth is None:
+            return feat, feat.copy()
+        smooth = alpha * smooth + (1 - alpha) * feat
+        return feat, smooth / np.linalg.norm(smooth)
+
+  
+  
+
+
+Contributors
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/reference/trackers/utils/reid.md)
+
+[ONonuralpszr1](https://github.com/onuralpszr)
+
+Created 1 week agoUpdated 1 week ago
+
+On This Page
+
+Explore with AI

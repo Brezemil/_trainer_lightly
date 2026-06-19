@@ -1,0 +1,307 @@
+---
+source_url: https://docs.ultralytics.com/zh/guides/nvidia-dgx-spark
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/nvidia-dgx-spark.md)
+
+# Link to this section快速入门指南：在 NVIDIA DGX Spark 上使用 Ultralytics YOLO26#
+
+本综合指南详细介绍了如何在 [NVIDIA DGX Spark](https://www.nvidia.com/en-us/products/workstations/dgx-spark/)（NVIDIA 的紧凑型桌面 AI 超级计算机）上部署 Ultralytics YOLO26。此外，本指南还展示了性能基准测试，以证明 YOLO26 在该强大系统上的能力。
+
+![NVIDIA DGX Spark AI workstation overview](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/nvidia-dgx-spark.avif)
+
+注意
+
+本指南已在运行基于 Ubuntu 的 DGX OS 的 NVIDIA DGX Spark Founders Edition 上进行了测试。预计它也适用于最新的 DGX OS 版本。
+
+## Link to this section什么是 NVIDIA DGX Spark？#
+
+NVIDIA DGX Spark 是一款由 NVIDIA GB10 Grace Blackwell Superchip 驱动的紧凑型桌面 AI 超级计算机。它在 FP4 精度下可提供高达 1 PFLOP 的 AI 计算性能，使其成为需要桌面级强大 AI 能力的开发者、研究人员和数据科学家的理想选择。
+
+  
+
+
+  
+**Watch:** How to Get up to 1000 FPS with Ultralytics YOLO26 on NVIDIA DGX Spark | [TensorRT](https://docs.ultralytics.com/integrations/tensorrt) & Batch Inference 
+
+### Link to this section关键规格#
+
+规格| 详情  
+---|---  
+AI 性能| 高达 1 PFLOP (FP4)  
+GPU| NVIDIA Blackwell 架构，配备第五代 Tensor Cores 和第四代 RT Cores  
+CPU| 20 核 Arm 处理器 (10 个 Cortex-X925 + 10 个 Cortex-A725)  
+内存| 128 GB LPDDR5x 统一系统内存，256 位接口，4266 MHz，273 GB/s 带宽  
+存储| 1 TB 或 4 TB NVMe M.2（带自加密功能）  
+网络| 1x RJ-45 (10 GbE)，ConnectX-7 Smart NIC，Wi-Fi 7，Bluetooth 5.4  
+连接性| 4x USB Type-C，1x HDMI 2.1a，HDMI 多声道音频  
+视频处理| 1x NVENC，1x NVDEC  
+  
+### Link to this sectionDGX OS#
+
+[NVIDIA DGX OS](https://docs.nvidia.com/dgx/dgx-os-7-user-guide/introduction.html) 是一种定制的 Linux 发行版，为在 DGX 系统上运行 AI、机器学习和分析应用提供了稳定、经过测试且受支持的操作系统基础。它包括：
+
+  * 针对 AI 工作负载优化的强大 Linux 基础
+  * 针对 NVIDIA 硬件预配置的驱动程序和系统设置
+  * 安全更新和系统维护功能
+  * 与更广泛的 NVIDIA 软件生态系统的兼容性
+
+
+
+DGX OS 遵循定期的发布时间表，通常每年更新两次（大约在二月和八月），并在重大版本之间提供额外的安全补丁。
+
+### Link to this sectionDGX Dashboard#
+
+DGX Spark 自带 [DGX Dashboard](https://docs.nvidia.com/dgx/dgx-spark/dgx-dashboard.html)，提供以下功能：
+
+  * **实时系统监控** ：系统当前运行指标概览
+  * **系统更新** ：能够直接从仪表板应用更新
+  * **系统设置** ：更改设备名称和其他配置
+  * **集成 JupyterLab** ：访问本地 Jupyter Notebooks 进行开发
+
+
+
+![NVIDIA DGX management dashboard interface](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/nvidia-dgx-dashboard.avif)
+
+#### Link to this section访问仪表板#
+
+点击 Ubuntu 桌面左下角的 "Show Apps" 按钮，然后选择 "DGX Dashboard" 以在浏览器中打开它。
+
+集成 JupyterLab
+
+仪表板包含一个集成的 JupyterLab 实例，启动时会自动创建虚拟环境并安装推荐的软件包。每个用户账户都会被分配一个专用的端口用于 JupyterLab 访问。
+
+## Link to this section使用 Docker 快速入门#
+
+在 NVIDIA DGX Spark 上开始使用 Ultralytics YOLO26 的最快方法是运行预构建的 docker 镜像。支持 Jetson AGX Thor (JetPack 7.0) 的同一个 Docker 镜像也适用于运行 DGX OS 的 DGX Spark。
+    
+    
+    t=ultralytics/ultralytics:latest-nvidia-arm64
+    sudo docker pull $t && sudo docker run -it --ipc=host --runtime=nvidia --gpus all $t
+
+完成后，请跳至 在 NVIDIA DGX Spark 上使用 TensorRT 部分。
+
+## Link to this section本地安装开始#
+
+对于不使用 Docker 的本地安装，请按照以下步骤操作。
+
+### Link to this section安装 Ultralytics 软件包#
+
+在这里，我们将安装带有可选依赖项的 Ultralytics 软件包，以便我们可以将 [PyTorch](https://www.ultralytics.com/glossary/pytorch) 模型导出为其他不同的格式。我们将主要关注 [NVIDIA TensorRT 导出](/zh/integrations/tensorrt)，因为 TensorRT 将确保我们能够从 DGX Spark 中获得最大性能。
+
+  1. 更新软件包列表，安装 pip 并升级到最新版本
+         
+         sudo apt update
+         sudo apt install python3-pip -y
+         pip install -U pip
+
+  2. 安装带有可选依赖项的 `ultralytics` pip 软件包
+         
+         pip install ultralytics[export]
+
+  3. 重启设备
+         
+         sudo reboot
+
+
+
+
+### Link to this section安装 PyTorch 和 Torchvision#
+
+上述 ultralytics 安装将安装 Torch 和 Torchvision。但是，通过 pip 安装的这些软件包可能未针对 DGX Spark 的 ARM64 架构和 CUDA 13 进行完全优化。因此，我们建议安装与 CUDA 13 兼容的版本：
+    
+    
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+
+信息
+
+When running PyTorch 2.9.1 on NVIDIA DGX Spark, you may encounter the following `UserWarning` when initializing CUDA (e.g. running `yolo checks`, `yolo predict`, etc.):
+    
+    
+    UserWarning: Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is (8.0) - (12.0)
+
+此警告可以安全忽略。为了永久解决此问题，PyTorch PR [#164590](https://github.com/pytorch/pytorch/pull/164590) 中已提交了一个修复程序，该修复程序将包含在 PyTorch 2.10 版本中。
+
+### Link to this section安装 `onnxruntime-gpu`#
+
+PyPI 上托管的 [onnxruntime-gpu](https://pypi.org/project/onnxruntime-gpu/) 软件包没有适用于 ARM64 系统的 `aarch64` 二进制文件。因此，我们需要手动安装此软件包。某些导出操作需要此软件包。
+
+Here we will download and install `onnxruntime-gpu 1.24.0` with `Python3.12` support.
+    
+    
+    pip install https://github.com/ultralytics/assets/releases/download/v0.0.0/onnxruntime_gpu-1.24.0-cp312-cp312-linux_aarch64.whl
+
+## Link to this section在 NVIDIA DGX Spark 上使用 TensorRT#
+
+在 Ultralytics 支持的所有模型导出格式中，TensorRT 在 NVIDIA DGX Spark 上提供最高的推理性能，因此我们强烈推荐将其用于部署。有关设置说明和高级用法，请参阅我们[专门的 TensorRT 集成指南](/zh/integrations/tensorrt)。
+
+### Link to this section将模型转换为 TensorRT 并运行推理#
+
+将 PyTorch 格式的 YOLO26n 模型转换为 TensorRT，以使用导出的模型运行推理。
+
+示例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26n PyTorch model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to TensorRT
+    model.export(format="engine")  # creates 'yolo26n.engine'
+    
+    # Load the exported TensorRT model
+    trt_model = YOLO("yolo26n.engine")
+    
+    # Run inference
+    results = trt_model("https://ultralytics.com/images/bus.jpg")
+
+注意
+
+访问[导出页面](/zh/modes/export#arguments)以获取将模型导出为不同模型格式时的其他参数
+
+## Link to this sectionNVIDIA DGX Spark YOLO11 基准测试#
+
+YOLO11 基准测试由 Ultralytics 团队在多种模型格式上运行，测量速度和[精度](https://www.ultralytics.com/glossary/accuracy)：PyTorch、TorchScript、ONNX、OpenVINO、TensorRT、TF SavedModel、TF GraphDef、TF Lite、MNN、NCNN、ExecuTorch。基准测试是在 NVIDIA DGX Spark 上以 FP32 [精度](https://www.ultralytics.com/glossary/precision)和默认输入图像大小 640 运行的。
+
+### Link to this section详细对比表#
+
+下表展示了五种不同模型（YOLO11n、YOLO11s、YOLO11m、YOLO11l、YOLO11x）在多种格式下的基准测试结果，提供了每种组合的状态、大小、mAP50-95(B) 指标和推理时间。
+
+性能
+
+格式| 状态| 磁盘大小 (MB)| mAP50-95(B)| 推理时间 (ms/im)  
+---|---|---|---|---  
+PyTorch| ✅| 5.4| 0.5071| 2.67  
+TorchScript| ✅| 10.5| 0.5083| 2.62  
+ONNX| ✅| 10.2| 0.5074| 5.92  
+OpenVINO| ✅| 10.4| 0.5058| 14.95  
+TensorRT (FP32)| ✅| 12.8| 0.5085| 1.95  
+TensorRT (FP16)| ✅| 7.0| 0.5068| 1.01  
+TensorRT (INT8)| ✅| 18.6| 0.4880| 1.62  
+TF SavedModel| ✅| 25.7| 0.5076| 36.39  
+TF GraphDef| ✅| 10.3| 0.5076| 41.06  
+TF Lite| ✅| 10.3| 0.5075| 64.36  
+MNN| ✅| 10.1| 0.5075| 12.14  
+NCNN| ✅| 10.2| 0.5041| 12.31  
+ExecuTorch| ✅| 10.2| 0.5075| 27.61  
+  
+基于 Ultralytics 8.3.249 进行基准测试
+
+## Link to this section复现我们的结果#
+
+要复现上述关于所有导出 [formats](/zh/modes/export) 的 Ultralytics 基准测试，请运行此代码：
+
+示例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26n PyTorch model
+    model = YOLO("yolo26n.pt")
+    
+    # Benchmark YOLO26n speed and accuracy on the COCO128 dataset for all export formats
+    results = model.benchmark(data="coco128.yaml", imgsz=640)
+
+请注意，基准测试结果可能会根据系统的确切硬件和软件配置，以及运行基准测试时系统的当前工作负载而有所不同。为了获得最可靠的结果，请使用包含大量图像的数据集，例如 `data='coco.yaml'`（5000 张验证图像）。
+
+## Link to this sectionNVIDIA DGX Spark 的最佳实践#
+
+使用 NVIDIA DGX Spark 时，请遵循以下几项最佳实践，以在运行 YOLO26 时实现最高性能。
+
+  1. **监控系统性能**
+
+使用 NVIDIA 的监控工具来追踪 GPU 和 CPU 的使用率：
+         
+         nvidia-smi
+
+  2. **优化内存使用**
+
+凭借 128GB 的统一内存，DGX Spark 可以处理大批量数据和模型。考虑增加批处理大小以提高吞吐量：
+         
+         from ultralytics import YOLO
+         
+         model = YOLO("yolo26n.engine")
+         results = model.predict(source="path/to/images", batch=16)
+
+  3. **将 TensorRT 与 FP16 或 INT8 结合使用**
+
+为获得最佳性能，请以 FP16 或 INT8 精度导出模型：
+         
+         yolo export model=yolo26n.pt format=engine half=True # FP16
+         yolo export model=yolo26n.pt format=engine int8=True # INT8
+
+
+
+
+## Link to this section系统更新（Founders Edition）#
+
+保持你的 DGX Spark Founders Edition 为最新状态对于性能和安全性至关重要。NVIDIA 提供了两种主要方法来更新系统操作系统、驱动程序和固件。
+
+### Link to this section使用 DGX Dashboard（推荐）#
+
+[DGX Dashboard](https://docs.nvidia.com/dgx/dgx-spark/dgx-dashboard.html) 是执行系统更新以确保兼容性的推荐方式。它允许你：
+
+  * 查看可用的系统更新
+  * 安装安全补丁和系统更新
+  * 管理 NVIDIA 驱动程序和固件更新
+
+
+
+### Link to this section手动系统更新#
+
+对于高级用户，可以通过终端手动执行更新：
+    
+    
+    sudo apt update
+    sudo apt dist-upgrade
+    sudo fwupdmgr refresh
+    sudo fwupdmgr upgrade
+    sudo reboot
+
+警告
+
+在执行更新之前，请确保你的系统已连接到稳定的电源，并已备份关键数据。
+
+## Link to this section后续步骤#
+
+如需进一步学习和支持，请参阅 [Ultralytics YOLO26 Docs](/zh)。
+
+## Link to this section常见问题解答#
+
+### Link to this section如何部署 Ultralytics YOLO26 到 NVIDIA DGX Spark？#
+
+将 Ultralytics YOLO26 部署到 NVIDIA DGX Spark 非常简单。你可以使用预构建的 Docker 镜像进行快速设置，或者手动安装所需的软件包。每种方法的详细步骤可以在 Quick Start with Docker 和 Start with Native Installation 章节中找到。
+
+### Link to this section在 NVIDIA DGX Spark 上运行 YOLO26 可以期待什么样的性能？#
+
+得益于 GB10 Grace Blackwell 超级芯片，YOLO26 模型在 DGX Spark 上提供了出色的性能。TensorRT 格式提供了最佳的推理性能。请查看 Detailed Comparison Table 章节，了解不同模型尺寸和格式的具体基准测试结果。
+
+### Link to this section为什么我应该在 DGX Spark 上为 YOLO26 使用 TensorRT？#
+
+鉴于其最佳性能，强烈建议在 DGX Spark 上使用 TensorRT 来部署 YOLO26 模型。它通过利用 Blackwell GPU 的能力来加速推理，从而确保最高的效率和速度。在 Use TensorRT on NVIDIA DGX Spark 章节中了解更多信息。
+
+### Link to this sectionDGX Spark 与 Jetson 设备在 YOLO26 上的表现相比如何？#
+
+DGX Spark 提供高达 1 PFLOP 的 AI 性能和 128GB 统一内存，而 Jetson AGX Thor 则提供 2070 TFLOPS 和 128GB 内存。DGX Spark 被设计为桌面级 AI 超级计算机，而 Jetson 设备则是针对边缘部署优化的嵌入式系统。
+
+### Link to this section我可以使用相同的 Docker 镜像来部署 DGX Spark 和 Jetson AGX Thor 吗？#
+
+可以！`ultralytics/ultralytics:latest-nvidia-arm64` Docker 镜像同时支持 NVIDIA DGX Spark（运行 DGX OS）和 Jetson AGX Thor（运行 JetPack 7.0），因为两者都使用带有 CUDA 13 和相似软件栈的 ARM64 架构。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/nvidia-dgx-spark.md)
+
+[GLglenn-jocher6](https://github.com/glenn-jocher)[RIRizwanMunawar1](https://github.com/RizwanMunawar)[LAlakshanthad1](https://github.com/lakshanthad)[ONonuralpszr1](https://github.com/onuralpszr)
+
+已创建 5个月前已更新 上周
+
+## 评论
+
+本页内容
+
+使用 AI 探索

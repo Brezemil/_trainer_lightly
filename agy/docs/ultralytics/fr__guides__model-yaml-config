@@ -1,0 +1,455 @@
+---
+source_url: https://docs.ultralytics.com/fr/guides/model-yaml-config
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-yaml-config.md)
+
+# Link to this sectionGuide de configuration YAML du modèle#
+
+Le fichier de configuration YAML du modèle sert de plan architectural pour les réseaux neuronaux Ultralytics. Il définit la manière dont les couches se connectent, les paramètres utilisés par chaque module et la façon dont l'ensemble du réseau s'adapte aux différentes tailles de modèles.
+
+![Model YAML configuration workflow.](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yaml-configuration-guide.avif)
+
+## Link to this sectionStructure de la configuration#
+
+Les fichiers YAML de modèle sont organisés en trois sections principales qui collaborent pour définir l'architecture.
+
+### Link to this sectionSection des paramètres#
+
+La section **parameters** spécifie les caractéristiques globales et le comportement de mise à l'échelle du modèle :
+    
+    
+    # Parameters
+    nc: 80 # number of classes
+    scales: # compound scaling constants [depth, width, max_channels]
+        n: [0.50, 0.25, 1024] # nano: shallow layers, narrow channels
+        s: [0.50, 0.50, 1024] # small: shallow depth, standard width
+        m: [0.50, 1.00, 512] # medium: moderate depth, full width
+        l: [1.00, 1.00, 512] # large: full depth and width
+        x: [1.00, 1.50, 512] # extra-large: maximum performance
+    kpt_shape: [17, 3] # pose models only
+
+  * `nc` définit le nombre de classes que le modèle prédit.
+  * `scales` définit des facteurs de mise à l'échelle composés qui ajustent la profondeur, la largeur et le nombre maximal de canaux du modèle pour produire différentes variantes de taille (de nano à extra-large).
+  * `kpt_shape` applies to pose models. It can be `[N, 2]` for `(x, y)` keypoints or `[N, 3]` for `(x, y, visibility)`.
+
+
+
+Réduis la redondance avec `scales`
+
+Le paramètre `scales` te permet de générer plusieurs tailles de modèles à partir d'un seul YAML de base. Par exemple, lorsque tu charges `yolo26n.yaml`, Ultralytics lit le fichier `yolo26.yaml` de base et applique les facteurs de mise à l'échelle `n` (`depth=0.50`, `width=0.25`) pour construire la variante nano.
+
+`nc` et `kpt_shape` dépendent du jeu de données
+
+Si ton jeu de données spécifie un `nc` ou `kpt_shape` différent, Ultralytics remplacera automatiquement la configuration du modèle au moment de l'exécution pour correspondre au YAML du jeu de données.
+
+### Link to this sectionArchitecture de la dorsale (Backbone) et de la tête (Head)#
+
+L'architecture du modèle se compose de sections dorsale (extraction de caractéristiques) et tête (spécifique à la tâche) :
+    
+    
+    backbone:
+        # [from, repeats, module, args]
+        - [-1, 1, Conv, [64, 3, 2]] # 0: Initial convolution
+        - [-1, 1, Conv, [128, 3, 2]] # 1: Downsample
+        - [-1, 3, C2f, [128, True]] # 2: Feature processing
+    
+    head:
+        - [-1, 1, nn.Upsample, [None, 2, nearest]] # 6: Upsample
+        - [[-1, 2], 1, Concat, [1]] # 7: Skip connection
+        - [-1, 3, C2f, [256]] # 8: Process features
+        - [[8], 1, Detect, [nc]] # 9: Detection layer
+
+## Link to this sectionFormat de spécification des couches#
+
+Chaque couche suit le modèle cohérent : **`[from, repeats, module, args]`**
+
+Composant| Objectif| Exemples  
+---|---|---  
+**from**|  Connexions d'entrée| `-1` (précédent), `6` (couche 6), `[4, 6, 8]` (entrées multiples)  
+**repeats**|  Nombre de répétitions| `1` (unique), `3` (répéter 3 fois)  
+**module**|  Type de module| `Conv`, `C2f`, `TorchVision`, `Detect`  
+**args**|  Arguments du module| `[64, 3, 2]` (canaux, noyau, foulée)  
+  
+### Link to this sectionModèles de connexion#
+
+Le champ `from` crée des modèles de flux de données flexibles dans tout ton réseau :
+    
+    
+    - [-1, 1, Conv, [64, 3, 2]]    # Takes input from previous layer
+
+Indexation des couches
+
+Les couches sont indexées à partir de 0. Les indices négatifs font référence aux couches précédentes (`-1` = couche précédente), tandis que les indices positifs font référence à des couches spécifiques par leur position.
+
+### Link to this sectionRépétition de module#
+
+Le paramètre `repeats` crée des sections de réseau plus profondes :
+    
+    
+    - [-1, 3, C2f, [128, True]] # Creates 3 consecutive C2f blocks
+    - [-1, 1, Conv, [64, 3, 2]] # Single convolution layer
+
+Le nombre réel de répétitions est multiplié par le facteur de mise à l'échelle de la profondeur issu de la configuration de la taille de ton modèle.
+
+## Link to this sectionModules disponibles#
+
+Les modules sont organisés par fonctionnalité et définis dans le [répertoire des modules Ultralytics](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules). Les tableaux suivants montrent les modules couramment utilisés par catégorie, avec beaucoup d'autres disponibles dans le code source :
+
+### Link to this sectionOpérations de base#
+
+Module| Objectif| Source| Arguments  
+---|---|---|---  
+`Conv`| Convolution + BatchNorm + Activation| [conv.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/conv.py)| `[out_ch, kernel, stride, pad, groups]`  
+`nn.Upsample`| Suréchantillonnage spatial| [PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.nn.Upsample.html)| `[size, scale_factor, mode]`  
+`nn.Identity`| Opération de passage| [PyTorch](https://docs.pytorch.org/docs/stable/generated/torch.nn.Identity.html)| `[]`  
+  
+### Link to this sectionBlocs composites#
+
+Module| Objectif| Source| Arguments  
+---|---|---|---  
+`C2f`| Goulot d'étranglement CSP avec 2 convolutions| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, shortcut, expansion]`  
+`SPPF`| Spatial Pyramid Pooling (rapide)| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, kernel_size]`  
+`Concat`| Concaténation par canal| [conv.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/conv.py)| `[dimension]`  
+  
+### Link to this sectionModules spécialisés#
+
+Module| Objectif| Source| Arguments  
+---|---|---|---  
+`TorchVision`| Charger n'importe quel modèle torchvision| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, model_name, weights, unwrap, truncate, split]`  
+`Index`| Extraire un tenseur spécifique de la liste| [block.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py)| `[out_ch, index]`  
+`Detect`| Tête de détection YOLO| [head.py](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/head.py)| `[nc]`  
+  
+Liste complète des modules
+
+Ceci représente un sous-ensemble des modules disponibles. Pour la liste complète des modules et leurs paramètres, explore le [répertoire des modules](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules).
+
+## Link to this sectionFonctionnalités avancées#
+
+### Link to this sectionIntégration de TorchVision#
+
+Le module TorchVision permet une intégration transparente de n'importe quel [modèle TorchVision](https://docs.pytorch.org/vision/stable/models.html) en tant que dorsale :
+    
+    
+    from ultralytics import YOLO
+    
+    # Model with ConvNeXt backbone
+    model = YOLO("convnext_backbone.yaml")
+    results = model.train(data="coco8.yaml", epochs=100)
+
+Caractéristiques multi-échelles
+
+Règle le dernier paramètre sur `True` pour obtenir des cartes de caractéristiques intermédiaires pour la détection multi-échelle.
+
+### Link to this sectionModule Index pour la sélection des caractéristiques#
+
+Lorsque tu utilises des modèles qui génèrent plusieurs cartes de caractéristiques, le module Index sélectionne des sorties spécifiques :
+    
+    
+    backbone:
+        - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]] # Multi-output
+    head:
+        - [0, 1, Index, [192, 4]] # Select 4th feature map (192 channels)
+        - [0, 1, Index, [384, 6]] # Select 6th feature map (384 channels)
+        - [0, 1, Index, [768, 8]] # Select 8th feature map (768 channels)
+        - [[1, 2, 3], 1, Detect, [nc]] # Multi-scale detection
+
+## Link to this sectionSystème de résolution de module#
+
+Comprendre comment Ultralytics localise et importe les modules est crucial pour la personnalisation :
+
+### Link to this sectionProcessus de recherche de module#
+
+Ultralytics utilise un système à trois niveaux dans [`parse_model`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) :
+    
+    
+    # Core resolution logic
+    m = (
+        getattr(torch.nn, m[3:])
+        if "nn." in m
+        else getattr(torchvision.ops, m[16:])
+        if "torchvision.ops." in m
+        else globals()[m]
+    )
+
+  1. **Modules PyTorch** : Les noms commençant par `'nn.'` → espace de noms `torch.nn`
+  2. **Opérations TorchVision** : Les noms commençant par `'torchvision.ops.'` → espace de noms `torchvision.ops`
+  3. **Modules Ultralytics** : Tous les autres noms → espace de noms global via des imports
+
+
+
+### Link to this sectionChaîne d'importation de modules#
+
+Les modules standard deviennent disponibles via des imports dans [`tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) :
+    
+    
+    from ultralytics.nn.modules import (  # noqa: F401
+        SPPF,
+        C2f,
+        Conv,
+        Detect,
+        # ... many more modules
+        Index,
+        TorchVision,
+    )
+
+## Link to this sectionIntégration de modules personnalisés#
+
+### Link to this sectionModification du code source#
+
+Modifier le code source est la méthode la plus flexible pour intégrer tes propres modules, mais cela peut être délicat. Pour définir et utiliser un module personnalisé, suis ces étapes :
+
+  1. **Installe Ultralytics en mode développement** en utilisant la méthode de clonage Git du [guide de démarrage rapide](https://docs.ultralytics.com/quickstart#git-clone).
+
+  2. **Définis ton module** dans [`ultralytics/nn/modules/block.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/block.py) :
+         
+         class CustomBlock(nn.Module):
+             """Custom block with Conv-BatchNorm-ReLU sequence."""
+         
+             def __init__(self, c1, c2):
+                 """Initialize CustomBlock with input and output channels."""
+                 super().__init__()
+                 self.layers = nn.Sequential(nn.Conv2d(c1, c2, 3, 1, 1), nn.BatchNorm2d(c2), nn.ReLU())
+         
+             def forward(self, x):
+                 """Forward pass through the block."""
+                 return self.layers(x)
+
+  3. **Expose ton module au niveau du package** dans [`ultralytics/nn/modules/__init__.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/modules/__init__.py) :
+         
+         from .block import CustomBlock  # noqa makes CustomBlock available as ultralytics.nn.modules.CustomBlock
+
+  4. **Ajoute-le aux imports** dans [`ultralytics/nn/tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) :
+         
+         from ultralytics.nn.modules import CustomBlock  # noqa
+
+  5. **Gère les arguments spéciaux** (si nécessaire) à l'intérieur de [`parse_model()`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py) dans `ultralytics/nn/tasks.py` :
+         
+         # Add this condition in the parse_model() function
+         if m is CustomBlock:
+             c1, c2 = ch[f], args[0]  # input channels, output channels
+             args = [c1, c2, *args[1:]]
+
+  6. **Utilise le module** dans ton fichier YAML de modèle :
+         
+         # custom_model.yaml
+         nc: 1
+         backbone:
+             - [-1, 1, CustomBlock, [64]]
+         head:
+             - [-1, 1, Classify, [nc]]
+
+  7. **Vérifie les FLOPs** pour t'assurer que la passe avant (forward pass) fonctionne :
+         
+         from ultralytics import YOLO
+         
+         model = YOLO("custom_model.yaml", task="classify")
+         model.info()  # should print non-zero FLOPs if working
+
+
+
+
+## Link to this sectionExemples de configurations#
+
+### Link to this sectionModèle de détection de base#
+    
+    
+    # Simple YOLO detection model
+    nc: 80
+    scales:
+        n: [0.33, 0.25, 1024]
+    
+    backbone:
+        - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+        - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+        - [-1, 3, C2f, [128, True]] # 2
+        - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+        - [-1, 6, C2f, [256, True]] # 4
+        - [-1, 1, SPPF, [256, 5]] # 5
+    
+    head:
+        - [-1, 1, Conv, [256, 3, 1]] # 6
+        - [[6], 1, Detect, [nc]] # 7
+
+### Link to this sectionModèle de backbone TorchVision#
+    
+    
+    # ConvNeXt backbone with YOLO head
+    nc: 80
+    
+    backbone:
+        - [-1, 1, TorchVision, [768, convnext_tiny, DEFAULT, True, 2, True]]
+    
+    head:
+        - [0, 1, Index, [192, 4]] # P3 features
+        - [0, 1, Index, [384, 6]] # P4 features
+        - [0, 1, Index, [768, 8]] # P5 features
+        - [[1, 2, 3], 1, Detect, [nc]] # Multi-scale detection
+
+### Link to this sectionModèle de classification#
+    
+    
+    # Simple classification model
+    nc: 1000
+    
+    backbone:
+        - [-1, 1, Conv, [64, 7, 2, 3]]
+        - [-1, 1, nn.MaxPool2d, [3, 2, 1]]
+        - [-1, 4, C2f, [64, True]]
+        - [-1, 1, Conv, [128, 3, 2]]
+        - [-1, 8, C2f, [128, True]]
+        - [-1, 1, nn.AdaptiveAvgPool2d, [1]]
+    
+    head:
+        - [-1, 1, Classify, [nc]]
+
+## Link to this sectionMeilleures pratiques#
+
+### Link to this sectionConseils de conception d'architecture#
+
+**Commence simplement** : Débute avec des architectures éprouvées avant de personnaliser. Utilise les configurations YOLO existantes comme modèles et modifie-les progressivement plutôt que de repartir de zéro.
+
+**Teste de façon incrémentale** : Valide chaque modification étape par étape. Ajoute un module personnalisé à la fois et vérifie qu'il fonctionne avant de passer au changement suivant.
+
+**Surveille les canaux** : Assure-toi que les dimensions des canaux correspondent entre les couches connectées. Les canaux de sortie (`c2`) d'une couche doivent correspondre aux canaux d'entrée (`c1`) de la couche suivante dans la séquence.
+
+**Utilise les connexions de saut (skip connections)** : Tire parti de la réutilisation des caractéristiques avec les motifs `[[-1, N], 1, Concat, [1]]`. Ces connexions aident à la circulation du gradient et permettent au modèle de combiner des caractéristiques provenant de différentes échelles.
+
+**Mets à l'échelle de manière appropriée** : Choisis les échelles de modèle en fonction de tes contraintes de calcul. Utilise nano (`n`) pour les appareils en périphérie (edge), small (`s`) pour un équilibre de performance, et des échelles plus grandes (`m`, `l`, `x`) pour une précision maximale.
+
+### Link to this sectionConsidérations sur les performances#
+
+**Profondeur vs Largeur** : Les réseaux profonds capturent des caractéristiques hiérarchiques complexes via de multiples couches de transformation, tandis que les réseaux larges traitent plus d'informations en parallèle à chaque couche. Équilibre ces aspects en fonction de la complexité de ta tâche.
+
+**Connexions de saut (skip connections)** : Améliorent la circulation du gradient pendant l'entraînement et permettent la réutilisation des caractéristiques à travers le réseau. Elles sont particulièrement importantes dans les architectures plus profondes pour éviter la disparition des gradients.
+
+**Blocs goulots d'étranglement (bottleneck)** : Réduisent le coût de calcul tout en maintenant l'expressivité du modèle. Les modules comme `C2f` utilisent moins de paramètres que les convolutions standard tout en préservant la capacité d'apprentissage des caractéristiques.
+
+**Caractéristiques multi-échelles** : Essentielles pour détecter des objets de différentes tailles dans la même image. Utilise des motifs de type Feature Pyramid Network (FPN) avec plusieurs têtes de détection à différentes échelles.
+
+## Link to this sectionDépannage#
+
+### Link to this sectionProblèmes courants#
+
+Problème| Cause| Solution  
+---|---|---  
+`KeyError: 'ModuleName'`| Module non importé| Ajouter aux imports dans [`tasks.py`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/nn/tasks.py)  
+Inadéquation des dimensions des canaux| Spécification d'arguments `args` incorrecte| Vérifier la compatibilité des canaux d'entrée/sortie  
+`AttributeError: 'int' object has no attribute`| Type d'argument incorrect| Vérifier la documentation du module pour les types d'arguments corrects  
+Le modèle échoue à la construction| Référence `from` invalide| S'assurer que les couches référencées existent  
+  
+### Link to this sectionConseils de débogage#
+
+Lors du développement d'architectures personnalisées, le débogage systématique aide à identifier les problèmes tôt :
+
+**Utiliser une tête d'identité (Identity Head) pour les tests**
+
+Remplace les têtes complexes par `nn.Identity` pour isoler les problèmes de backbone :
+    
+    
+    nc: 1
+    backbone:
+        - [-1, 1, CustomBlock, [64]]
+    head:
+        - [-1, 1, nn.Identity, []] # Pass-through for debugging
+
+Cela permet une inspection directe des sorties du backbone :
+    
+    
+    import torch
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("debug_model.yaml")
+    output = model.model(torch.randn(1, 3, 640, 640))
+    print(f"Output shape: {output.shape}")  # Should match expected dimensions
+
+**Inspection de l'architecture du modèle**
+
+Vérifier le nombre de FLOPs et imprimer chaque couche peut également aider à déboguer les problèmes de ta configuration de modèle personnalisé. Le nombre de FLOPs doit être non nul pour un modèle valide. S'il est à zéro, il y a probablement un problème avec la passe avant. Exécuter une passe avant simple devrait montrer l'erreur exacte rencontrée.
+    
+    
+    from ultralytics import YOLO
+    
+    # Build model with verbose output to see layer details
+    model = YOLO("debug_model.yaml", verbose=True)
+    
+    # Check model FLOPs. Failed forward pass causes 0 FLOPs.
+    model.info()
+    
+    # Inspect individual layers
+    for i, layer in enumerate(model.model.model):
+        print(f"Layer {i}: {layer}")
+
+**Validation étape par étape**
+
+  1. **Commence au minimum** : Teste d'abord avec l'architecture la plus simple possible
+  2. **Ajoute progressivement** : Construis la complexité couche par couche
+  3. **Vérifie les dimensions** : Valide la compatibilité des canaux et des tailles spatiales
+  4. **Valide la mise à l'échelle** : Teste avec différentes tailles de modèle (`n`, `s`, `m`)
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionComment puis-je changer le nombre de classes dans mon modèle ?#
+
+Définit le paramètre `nc` en haut de ton fichier YAML pour qu'il corresponde au nombre de classes de ton jeu de données.
+    
+    
+    nc: 5 # 5 classes
+
+### Link to this sectionPuis-je utiliser un backbone personnalisé dans mon fichier YAML de modèle ?#
+
+Oui. Tu peux utiliser n'importe quel module pris en charge, y compris les backbones TorchVision, ou définir ton propre module personnalisé et l'importer comme décrit dans Intégration de modules personnalisés.
+
+### Link to this sectionComment puis-je mettre à l'échelle mon modèle pour différentes tailles (nano, small, medium, etc.) ?#
+
+Utilise la section `scales` section dans ton YAML pour définir les facteurs d'échelle pour la profondeur, la largeur et les canaux max. Le modèle appliquera automatiquement ces paramètres lorsque tu chargeras le fichier YAML de base avec l'échelle ajoutée au nom du fichier (par exemple, `yolo26n.yaml`).
+
+### Link to this sectionQue signifie le format `[from, repeats, module, args]` ?#
+
+Ce format spécifie comment chaque couche est construite :
+
+  * `from` : source(s) d'entrée
+  * `repeats` : nombre de répétitions du module
+  * `module` : le type de couche
+  * `args` : arguments pour le module
+
+
+
+### Link to this sectionComment puis-je dépanner les erreurs d'inadéquation des canaux ?#
+
+Vérifie que les canaux de sortie d'une couche correspondent aux canaux d'entrée attendus de la suivante. Utilise `print(model.model.model)` pour inspecter l'architecture de ton modèle.
+
+### Link to this sectionOù puis-je trouver une liste des modules disponibles et leurs arguments ?#
+
+Consulte le code source dans le répertoire [`ultralytics/nn/modules`](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/nn/modules) pour tous les modules disponibles et leurs arguments.
+
+### Link to this sectionComment puis-je ajouter un module personnalisé à ma configuration YAML ?#
+
+Définit ton module dans le code source, importe-le comme indiqué dans Modification du code source, et référence-le par son nom dans ton fichier YAML.
+
+### Link to this sectionPuis-je utiliser des poids pré-entraînés avec un YAML personnalisé ?#
+
+Oui, tu peux utiliser `model.load("path/to/weights")` pour charger des poids depuis un point de contrôle pré-entraîné. Cependant, seuls les poids des couches correspondantes seront chargés avec succès.
+
+### Link to this sectionComment puis-je valider ma configuration de modèle ?#
+
+Utilise `model.info()` pour vérifier si le nombre de FLOPs est non nul. Un modèle valide doit afficher un nombre de FLOPs non nul. S'il est à zéro, suis les suggestions dans Conseils de débogage pour trouver le problème.
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/model-yaml-config.md)
+
+[GLglenn-jocher7](https://github.com/glenn-jocher)[Y-Y-T-G2](https://github.com/Y-T-G)[RIRizwanMunawar1](https://github.com/RizwanMunawar)
+
+Créé 16 sept. 2025Mis à jour il y a 2 semaines
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

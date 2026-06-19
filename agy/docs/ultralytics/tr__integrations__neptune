@@ -1,0 +1,166 @@
+---
+source_url: https://docs.ultralytics.com/tr/integrations/neptune
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/neptune.md)
+
+Neptune edinimi ve SaaS hizmetinin sonlandırılması
+
+Neptune, OpenAI tarafından satın alınmak üzere bir anlaşma yapmış olup, 4 Mart 2026'da sona erecek bir geçiş döneminden sonra barındırılan (SaaS) hizmetini durduracaktır. [Resmi duyuruyu](https://neptune.ai/blog/we-are-joining-openai) incele ve geçiş veya dışa aktarma planlarını buna göre yap.
+
+# Link to this sectionNeptune ile Deney Takibi#
+
+[Neptune](https://neptune.ai/), çok sayıda deney yürüten ekipler için oluşturulmuş bir MLOps meta veri deposudur. Tüm model oluşturma meta verilerini kaydetmen, saklaman, görüntülemen, düzenlemen, karşılaştırman ve sorgulaman için sana tek bir yer sunar.
+
+Ultralytics YOLO26, [deney takibini](https://www.ultralytics.com/glossary/experiment-tracking) kolaylaştırmak için Neptune ile entegre olur. Bu entegrasyon, özel günlük kaydı kodu yazmana gerek kalmadan eğitim metriklerini otomatik olarak günlüğe kaydetmene, model tahminlerini görselleştirmene ve model çıktılarını depolamana olanak tanır.
+
+![Neptune.ai ML experiment tracking dashboard](https://docs.neptune.ai/img/app/app_preview.png)
+
+## Link to this sectionTemel Özellikler#
+
+  * **Otomatik Günlük Kaydı** : Kutu kaybı (box loss), sınıflandırma kaybı ve [mAP](https://www.ultralytics.com/glossary/mean-average-precision-map) gibi temel eğitim metriklerini otomatik olarak günlüğe kaydet.
+  * **Görüntü Görselleştirme** : Eğitim mozaiklerini ve doğrulama tahminlerini doğrudan Neptune panosunda görüntüle.
+  * **Model Kontrol Noktaları** : Eğitilen model ağırlıklarını (`best.pt`) eğitimin sonunda otomatik olarak yükle ve sürüm kontrolünü yap.
+  * **Hiperparametre Takibi** : Deneylerinin tam olarak tekrarlanabilirliğini sağlamak için tüm yapılandırma parametrelerini günlüğe kaydet.
+  * **Etkileşimli Grafikler** : Model performansını analiz etmek için karmaşıklık matrislerini ve kesinlik-duyarlılık (precision-recall) eğrilerini görselleştir.
+
+
+
+## Link to this sectionKurulum#
+
+To use Neptune with Ultralytics, you will need to install the `neptune` client package along with `ultralytics`.
+
+Kurulum
+    
+    
+    # Install the required packages
+    pip install ultralytics neptune
+    
+    # Enable Neptune integration in Ultralytics settings
+    yolo settings neptune=True
+
+## Link to this sectionYapılandırma#
+
+Eğitime başlamadan önce yerel ortamını Neptune projenle bağlaman gerekir. Neptune panondan **API Token** ve **Project Name** bilgilerine ihtiyacın olacak.
+
+### Link to this sectionKimlik Bilgilerini Al#
+
+  1. [Neptune.ai](https://neptune.ai/) sitesine giriş yap.
+  2. Yeni bir proje oluştur (veya mevcut olanı seç).
+  3. Kullanıcı menüne git ve **API Token** değerini al.
+
+
+
+### Link to this sectionOrtam Değişkenlerini Ayarla#
+
+The securest way to handle credentials is via environment variables. Note that the Ultralytics Neptune callback reads the YOLO `project` argument and does not use `NEPTUNE_PROJECT`. Pass the full Neptune slug (e.g., `workspace/name`) via `project=` in your training command; otherwise Neptune will try to use the literal default `"Ultralytics"` and the run will fail.
+    
+    
+    export NEPTUNE_API_TOKEN="your_long_api_token_here" # required
+
+## Link to this sectionKullanım#
+
+Yapılandırma tamamlandığında YOLO26 modellerini eğitmeye başlayabilirsin. `neptune` paketi yüklü olduğunda ve ayarlar kısmında entegrasyon etkinleştirildiğinde Neptune entegrasyonu otomatik olarak çalışır.
+
+### Link to this sectionEğitim Örneği#
+
+Neptune Günlük Kaydı ile YOLO26 Eğitimi
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Train the model
+    # Pass the Neptune project slug as the 'project' argument (workspace/name)
+    results = model.train(data="coco8.yaml", epochs=10, project="my-workspace/my-project", name="experiment-1")
+
+## Link to this sectionEntegrasyonu Anlamak#
+
+Aşağıdaki şema, Ultralytics eğitim hattının çeşitli çıktıları ve metrikleri günlüğe kaydetmek için Neptune ile nasıl etkileşime girdiğini göstermektedir.
+    
+    
+    graph LR
+        A[YOLO Training Loop] --> B{Neptune Callback}
+        B -->|Log Scalars| C[Loss, mAP, LR]
+        B -->|Log Images| D[Mosaics, Preds]
+        B -->|Log Artifacts| E[Model Weights]
+        B -->|Log Metadata| F[Hyperparameters]
+    
+        C --> G[Neptune Server]
+        D --> G
+        E --> G
+        F --> G
+    
+        G --> H[Neptune Web Dashboard]
+
+### Link to this sectionNeler Günlüğe Kaydedilir?#
+
+Eğitim komutunu çalıştırdığında, Neptune entegrasyonu çalıştırma sırasında otomatik olarak aşağıdaki veri yapısını yakalar:
+
+  1. **Yapılandırma/Hiperparametreler** : Tüm eğitim bağımsız değişkenleri (epochs, lr0, optimizer vb.) Yapılandırma bölümünün altında günlüğe kaydedilir.
+  2. **Yapılandırma/Model** : Model mimarisi ve tanımı.
+  3. **Metrikler** : 
+     * **Train** : `box_loss`, `cls_loss`, `dfl_loss`, `lr` (öğrenme oranı).
+     * **Metrikler** : `precision`, `recall`, `mAP50`, `mAP50-95`.
+  4. **Görüntüler** : 
+     * `Mosaic`: Veri artırmayı gösteren eğitim yığınları.
+     * `Validation`: Doğrulama verileri üzerindeki temel doğruluk etiketleri ve model tahminleri.
+     * `Plots`: Karmaşıklık matrisleri, Kesinlik-Duyarlılık eğrileri.
+  5. **Ağırlıklar** : Nihai eğitilmiş model (`best.pt`), Neptune çalışmasındaki `weights` klasörüne yüklenir.
+
+
+
+## Link to this sectionGelişmiş Kullanım#
+
+### Link to this sectionÇalışmaları Düzenleme#
+
+Neptune'daki çalışmalarını düzenlemek için standart Ultralytics `project` ve `name` bağımsız değişkenlerini kullanabilirsin.
+
+  * `project`: Neptune proje slug değeri olan `workspace/name` olmalıdır; geri aramanın `neptune.init_run` fonksiyonuna ilettiği değer budur.
+  * `name`: Belirli çalışma için tanımlayıcı görevi görür.
+
+
+
+### Link to this sectionÖzel Günlük Kaydı#
+
+Otomatik günlük kaydının yanı sıra ek özel metrikleri kaydetmen gerekirse Neptune çalışma örneğine erişebilirsin. Ultralytics entegrasyonu çalışma yaşam döngüsünü dahili olarak yönettiğinden, belirli çalışma nesnesine erişmek için eğitici mantığını değiştirmen veya özel bir geri arama (callback) oluşturman gerektiğini unutma.
+
+## Link to this sectionSSS#
+
+### Link to this sectionNeptune günlük kaydını nasıl devre dışı bırakırım?#
+
+`neptune` paketini yüklediysen ancak belirli bir oturum için veya genel olarak günlük kaydını devre dışı bırakmak istiyorsan, YOLO ayarlarını değiştirebilirsin.
+    
+    
+    # Disable Neptune integration
+    yolo settings neptune=False
+
+### Link to this sectionGörüntülerim yüklenmiyor. Sorun ne olabilir?#
+
+Ağının Neptune sunucularına bağlantıya izin verdiğinden emin ol. Ayrıca, görüntü kaydı genellikle belirli aralıklarla (örneğin, epokların sonunda veya eğitimin sonunda) gerçekleşir. `Ctrl+C` kullanarak eğitimi erken kesersen, karmaşıklık matrisleri veya en iyi model ağırlıkları gibi bazı nihai veriler yüklenmeyebilir.
+
+### Link to this sectionBelirli bir Neptune çalışma kimliğine (run ID) günlük kaydı yapabilir miyim?#
+
+Mevcut entegrasyon, her eğitim oturumu için otomatik olarak yeni bir çalışma oluşturur. Mevcut bir çalışmaya günlük kaydını sürdürmek için genellikle Python kodunda Neptune başlatma işlemini manuel olarak yönetmen gerekir; bu, otomatik entegrasyonun kapsamı dışındadır. Ancak Ultralytics, yerel olarak eğitimin sürdürülmesini destekler ve bu, sürdürülen epokları takip etmek için Neptune'da yeni bir çalışma oluşturacaktır.
+
+### Link to this sectionModel ağırlıklarını Neptune'da nerede bulabilirim?#
+
+In your Neptune dashboard, navigate to the **Artifacts** or **All Metadata** section. You will find a `weights` folder containing your `best.pt` file, which you can download for deployment.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/neptune.md)
+
+[GLglenn-jocher3](https://github.com/glenn-jocher)[RAraimbekovm1](https://github.com/raimbekovm)
+
+Oluşturulma 4 Ara 2025Güncellenme 2 ay önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

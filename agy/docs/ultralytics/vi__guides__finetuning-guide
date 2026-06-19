@@ -1,0 +1,194 @@
+---
+source_url: https://docs.ultralytics.com/vi/guides/finetuning-guide
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+# Link to this sectionCách tinh chỉnh YOLO trên tập dữ liệu tùy chỉnh#
+
+[Fine-tuning](https://www.ultralytics.com/glossary/fine-tuning) (tinh chỉnh) giúp điều chỉnh một model đã được huấn luyện trước để nhận diện các lớp mới bằng cách bắt đầu từ các trọng số đã học thay vì khởi tạo ngẫu nhiên. Thay vì huấn luyện từ đầu trong hàng trăm epoch, fine-tuning tận dụng các đặc trưng [COCO](/vi/datasets/detect/coco) đã được huấn luyện trước và hội tụ trên dữ liệu tùy chỉnh trong thời gian ngắn hơn rất nhiều.
+
+Hướng dẫn này bao gồm việc fine-tuning [YOLO26](/vi/models/yolo26) trên các tập dữ liệu tùy chỉnh, từ cách sử dụng cơ bản đến các kỹ thuật nâng cao như đóng băng lớp và huấn luyện hai giai đoạn.
+
+## Link to this sectionFine-Tuning so với Huấn luyện từ đầu#
+
+Một model được huấn luyện trước đã học được các đặc trưng thị giác tổng quát - phát hiện cạnh, nhận diện kết cấu, hiểu hình dạng - từ hàng triệu hình ảnh. [Transfer learning](https://www.ultralytics.com/glossary/transfer-learning) (học chuyển đổi) thông qua fine-tuning tái sử dụng kiến thức đó và chỉ dạy cho model biết các lớp mới trông như thế nào, đó là lý do tại sao nó hội tụ nhanh hơn và cần ít dữ liệu hơn. Huấn luyện từ đầu sẽ loại bỏ tất cả những điều đó và buộc model phải học lại mọi thứ từ các mẫu ở cấp độ pixel, điều này đòi hỏi tài nguyên nhiều hơn đáng kể.
+
+| Tinh chỉnh| Huấn luyện từ đầu  
+---|---|---  
+**Trọng số khởi đầu**|  Được huấn luyện trước trên COCO (80 lớp)| Khởi tạo ngẫu nhiên  
+**Lệnh**| `YOLO("yolo26n.pt")`| `YOLO("yolo26n.yaml")`  
+**Hội tụ**|  Nhanh hơn - phần backbone đã được huấn luyện| Chậm hơn - tất cả các lớp học từ con số 0  
+**Yêu cầu dữ liệu**|  Thấp hơn - các đặc trưng được huấn luyện trước bù đắp cho lượng dữ liệu ít hơn| Cao hơn - model phải tự học tất cả các đặc trưng từ tập dữ liệu  
+**Khi nào nên sử dụng**|  Các lớp tùy chỉnh với hình ảnh tự nhiên| Các lĩnh vực khác biệt hoàn toàn với COCO (y tế, vệ tinh, radar)  
+  
+Fine-tuning không yêu cầu mã bổ sung
+
+Khi một tệp `.pt` được tải bằng `YOLO("yolo26n.pt")`, các trọng số được huấn luyện trước sẽ được lưu trữ trong model. Việc gọi `.train(data="custom.yaml")` sau đó sẽ tự động chuyển tất cả các trọng số tương thích sang kiến trúc model mới, khởi tạo lại bất kỳ lớp nào không khớp (ví dụ: phần detection head khi số lượng lớp khác nhau) và bắt đầu huấn luyện. Không cần tải trọng số thủ công, thao tác lớp hoặc mã học chuyển đổi tùy chỉnh nào.
+
+### Link to this sectionCách thức chuyển đổi trọng số được huấn luyện trước hoạt động#
+
+Khi một model được huấn luyện trước được fine-tuned trên một tập dữ liệu có số lượng lớp khác (ví dụ: 80 lớp của COCO sang 5 lớp tùy chỉnh), Ultralytics thực hiện chuyển đổi trọng số nhận biết hình dạng (shape-aware):
+
+  1. **Backbone và neck chuyển đổi hoàn toàn** \- các lớp này trích xuất các đặc trưng thị giác tổng quát và hình dạng của chúng độc lập với số lượng lớp.
+  2. **Detection head được khởi tạo lại một phần** \- các lớp đầu ra phân loại (`cv3`, `one2one_cv3`) có hình dạng gắn liền với số lượng lớp (80 so với 5), vì vậy chúng không thể chuyển đổi và được khởi tạo ngẫu nhiên. Các lớp hồi quy hộp (box regression) (`cv2`, `one2one_cv2`) trong head có hình dạng cố định bất kể số lượng lớp, vì vậy chúng chuyển đổi bình thường.
+  3. **Phần lớn các trọng số được chuyển đổi** khi thay đổi số lượng lớp. Chỉ các lớp dành riêng cho phân loại trong detection head mới được khởi tạo lại - các nhánh backbone, neck và hồi quy hộp vẫn được giữ nguyên.
+
+
+
+Đối với các tập dữ liệu có cùng số lượng lớp như model được huấn luyện trước (ví dụ: fine-tuning trọng số đã huấn luyện trên COCO cho một tập dữ liệu 80 lớp khác), 100% trọng số bao gồm cả detection head sẽ được chuyển đổi.
+
+## Link to this sectionVí dụ về Fine-Tuning cơ bản#
+
+Ví dụ
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load pretrained model
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+
+### Link to this sectionChọn kích thước model#
+
+Các model lớn hơn có công suất lớn hơn nhưng cũng có nhiều tham số cần cập nhật hơn, điều này có thể làm tăng nguy cơ overfitting khi dữ liệu huấn luyện bị hạn chế. Bắt đầu với một model nhỏ hơn (YOLO26n hoặc YOLO26s) và chỉ tăng quy mô nếu các chỉ số đánh giá (validation metrics) đi ngang là một cách tiếp cận thực tế. Kích thước model tối ưu phụ thuộc vào độ phức tạp của tác vụ, số lượng lớp, sự đa dạng của tập dữ liệu và phần cứng khả dụng để triển khai. Xem trang [model YOLO26](/vi/models/yolo26) đầy đủ để biết các kích thước và điểm chuẩn hiệu suất khả dụng.
+
+## Link to this sectionLựa chọn bộ tối ưu hóa (Optimizer) và tốc độ học (Learning Rate)#
+
+Cài đặt mặc định `optimizer=auto` sẽ chọn bộ tối ưu hóa và tốc độ học dựa trên tổng số vòng lặp huấn luyện:
+
+  * **< 10.000 vòng lặp** (tập dữ liệu nhỏ hoặc ít epoch): AdamW với tốc độ học thấp, được tính toán tự động
+  * **> 10.000 vòng lặp** (tập dữ liệu lớn): [MuSGD](/reference/optim/muon) (bộ tối ưu hóa kết hợp Muon+SGD) với lr=0.01
+
+
+
+Đối với hầu hết các tác vụ fine-tuning, cài đặt mặc định hoạt động tốt mà không cần tinh chỉnh thủ công. Hãy cân nhắc cài đặt bộ tối ưu hóa một cách rõ ràng khi:
+
+  * **Huấn luyện không ổn định** (loss tăng vọt hoặc phân kỳ): thử `optimizer=AdamW, lr0=0.001` để có sự hội tụ ổn định hơn
+  * **Fine-tuning một model lớn trên một tập dữ liệu nhỏ** : tốc độ học thấp hơn như `lr0=0.001` giúp bảo tồn các đặc trưng đã được huấn luyện trước
+
+
+
+Bộ tối ưu hóa tự động ghi đè lr0 thủ công
+
+Khi `optimizer=auto`, các giá trị `lr0` và `momentum` bị bỏ qua. Để kiểm soát tốc độ học thủ công, hãy đặt bộ tối ưu hóa một cách rõ ràng: `optimizer=SGD, lr0=0.005`.
+
+## Link to this sectionĐóng băng lớp#
+
+Đóng băng ngăn các lớp cụ thể cập nhật trong quá trình huấn luyện. Điều này giúp tăng tốc huấn luyện và giảm [overfitting](https://www.ultralytics.com/glossary/overfitting) khi tập dữ liệu nhỏ so với công suất của model.
+
+Tham số `freeze` chấp nhận số nguyên hoặc một danh sách. Số nguyên `freeze=10` sẽ đóng băng 10 lớp đầu tiên (từ 0 đến 9, tương ứng với backbone trong YOLO26). Một danh sách có thể chứa các chỉ số lớp như `freeze=[0, 3, 5]` để đóng băng một phần backbone, hoặc các chuỗi tên module như `freeze=["23.cv2"]` để kiểm soát chi tiết các nhánh cụ thể trong một lớp.
+
+Ví dụ
+    
+    
+    model.train(data="custom.yaml", epochs=50, freeze=10)
+
+Độ sâu đóng băng phù hợp phụ thuộc vào mức độ tương đồng giữa domain mục tiêu và dữ liệu đã được huấn luyện trước cũng như lượng dữ liệu huấn luyện khả dụng:
+
+Kịch bản| Khuyến nghị| Cơ sở lý luận  
+---|---|---  
+Tập dữ liệu lớn, domain tương tự| `freeze=None` (mặc định)| Đủ dữ liệu để thích ứng với tất cả các lớp mà không gây overfitting  
+Tập dữ liệu nhỏ, domain tương tự| `freeze=10`| Bảo tồn các đặc trưng backbone, giảm số lượng tham số cần huấn luyện  
+Tập dữ liệu rất nhỏ| `freeze=23`| Chỉ huấn luyện detection head, giảm thiểu rủi ro overfitting  
+Domain khác xa với COCO| `freeze=None`| Các đặc trưng backbone có thể không chuyển đổi tốt và cần được huấn luyện lại  
+  
+Độ sâu đóng băng cũng có thể được coi là một siêu tham số - việc thử một vài giá trị (0, 5, 10) và so sánh mAP đánh giá là một cách thực tế để tìm cài đặt tốt nhất cho một tập dữ liệu cụ thể.
+
+## Link to this sectionCác siêu tham số chính cho Fine-Tuning#
+
+Fine-tuning thường đòi hỏi ít điều chỉnh siêu tham số hơn so với huấn luyện từ đầu. Các tham số quan trọng nhất là:
+
+  * **`epochs`** : Fine-tuning hội tụ nhanh hơn so với huấn luyện từ đầu. Hãy bắt đầu với một giá trị vừa phải và sử dụng `patience` để dừng sớm khi các chỉ số đánh giá đi ngang.
+  * **`patience`** : Giá trị mặc định là 100 được thiết kế cho các đợt huấn luyện dài. Giảm giá trị này xuống 10-20 giúp tránh lãng phí thời gian cho các đợt đã hội tụ.
+  * **`warmup_epochs`** : Quá trình warmup mặc định (3 epoch) làm tăng dần tốc độ học từ 0, giúp ngăn chặn các cập nhật gradient lớn làm hỏng các đặc trưng được huấn luyện trước trong các vòng lặp sớm. Việc giữ giá trị mặc định được khuyến khích ngay cả khi fine-tuning.
+
+
+
+Để biết danh sách đầy đủ các tham số huấn luyện, hãy xem [tài liệu tham khảo cấu hình huấn luyện](/vi/usage/cfg).
+
+## Link to this sectionFine-Tuning hai giai đoạn#
+
+Fine-tuning hai giai đoạn chia quá trình huấn luyện thành hai pha. Giai đoạn đầu đóng băng backbone và chỉ huấn luyện neck và head, cho phép các lớp phát hiện thích ứng với các lớp mới mà không làm gián đoạn các đặc trưng đã được huấn luyện trước. Giai đoạn thứ hai mở đóng băng tất cả các lớp và huấn luyện toàn bộ model với tốc độ học thấp hơn để tinh chỉnh backbone cho domain mục tiêu.
+
+Cách tiếp cận này đặc biệt hữu ích khi domain mục tiêu khác biệt đáng kể với COCO (hình ảnh y tế, hình ảnh trên không, hiển vi), nơi backbone có thể cần thích ứng nhưng việc huấn luyện tất cả cùng một lúc gây ra sự không ổn định. Để tự động mở đóng băng với cách tiếp cận dựa trên callback, xem [Đóng băng và Mở đóng băng Backbone](/vi/guides/custom-trainer#freezing-and-unfreezing-the-backbone).
+
+Fine-tuning hai giai đoạn
+    
+    
+    from ultralytics import YOLO
+    
+    # Stage 1: freeze backbone, train head and neck
+    model = YOLO("yolo26n.pt")
+    model.train(data="custom.yaml", epochs=20, freeze=10, name="stage1", exist_ok=True)
+    
+    # Stage 2: unfreeze all, fine-tune with lower lr
+    model = YOLO("runs/detect/stage1/weights/best.pt")
+    model.train(data="custom.yaml", epochs=30, lr0=0.001, name="stage2", exist_ok=True)
+
+## Link to this sectionCác lỗi thường gặp#
+
+### Link to this sectionModel không đưa ra dự đoán nào#
+
+  * **Không đủ dữ liệu huấn luyện** : huấn luyện với rất ít mẫu là nguyên nhân phổ biến nhất - model không thể học hoặc khái quát hóa từ quá ít dữ liệu. Hãy đảm bảo có đủ các ví dụ đa dạng cho mỗi lớp trước khi điều tra các nguyên nhân khác.
+  * **Kiểm tra đường dẫn tập dữ liệu** : các đường dẫn không chính xác trong `data.yaml` sẽ tạo ra nhãn bằng không mà không có thông báo lỗi. Hãy chạy `yolo detect val model=yolo26n.pt data=your_data.yaml` trước khi huấn luyện để xác nhận các nhãn được tải chính xác.
+  * **Giảm ngưỡng tin cậy** : nếu có dự đoán nhưng bị lọc bỏ, hãy thử `conf=0.1` trong quá trình inference.
+  * **Xác minh số lượng lớp** : đảm bảo `nc` trong `data.yaml` khớp với số lượng lớp thực tế trong các tệp nhãn.
+
+
+
+### Link to this sectionmAP đánh giá đi ngang sớm#
+
+  * **Thêm nhiều dữ liệu hơn** : fine-tuning được hưởng lợi đáng kể từ dữ liệu huấn luyện bổ sung, đặc biệt là các ví dụ đa dạng với góc độ, ánh sáng và nền khác nhau.
+  * **Kiểm tra sự cân bằng lớp** : các lớp không được đại diện đầy đủ sẽ có AP thấp. Sử dụng `cls_pw` để áp dụng trọng số lớp theo tần suất nghịch đảo (bắt đầu với `cls_pw=0.25` cho sự mất cân bằng vừa phải, tăng lên `1.0` cho sự mất cân bằng nghiêm trọng).
+  * **Giảm tăng cường dữ liệu (augmentation)** : đối với các tập dữ liệu rất nhỏ, việc tăng cường quá mức có thể gây hại nhiều hơn là có lợi. Hãy thử `mosaic=0.5` hoặc `mosaic=0.0`.
+  * **Tăng độ phân giải** : đối với các tập dữ liệu có đối tượng nhỏ, hãy thử `imgsz=1280` để giữ chi tiết.
+
+
+
+### Link to this sectionHiệu suất giảm trên các lớp gốc sau khi fine-tuning#
+
+Đây được gọi là sự quên thảm họa (catastrophic forgetting) - model mất đi kiến thức đã học trước đó khi chỉ được fine-tuned trên dữ liệu mới. Sự quên hầu như không thể tránh khỏi nếu không bao gồm các hình ảnh tập dữ liệu gốc cùng với dữ liệu mới. Để giảm thiểu điều này:
+
+  * **Hợp nhất các tập dữ liệu** : bao gồm các ví dụ về các lớp gốc cùng với các lớp mới trong quá trình fine-tuning. Đây là cách duy nhất đáng tin cậy để ngăn chặn sự quên.
+  * **Đóng băng backbone và neck** : việc đóng băng cả backbone và neck để chỉ detection head huấn luyện sẽ giúp ích cho các đợt fine-tuning ngắn với tốc độ học rất thấp.
+  * **Huấn luyện ít epoch hơn** : model càng huấn luyện lâu trên dữ liệu mới độc quyền, sự quên càng tăng.
+
+
+
+## Link to this sectionCâu hỏi thường gặp (FAQ)#
+
+### Link to this sectionTôi cần bao nhiêu hình ảnh để fine-tune YOLO?#
+
+Không có số lượng tối thiểu cố định - kết quả phụ thuộc vào độ phức tạp của tác vụ, số lượng lớp và mức độ tương đồng của domain với COCO. Nhiều hình ảnh đa dạng hơn (ánh sáng, góc độ, nền thay đổi) quan trọng hơn số lượng thô. Hãy bắt đầu với những gì bạn có và tăng quy mô nếu các chỉ số đánh giá không đủ.
+
+### Link to this sectionLàm thế nào để fine-tune YOLO26 trên một tập dữ liệu tùy chỉnh?#
+
+Tải một tệp `.pt` đã được huấn luyện trước và gọi `.train()` với đường dẫn đến một tệp `data.yaml` tùy chỉnh. Ultralytics tự động xử lý [chuyển đổi trọng số](https://www.ultralytics.com/glossary/transfer-learning), khởi tạo lại detection head và chọn bộ tối ưu hóa. Xem phần Fine-Tuning cơ bản để biết ví dụ về mã hoàn chỉnh.
+
+### Link to this sectionTại sao model YOLO đã fine-tune của tôi không phát hiện được gì?#
+
+Các nguyên nhân phổ biến nhất là đường dẫn không chính xác trong `data.yaml` (dẫn đến không có nhãn), sự không khớp giữa `nc` trong YAML và các tệp nhãn thực tế, hoặc ngưỡng tin cậy quá cao. Xem Các lỗi thường gặp để biết danh sách kiểm tra khắc phục sự cố đầy đủ.
+
+### Link to this sectionTôi nên đóng băng các lớp YOLO nào để fine-tuning?#
+
+Điều này phụ thuộc vào kích thước tập dữ liệu và sự tương đồng của domain. Đối với các tập dữ liệu nhỏ với domain tương tự như COCO, việc đóng băng backbone (`freeze=10`) giúp ngăn chặn overfitting. Đối với các domain rất khác với COCO, việc để tất cả các lớp không đóng băng (`freeze=None`) cho phép backbone thích ứng. Xem Đóng băng lớp để biết các khuyến nghị chi tiết.
+
+### Link to this sectionLàm thế nào để ngăn chặn sự quên thảm họa khi fine-tuning YOLO trên các lớp mới?#
+
+Bao gồm các ví dụ về các lớp gốc trong dữ liệu huấn luyện cùng với các lớp mới. Nếu điều đó không khả thi, việc đóng băng nhiều lớp hơn (`freeze=10` hoặc cao hơn) và sử dụng tốc độ học thấp hơn sẽ giúp bảo tồn kiến thức đã được huấn luyện trước. Xem Hiệu suất giảm trên các lớp gốc để biết thêm chi tiết.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+[RAraimbekovm1](https://github.com/raimbekovm)
+
+Đã tạo tháng trướcĐã cập nhật tháng trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

@@ -1,0 +1,332 @@
+---
+source_url: https://docs.ultralytics.com/vi/guides/kfold-cross-validation
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+# Link to this sectionKiểm chứng chéo K-Fold với Ultralytics#
+
+## Link to this sectionGiới thiệu#
+
+Hướng dẫn toàn diện này minh họa việc triển khai Kiểm chứng chéo K-Fold cho các tập dữ liệu [phát hiện đối tượng](https://www.ultralytics.com/glossary/object-detection) trong hệ sinh thái Ultralytics. Chúng ta sẽ tận dụng định dạng phát hiện YOLO và các thư viện Python chính như sklearn, pandas và PyYAML để hướng dẫn bạn thực hiện các thiết lập cần thiết, quy trình tạo vectơ đặc trưng và thực thi phân tách tập dữ liệu K-Fold.
+
+![K-fold cross validation data splitting](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/k-fold-cross-validation-overview.avif)
+
+Cho dù dự án của bạn liên quan đến tập dữ liệu Fruit Detection hay một nguồn dữ liệu tùy chỉnh, hướng dẫn này nhằm giúp bạn hiểu và áp dụng Kiểm chứng chéo K-Fold để tăng cường độ tin cậy và tính bền vững cho các mô hình [học máy](https://www.ultralytics.com/glossary/machine-learning-ml) của bạn. Mặc dù chúng ta đang áp dụng `k=5` fold cho hướng dẫn này, hãy lưu ý rằng số lượng fold tối ưu có thể thay đổi tùy thuộc vào tập dữ liệu và các đặc thù trong dự án của bạn.
+
+Hãy bắt đầu thôi.
+
+## Link to this sectionThiết lập#
+
+  * Các chú thích của bạn nên ở [định dạng phát hiện YOLO](/vi/datasets/detect).
+
+  * Hướng dẫn này giả định rằng các tệp chú thích đã có sẵn cục bộ.
+
+  * Đối với phần minh họa, chúng ta sử dụng tập dữ liệu [Fruit Detection](https://www.kaggle.com/datasets/lakshaytyagi01/fruit-detection/code).
+
+    * Tập dữ liệu này chứa tổng cộng 8479 hình ảnh.
+    * Nó bao gồm 6 nhãn lớp, mỗi nhãn có tổng số lượng thực thể được liệt kê dưới đây.
+
+
+
+Nhãn lớp| Số lượng thực thể  
+---|---  
+Apple| 7049  
+Grapes| 7202  
+Pineapple| 1613  
+Orange| 15549  
+Banana| 3536  
+Watermelon| 1976  
+  
+  * Các gói Python cần thiết bao gồm:
+
+    * `ultralytics`
+    * `sklearn`
+    * `pandas`
+    * `pyyaml`
+  * Hướng dẫn này vận hành với `k=5` fold. Tuy nhiên, bạn nên xác định số lượng fold tốt nhất cho tập dữ liệu cụ thể của mình.
+
+
+
+  1. Khởi tạo một môi trường ảo Python (`venv`) mới cho dự án của bạn và kích hoạt nó. Sử dụng `pip` (hoặc trình quản lý gói ưa thích của bạn) để cài đặt:
+
+     * Thư viện Ultralytics: `pip install -U ultralytics`. Ngoài ra, bạn có thể clone [repo](https://github.com/ultralytics/ultralytics) chính thức.
+     * Scikit-learn, pandas và PyYAML: `pip install -U scikit-learn pandas pyyaml`.
+  2. Xác minh rằng các chú thích của bạn đang ở [định dạng phát hiện YOLO](/vi/datasets/detect).
+
+     * Trong hướng dẫn này, tất cả các tệp chú thích được tìm thấy trong thư mục `Fruit-Detection/labels`.
+
+
+
+## Link to this sectionTạo vectơ đặc trưng cho tập dữ liệu phát hiện đối tượng#
+
+  1. Bắt đầu bằng cách tạo một tệp Python `example.py` mới cho các bước dưới đây.
+
+  2. Tiến hành truy xuất tất cả các tệp nhãn cho tập dữ liệu của bạn.
+         
+         from pathlib import Path
+         
+         dataset_path = Path("./Fruit-detection")  # replace with 'path/to/dataset' for your custom data
+         labels = sorted(dataset_path.rglob("*labels/*.txt"))  # all data in 'labels'
+
+  3. Bây giờ, hãy đọc nội dung của tệp YAML tập dữ liệu và trích xuất các chỉ số của nhãn lớp.
+         
+         import yaml
+         
+         yaml_file = "path/to/data.yaml"  # your data YAML with data directories and names dictionary
+         with open(yaml_file, encoding="utf8") as y:
+             classes = yaml.safe_load(y)["names"]
+         cls_idx = sorted(classes.keys())
+
+  4. Khởi tạo một DataFrame `pandas` trống.
+         
+         import pandas as pd
+         
+         index = [label.stem for label in labels]  # uses base filename as ID (no extension)
+         labels_df = pd.DataFrame([], columns=cls_idx, index=index)
+
+  5. Đếm các thực thể của mỗi nhãn lớp có mặt trong các tệp chú thích.
+         
+         from collections import Counter
+         
+         for label in labels:
+             lbl_counter = Counter()
+         
+             with open(label) as lf:
+                 lines = lf.readlines()
+         
+             for line in lines:
+                 # classes for YOLO label uses integer at first position of each line
+                 lbl_counter[int(line.split(" ", 1)[0])] += 1
+         
+             labels_df.loc[label.stem] = lbl_counter
+         
+         labels_df = labels_df.fillna(0.0)  # replace `nan` values with `0.0`
+
+  6. Sau đây là một chế độ xem mẫu của DataFrame đã được điền dữ liệu:
+         
+         0    1    2    3    4    5
+         '0000a16e4b057580_jpg.rf.00ab48988370f64f5ca8ea4...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.7e6dce029fb67f01eb19aa7...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '0000a16e4b057580_jpg.rf.bc4d31cdcbe229dd022957a...'  0.0  0.0  0.0  0.0  0.0  7.0
+         '00020ebf74c4881c_jpg.rf.508192a0a97aa6c4a3b6882...'  0.0  0.0  0.0  1.0  0.0  0.0
+         '00020ebf74c4881c_jpg.rf.5af192a2254c8ecc4188a25...'  0.0  0.0  0.0  1.0  0.0  0.0
+          ...                                                  ...  ...  ...  ...  ...  ...
+         'ff4cd45896de38be_jpg.rf.c4b5e967ca10c7ced3b9e97...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff4cd45896de38be_jpg.rf.ea4c1d37d2884b3e3cbce08...'  0.0  0.0  0.0  0.0  0.0  2.0
+         'ff5fd9c3c624b7dc_jpg.rf.bb519feaa36fc4bf630a033...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'ff5fd9c3c624b7dc_jpg.rf.f0751c9c3aa4519ea3c9d6a...'  1.0  0.0  0.0  0.0  0.0  0.0
+         'fffe28b31f2a70d4_jpg.rf.7ea16bd637ba0711c53b540...'  0.0  6.0  0.0  0.0  0.0  0.0
+
+
+
+
+Các hàng đánh chỉ mục cho các tệp nhãn, mỗi tệp tương ứng với một hình ảnh trong tập dữ liệu của bạn, và các cột tương ứng với các chỉ số nhãn lớp của bạn. Mỗi hàng đại diện cho một vectơ đặc trưng giả, với số lượng của từng nhãn lớp có mặt trong tập dữ liệu của bạn. Cấu trúc dữ liệu này cho phép áp dụng [Kiểm chứng chéo K-Fold](https://www.ultralytics.com/glossary/cross-validation) cho một tập dữ liệu phát hiện đối tượng.
+
+## Link to this sectionPhân tách tập dữ liệu K-Fold#
+
+  1. Bây giờ chúng ta sẽ sử dụng lớp `KFold` từ `sklearn.model_selection` để tạo `k` phần phân tách của tập dữ liệu.
+
+     * Quan trọng: 
+       * Việc thiết lập `shuffle=True` đảm bảo sự phân phối ngẫu nhiên của các lớp trong các phần phân tách của bạn.
+       * Bằng cách thiết lập `random_state=M` trong đó `M` là một số nguyên được chọn, bạn có thể đạt được kết quả có thể lặp lại.
+    
+    import random
+    
+    from sklearn.model_selection import KFold
+    
+    random.seed(0)  # for reproducibility
+    ksplit = 5
+    kf = KFold(n_splits=ksplit, shuffle=True, random_state=20)  # setting random_state for repeatable results
+    
+    kfolds = list(kf.split(labels_df))
+
+  2. Tập dữ liệu hiện đã được chia thành `k` fold, mỗi fold có một danh sách các chỉ số `train` và `val`. Chúng ta sẽ xây dựng một DataFrame để hiển thị các kết quả này rõ ràng hơn.
+         
+         folds = [f"split_{n}" for n in range(1, ksplit + 1)]
+         folds_df = pd.DataFrame(index=index, columns=folds)
+         
+         for i, (train, val) in enumerate(kfolds, start=1):
+             folds_df[f"split_{i}"].loc[labels_df.iloc[train].index] = "train"
+             folds_df[f"split_{i}"].loc[labels_df.iloc[val].index] = "val"
+
+  3. Bây giờ chúng ta sẽ tính toán sự phân phối của các nhãn lớp cho mỗi fold dưới dạng tỷ lệ của các lớp hiện diện trong `val` so với những lớp hiện diện trong `train`.
+         
+         fold_lbl_distrb = pd.DataFrame(index=folds, columns=cls_idx)
+         
+         for n, (train_indices, val_indices) in enumerate(kfolds, start=1):
+             train_totals = labels_df.iloc[train_indices].sum()
+             val_totals = labels_df.iloc[val_indices].sum()
+         
+             # To avoid division by zero, we add a small value (1E-7) to the denominator
+             ratio = val_totals / (train_totals + 1e-7)
+             fold_lbl_distrb.loc[f"split_{n}"] = ratio
+
+Kịch bản lý tưởng là tất cả các tỷ lệ lớp đều hợp lý tương tự nhau cho mỗi lần phân tách và trên các lớp. Tuy nhiên, điều này sẽ phụ thuộc vào các đặc thù của tập dữ liệu của bạn.
+
+  4. Tiếp theo, chúng ta tạo các thư mục và tệp YAML tập dữ liệu cho mỗi lần phân tách.
+         
+         import datetime
+         
+         supported_extensions = [".jpg", ".jpeg", ".png"]
+         
+         # Initialize an empty list to store image file paths
+         images = []
+         
+         # Loop through supported extensions and gather image files
+         for ext in supported_extensions:
+             images.extend(sorted((dataset_path / "images").rglob(f"*{ext}")))
+         
+         # Create the necessary directories and dataset YAML files
+         save_path = Path(dataset_path / f"{datetime.date.today().isoformat()}_{ksplit}-Fold_Cross-val")
+         save_path.mkdir(parents=True, exist_ok=True)
+         ds_yamls = []
+         
+         for split in folds_df.columns:
+             # Create directories
+             split_dir = save_path / split
+             split_dir.mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "train" / "labels").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "images").mkdir(parents=True, exist_ok=True)
+             (split_dir / "val" / "labels").mkdir(parents=True, exist_ok=True)
+         
+             # Create dataset YAML files
+             dataset_yaml = split_dir / f"{split}_dataset.yaml"
+             ds_yamls.append(dataset_yaml)
+         
+             with open(dataset_yaml, "w") as ds_y:
+                 yaml.safe_dump(
+                     {
+                         "path": split_dir.as_posix(),
+                         "train": "train",
+                         "val": "val",
+                         "names": classes,
+                     },
+                     ds_y,
+                 )
+
+  5. Cuối cùng, sao chép hình ảnh và nhãn vào thư mục tương ứng ('train' hoặc 'val') cho mỗi lần phân tách.
+
+     * **LƯU Ý:** Thời gian cần thiết cho phần này của mã sẽ thay đổi tùy thuộc vào kích thước tập dữ liệu và phần cứng hệ thống của bạn.
+    
+    import shutil
+    
+    from tqdm import tqdm
+    
+    for image, label in tqdm(zip(images, labels), total=len(images), desc="Copying files"):
+        for split, k_split in folds_df.loc[image.stem].items():
+            # Destination directory
+            img_to_path = save_path / split / k_split / "images"
+            lbl_to_path = save_path / split / k_split / "labels"
+    
+            # Copy image and label files to new directory (SamefileError if file already exists)
+            shutil.copy(image, img_to_path / image.name)
+            shutil.copy(label, lbl_to_path / label.name)
+
+
+
+
+## Link to this sectionLưu bản ghi (Tùy chọn)#
+
+Tùy chọn, bạn có thể lưu các bản ghi của việc phân tách K-Fold và DataFrame phân phối nhãn dưới dạng tệp CSV để tham khảo sau này.
+    
+    
+    folds_df.to_csv(save_path / "kfold_datasplit.csv")
+    fold_lbl_distrb.to_csv(save_path / "kfold_label_distribution.csv")
+
+## Link to this sectionHuấn luyện YOLO sử dụng các phân tách dữ liệu K-Fold#
+
+  1. Đầu tiên, tải mô hình YOLO.
+         
+         from ultralytics import YOLO
+         
+         weights_path = "path/to/weights.pt"  # use yolo26n.pt for a small model
+         model = YOLO(weights_path, task="detect")
+
+  2. Tiếp theo, lặp qua các tệp YAML tập dữ liệu để thực hiện huấn luyện. Kết quả sẽ được lưu vào một thư mục được chỉ định bởi các tham số `project` và `name`. Theo mặc định, thư mục này là 'runs/detect/train#' trong đó # là một chỉ số nguyên.
+         
+         results = {}
+         
+         # Define your additional arguments here
+         batch = 16
+         project = "kfold_demo"
+         epochs = 100
+         
+         for k, dataset_yaml in enumerate(ds_yamls):
+             model = YOLO(weights_path, task="detect")
+             results[k] = model.train(
+                 data=dataset_yaml, epochs=epochs, batch=batch, project=project, name=f"fold_{k + 1}"
+             )  # include any additional train arguments
+
+  3. Bạn cũng có thể sử dụng hàm [Ultralytics data.split.autosplit](https://docs.ultralytics.com/reference/data/split) để tự động phân tách tập dữ liệu:
+         
+         from ultralytics.data.split import autosplit
+         
+         # Automatically split dataset into train/val/test
+         autosplit(path="path/to/images", weights=(0.8, 0.2, 0.0), annotated_only=True)
+
+
+
+
+## Link to this sectionKết luận#
+
+Trong hướng dẫn này, chúng ta đã khám phá quy trình sử dụng kiểm chứng chéo K-Fold để huấn luyện mô hình phát hiện đối tượng YOLO. Chúng ta đã học cách chia tập dữ liệu của mình thành K phần, đảm bảo sự phân phối lớp cân bằng trên các fold khác nhau.
+
+Chúng ta cũng đã khám phá quy trình tạo các báo cáo DataFrame để trực quan hóa việc phân tách dữ liệu và phân phối nhãn trên các phần này, cung cấp cho chúng ta cái nhìn rõ ràng về cấu trúc của các tập huấn luyện và kiểm chứng của mình.
+
+Tùy chọn, chúng ta đã lưu các bản ghi của mình để tham khảo trong tương lai, điều này có thể đặc biệt hữu ích trong các dự án quy mô lớn hoặc khi khắc phục sự cố hiệu suất mô hình.
+
+Cuối cùng, chúng ta đã triển khai huấn luyện mô hình thực tế bằng cách sử dụng từng phần phân tách trong một vòng lặp, lưu lại kết quả huấn luyện để phân tích và so sánh thêm.
+
+Kỹ thuật kiểm chứng chéo K-Fold này là một cách mạnh mẽ để tận dụng tối đa dữ liệu hiện có của bạn và giúp đảm bảo rằng hiệu suất mô hình của bạn đáng tin cậy và nhất quán trên các tập hợp con dữ liệu khác nhau. Điều này dẫn đến một mô hình có khả năng tổng quát hóa tốt hơn và đáng tin cậy hơn, ít có khả năng [quá khớp](https://www.ultralytics.com/glossary/overfitting) với các mẫu dữ liệu cụ thể.
+
+Hãy nhớ rằng mặc dù chúng ta đã sử dụng YOLO trong hướng dẫn này, các bước này hầu như có thể chuyển đổi cho các mô hình học máy khác. Hiểu được các bước này cho phép bạn áp dụng kiểm chứng chéo một cách hiệu quả trong các dự án học máy của riêng bạn.
+
+## Link to this sectionCâu hỏi thường gặp#
+
+### Link to this sectionKiểm chứng chéo K-Fold là gì và tại sao nó hữu ích trong phát hiện đối tượng?#
+
+Kiểm chứng chéo K-Fold là một kỹ thuật trong đó tập dữ liệu được chia thành 'k' tập hợp con (fold) để đánh giá hiệu suất mô hình một cách đáng tin cậy hơn. Mỗi fold đóng vai trò vừa là dữ liệu huấn luyện vừa là [dữ liệu kiểm chứng](https://www.ultralytics.com/glossary/validation-data). Trong bối cảnh phát hiện đối tượng, việc sử dụng Kiểm chứng chéo K-Fold giúp đảm bảo hiệu suất của mô hình Ultralytics YOLO của bạn bền vững và có khả năng tổng quát hóa trên các phân tách dữ liệu khác nhau, từ đó nâng cao độ tin cậy. Để biết hướng dẫn chi tiết về cách thiết lập Kiểm chứng chéo K-Fold với Ultralytics YOLO, hãy tham khảo Kiểm chứng chéo K-Fold với Ultralytics.
+
+### Link to this sectionLàm thế nào để tôi triển khai Kiểm chứng chéo K-Fold bằng Ultralytics YOLO?#
+
+Để triển khai Kiểm chứng chéo K-Fold với Ultralytics YOLO, bạn cần thực hiện theo các bước sau:
+
+  1. Xác minh các chú thích đang ở [định dạng phát hiện YOLO](/vi/datasets/detect).
+  2. Sử dụng các thư viện Python như `sklearn`, `pandas` và `pyyaml`.
+  3. Tạo các vectơ đặc trưng từ tập dữ liệu của bạn.
+  4. Phân tách tập dữ liệu của bạn bằng cách sử dụng `KFold` từ `sklearn.model_selection`.
+  5. Huấn luyện mô hình YOLO trên mỗi phần phân tách.
+
+
+
+Để có hướng dẫn toàn diện, hãy xem phần Phân tách tập dữ liệu K-Fold trong tài liệu của chúng tôi.
+
+### Link to this sectionTại sao tôi nên sử dụng Ultralytics YOLO cho phát hiện đối tượng?#
+
+Ultralytics YOLO cung cấp khả năng phát hiện đối tượng theo thời gian thực, hiện đại với [độ chính xác](https://www.ultralytics.com/glossary/accuracy) cao và hiệu quả. Nó linh hoạt, hỗ trợ nhiều tác vụ [thị giác máy tính](https://www.ultralytics.com/glossary/computer-vision-cv) như [phát hiện](/vi/tasks/detect), [phân đoạn thực thể](/vi/tasks/segment), [phân đoạn ngữ nghĩa](/vi/tasks/semantic) và [phân loại](/vi/tasks/classify). Ngoài ra, nó tích hợp liền mạch với các công cụ như [Ultralytics Platform](https://docs.ultralytics.com/platform) để huấn luyện và triển khai mô hình không cần code. Để biết thêm chi tiết, hãy khám phá các lợi ích và tính năng trên [trang Ultralytics YOLO](https://www.ultralytics.com/yolo) của chúng tôi.
+
+### Link to this sectionLàm thế nào để tôi đảm bảo các chú thích của mình ở đúng định dạng cho Ultralytics YOLO?#
+
+Các chú thích của bạn nên tuân theo định dạng phát hiện YOLO. Mỗi tệp chú thích phải liệt kê lớp đối tượng, cùng với tọa độ [hộp bao](https://www.ultralytics.com/glossary/bounding-box) của nó trong hình ảnh. Định dạng YOLO đảm bảo việc xử lý dữ liệu được hợp lý hóa và tiêu chuẩn hóa để huấn luyện các mô hình phát hiện đối tượng. Để biết thêm thông tin về việc định dạng chú thích phù hợp, hãy truy cập [hướng dẫn định dạng phát hiện YOLO](/vi/datasets/detect).
+
+### Link to this sectionTôi có thể sử dụng Kiểm chứng chéo K-Fold với các tập dữ liệu tùy chỉnh khác ngoài Fruit Detection không?#
+
+Có, bạn có thể sử dụng Kiểm chứng chéo K-Fold với bất kỳ tập dữ liệu tùy chỉnh nào miễn là các chú thích ở định dạng phát hiện YOLO. Thay thế các đường dẫn tập dữ liệu và nhãn lớp bằng những nhãn đặc thù cho tập dữ liệu tùy chỉnh của bạn. Sự linh hoạt này đảm bảo rằng bất kỳ dự án phát hiện đối tượng nào cũng có thể hưởng lợi từ việc đánh giá mô hình mạnh mẽ bằng cách sử dụng Kiểm chứng chéo K-Fold. Để có ví dụ thực tế, hãy xem lại phần Tạo vectơ đặc trưng của chúng tôi.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/kfold-cross-validation.md)
+
+[GLglenn-jocher21](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)[PDpderrenger1](https://github.com/pderrenger)[AMambitious-octopus1](https://github.com/ambitious-octopus)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[BUBurhan-Q1](https://github.com/Burhan-Q)[M-M-Amrollahi1](https://github.com/M-Amrollahi)[IVIvorZhu3311](https://github.com/IvorZhu331)
+
+Đã tạo 12 thg 11, 2023Đã cập nhật 2 tuần trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

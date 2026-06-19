@@ -1,0 +1,199 @@
+---
+source_url: https://docs.ultralytics.com/zh/models/rtdetr
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/rtdetr.md)
+
+# Link to this sectionBaidu 的 RT-DETR：基于 Vision [Transformer](https://www.ultralytics.com/glossary/transformer) 的实时目标检测器#
+
+## Link to this section概述#
+
+实时检测 Transformer (RT-DETR) 由 Baidu 开发，是一款尖端的端到端目标检测器，可在保持高[精度](https://www.ultralytics.com/glossary/accuracy)的同时提供实时性能。它基于 DETR（一种无需 NMS 的框架）的理念，同时引入了基于卷积的 [backbone](https://www.ultralytics.com/glossary/backbone) 和高效的混合编码器，以实现实时速度。RT-DETR 通过解耦尺度内交互和跨尺度融合，高效处理多尺度特征。该模型适应性极强，支持在不重新训练的情况下，通过使用不同的解码器层灵活调整推理速度。RT-DETR 在 CUDA 和 TensorRT 等加速后端上表现卓越，性能优于许多其他实时目标检测器。
+
+  
+
+
+  
+**Watch:** How to Use Baidu's RT-DETR for Object Detection | Inference and Benchmarking with Ultralytics 🚀 
+
+![Baidu RT-DETR 模型架构概览](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/baidu-rtdetr-model-overview.avif) **Baidu RT-DETR 概览。** RT-DETR 模型架构图显示了 backbone 的最后三个阶段 {S3, S4, S5} 作为编码器的输入。高效混合编码器通过尺度内特征交互 (AIFI) 和跨尺度特征融合模块 (CCFM) 将多尺度特征转换为一系列图像特征。利用 IoU 感知查询选择来选取固定数量的图像特征，作为解码器的初始目标查询。最后，带有辅助预测头的解码器迭代优化目标查询，以生成框和置信度得分 ([source](https://arxiv.org/pdf/2304.08069))。
+
+### Link to this section主要特性#
+
+  * **高效混合编码器：** Baidu 的 RT-DETR 使用高效的混合编码器，通过解耦尺度内交互和跨尺度融合来处理多尺度特征。这种独特的基于 Vision Transformer 的设计降低了计算成本，并实现了实时 [目标检测](https://www.ultralytics.com/glossary/object-detection)。
+  * **IoU 感知查询选择：** Baidu 的 RT-DETR 通过利用 IoU 感知查询选择改进了目标查询初始化。这使得模型能够专注于场景中最相关的目标，从而提高检测精度。
+  * **适应性推理速度：** Baidu 的 RT-DETR 支持通过使用不同的解码器层来灵活调整推理速度，无需重新训练。这种适应性促进了其在各种实时目标检测场景中的实际应用。
+  * **无需 NMS 的框架：** 基于 DETR，RT-DETR 消除了对 [非极大值抑制](https://www.ultralytics.com/glossary/non-maximum-suppression-nms) 后处理的需求，简化了检测流程并可能提高效率。
+  * **无锚点检测：** 作为一种 [无锚点检测器](https://www.ultralytics.com/glossary/anchor-free-detectors)，RT-DETR 简化了检测过程，并可能提高跨不同数据集的泛化能力。
+
+
+
+## Link to this section预训练模型#
+
+Ultralytics Python API 提供不同规模的预训练 PaddlePaddle RT-DETR 模型：
+
+  * RT-DETR-L：在 COCO val2017 上达到 53.0% AP，在 T4 GPU 上达到 114 FPS
+  * RT-DETR-X：在 COCO val2017 上达到 54.8% AP，在 T4 GPU 上达到 74 FPS
+
+
+
+此外，Baidu 在 2024 年 7 月发布了 RTDETRv2，它在原始架构的基础上通过增强的性能指标进行了进一步改进。
+
+## Link to this section使用示例#
+
+本示例提供了简单的 RT-DETR 训练和推理示例。有关这些及其他 [模式](/zh/modes) 的完整文档，请参阅 [Predict](/zh/modes/predict)、[Train](/zh/modes/train)、[Val](/zh/modes/val) 和 [Export](/zh/modes/export) 文档页面。模型也可以通过 [Ultralytics Platform](https://platform.ultralytics.com) 在云 GPU 上进行训练。
+
+示例
+    
+    
+    from ultralytics import RTDETR
+    
+    # Load a COCO-pretrained RT-DETR-l model
+    model = RTDETR("rtdetr-l.pt")
+    
+    # Display model information (optional)
+    model.info()
+    
+    # Train the model on the COCO8 example dataset for 100 epochs
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640)
+    
+    # Run inference with the RT-DETR-l model on the 'bus.jpg' image
+    results = model("path/to/bus.jpg")
+
+更快推理的权衡
+
+RT-DETR 预训练权重支持两种推理时设置，以在无需重新训练的情况下减少延迟：
+
+  * **`eval_idx`** ：提前停止解码。对于默认的 6 层解码器，使用从零开始的索引 (`0`–`5`)。`eval_idx=5` 使用所有层；`eval_idx=3` 使用 4 层。在配备 TensorRT v10.11 的 T4 GPU 上，RT-DETR-L 使用 4 层时，性能从 8.0 ms / 52.7 mAP 提升至 7.4 ms / 52.5 mAP。
+  * **`num_queries`** ：减少目标查询（默认：300）。在相同的设置下，降低到 100 可以达到 7.4 ms / 51.7 mAP（在 COCO 上）。在每张图像目标较少的数据集上，mAP 的下降通常较小，但请确保该值高于每张图像预计的最大目标数。
+
+
+
+这两种设置都可能降低 mAP——请在部署前在你的数据集上验证这种权衡。
+    
+    
+    from ultralytics import RTDETR
+    
+    rtdetr = RTDETR("rtdetr-l.pt")
+    head = rtdetr.model.model[-1]
+    
+    # Choose one or both settings after validating the speed/accuracy trade-off.
+    head.decoder.eval_idx = 3  # Use 4 of 6 decoder layers.
+    head.num_queries = 100  # Use fewer object queries.
+    
+    results = rtdetr("path/to/image.jpg")
+    
+    # Export uses the same decoder and query settings, including TensorRT exports.
+    rtdetr.export(format="engine", device=0, half=True)
+
+## Link to this section支持的任务和模式#
+
+下表展示了模型类型、特定的预训练权重、每个模型支持的任务，以及通过 ✅ 表情符号指示支持的各种模式（[Train](/zh/modes/train)、[Val](/zh/modes/val)、[Predict](/zh/modes/predict)、[Export](/zh/modes/export)）。
+
+模型类型| 预训练权重| 支持的任务| 推理| 验证| 训练| 导出  
+---|---|---|---|---|---|---  
+RT-DETR Large| [rtdetr-l.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/rtdetr-l.pt)| [目标检测](/zh/tasks/detect)| ✅| ✅| ✅| ✅  
+RT-DETR Extra-Large| [rtdetr-x.pt](https://github.com/ultralytics/assets/releases/download/v8.4.0/rtdetr-x.pt)| [目标检测](/zh/tasks/detect)| ✅| ✅| ✅| ✅  
+  
+仅架构变体
+
+[`rtdetr-resnet50.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/models/rt-detr/rtdetr-resnet50.yaml) 和 [`rtdetr-resnet101.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/models/rt-detr/rtdetr-resnet101.yaml) 仅作为 YAML 架构提供。Ultralytics 仅针对 `rtdetr-l` 和 `rtdetr-x` 发布预训练权重。你可以从 YAML 实例化 ResNet 变体（例如 `RTDETR("rtdetr-resnet50.yaml")`），并根据需要进行训练或微调。
+
+## Link to this section理想用例#
+
+RT-DETR 特别适合需要高精度和实时性能的应用：
+
+  * **自动驾驶** ：用于自动驾驶系统中可靠的环境感知，其中速度和精度都至关重要。[了解更多关于 AI 在自动驾驶汽车中的应用](https://www.ultralytics.com/solutions/ai-in-automotive)。
+  * **高级机器人技术** ：使机器人能够在动态环境中执行需要准确目标识别和交互的复杂任务。[探索 AI 在机器人技术中的作用](https://www.ultralytics.com/blog/from-algorithms-to-automation-ais-role-in-robotics)。
+  * **医学影像** ：用于医疗保健应用，其中目标检测的精度对于诊断至关重要。[发现医疗保健中的 AI](https://www.ultralytics.com/solutions/ai-in-healthcare)。
+  * **监控系统** ：用于需要实时监控且具有高检测精度的安全应用。[了解安全报警系统](https://docs.ultralytics.com/guides/security-alarm-system)。
+  * **卫星图像分析** ：用于高分辨率图像的详细分析，其中全局上下文理解非常重要。[阅读关于计算机视觉在卫星图像中的应用](https://www.ultralytics.com/blog/using-computer-vision-to-analyze-satellite-imagery)。
+
+
+
+## Link to this section引文与致谢#
+
+如果你在研究或开发工作中使用了 Baidu 的 RT-DETR，请引用[原始论文](https://arxiv.org/abs/2304.08069)：
+
+引用
+    
+    
+    @misc{lv2023detrs,
+          title={DETRs Beat YOLOs on Real-time Object Detection},
+          author={Wenyu Lv and Shangliang Xu and Yian Zhao and Guanzhong Wang and Jinman Wei and Cheng Cui and Yuning Du and Qingqing Dang and Yi Liu},
+          year={2023},
+          eprint={2304.08069},
+          archivePrefix={arXiv},
+          primaryClass={cs.CV}
+    }
+
+对于 RTDETRv2，你可以引用 [2024 年的论文](https://arxiv.org/abs/2407.17140)：
+
+引用
+    
+    
+    @misc{lv2024rtdetrv2,
+          title={RTDETRv2: All-in-One Detection Transformer Beats YOLO and DINO},
+          author={Wenyu Lv and Yian Zhao and Qinyao Chang and Kui Huang and Guanzhong Wang and Yi Liu},
+          year={2024},
+          eprint={2407.17140},
+          archivePrefix={arXiv},
+          primaryClass={cs.CV}
+    }
+
+我们衷心感谢 Baidu 和 [PaddlePaddle](https://github.com/PaddlePaddle/PaddleDetection) 团队为 [计算机视觉](https://www.ultralytics.com/glossary/computer-vision-cv) 社区创建并维护这一宝贵资源。他们通过开发基于 Vision Transformer 的实时目标检测器 RT-DETR 为该领域做出了巨大贡献，我们深表感谢。
+
+## Link to this section常见问题 (FAQ)#
+
+### Link to this section什么是 Baidu 的 RT-DETR 模型，它是如何工作的？#
+
+Baidu 的 RT-DETR (Real-Time Detection Transformer) 是一款基于 Vision Transformer 架构构建的先进实时目标检测器。它通过高效的混合编码器解耦尺度内交互和跨尺度融合，高效处理多尺度特征。通过采用 IoU 感知查询选择，该模型专注于最相关的目标，从而提高检测精度。其适应性强的推理速度（通过在无需重新训练的情况下调整解码器层实现）使得 RT-DETR 适用于各种实时目标检测场景。在 [RT-DETR Arxiv 论文](https://arxiv.org/pdf/2304.08069) 中了解更多关于 RT-DETR 特性的信息。
+
+### Link to this section我该如何使用 Ultralytics 提供的预训练 RT-DETR 模型？#
+
+你可以利用 Ultralytics Python API 使用预训练的 PaddlePaddle RT-DETR 模型。例如，要加载一个在 COCO val2017 上预训练的 RT-DETR-l 模型并在 T4 GPU 上实现高 FPS，你可以使用以下示例：
+
+示例
+    
+    
+    from ultralytics import RTDETR
+    
+    # Load a COCO-pretrained RT-DETR-l model
+    model = RTDETR("rtdetr-l.pt")
+    
+    # Display model information (optional)
+    model.info()
+    
+    # Train the model on the COCO8 example dataset for 100 epochs
+    results = model.train(data="coco8.yaml", epochs=100, imgsz=640)
+    
+    # Run inference with the RT-DETR-l model on the 'bus.jpg' image
+    results = model("path/to/bus.jpg")
+
+### Link to this section为什么我应该选择 Baidu 的 RT-DETR 而不是其他实时目标检测器？#
+
+Baidu 的 RT-DETR 脱颖而出，归功于其高效的混合编码器和 IoU 感知查询选择，这极大地降低了计算成本，同时保持了高精度。它独特的能力在于无需重新训练即可通过使用不同的解码器层来调整推理速度，这增加了显著的灵活性。这使得它特别适用于需要在 CUDA 和 TensorRT 等加速后端上实现实时性能的应用，超越了许多其他实时目标检测器。[Transformer 架构](https://www.ultralytics.com/glossary/transformer) 与传统的基于 CNN 的检测器相比，还提供了更好的全局上下文理解。
+
+### Link to this sectionRT-DETR 如何为不同的实时应用支持适应性推理速度？#
+
+Baidu 的 RT-DETR 允许通过使用不同的解码器层来灵活调整推理速度，而无需重新训练。这种适应性对于跨各种实时目标检测任务扩展性能至关重要。无论你是需要更快的处理速度以满足较低 [精度](https://www.ultralytics.com/glossary/precision) 的需求，还是需要更慢但更准确的检测，RT-DETR 都可以根据你的具体要求进行定制。当在具有不同计算能力的设备上部署模型时，此功能特别有价值。
+
+### Link to this section我可以在其他 Ultralytics 模式（例如训练、验证和导出）中使用 RT-DETR 模型吗？#
+
+是的，RT-DETR 模型与各种 Ultralytics 模式兼容，包括训练、验证、预测和导出。你可以参考相应的文档获取有关如何利用这些模式的详细说明：[Train](/zh/modes/train)、[Val](/zh/modes/val)、[Predict](/zh/modes/predict) 和 [Export](/zh/modes/export)。这确保了开发和部署目标检测解决方案的完整工作流程。Ultralytics 框架在不同的模型架构中提供一致的 API，使得使用 RT-DETR 模型变得非常简单。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/models/rtdetr.md)
+
+[GLglenn-jocher27](https://github.com/glenn-jocher)[RIRizwanMunawar5](https://github.com/RizwanMunawar)[ARartest082](https://github.com/artest08)[RAraimbekovm2](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)[LEleonnil1](https://github.com/leonnil)[LALaughing-q1](https://github.com/Laughing-q)[MAMatthewNoyce1](https://github.com/MatthewNoyce)
+
+已创建 2023年11月12日已更新 上个月
+
+## 评论
+
+本页内容
+
+使用 AI 探索

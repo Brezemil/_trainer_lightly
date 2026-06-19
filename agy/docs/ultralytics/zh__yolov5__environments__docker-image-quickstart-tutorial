@@ -1,0 +1,171 @@
+---
+source_url: https://docs.ultralytics.com/zh/yolov5/environments/docker-image-quickstart-tutorial
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/environments/docker-image-quickstart-tutorial.md)
+
+# Link to this section在 Docker 中开始使用 YOLOv5 🚀#
+
+Welcome to the Ultralytics YOLOv5 Docker Quickstart Guide! This tutorial provides step-by-step instructions for setting up and running [YOLOv5](/zh/models/yolov5) within a [Docker](https://www.ultralytics.com/glossary/docker) container. Using Docker enables you to run YOLOv5 in an isolated, consistent environment, simplifying deployment and dependency management across different systems. This approach leverages [containerization](https://www.ultralytics.com/glossary/containerization) to package the application and its dependencies together.
+
+如需其他设置方法，请参考我们的 [Colab Notebook](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)、[GCP 深度学习虚拟机](/zh/yolov5/environments/google-cloud-quickstart-tutorial) 或 [Amazon AWS](/zh/yolov5/environments/aws-quickstart-tutorial) 指南。有关将 Docker 与 Ultralytics 模型配合使用的常规概览，请参阅 [Ultralytics Docker 快速入门指南](/zh/guides/docker-quickstart)。
+
+## Link to this section前提条件#
+
+在开始之前，请确保已安装以下内容：
+
+  1. **Docker** ：从 [Docker 官方网站](https://docs.docker.com/get-started/get-docker/) 下载并安装 Docker。Docker 是创建和管理容器的关键工具。
+  2. **NVIDIA Drivers** （[GPU](https://www.ultralytics.com/glossary/gpu-graphics-processing-unit) 支持必需）：确保已安装 455.23 或更高版本的 NVIDIA 驱动程序。你可以从 [NVIDIA 官网](https://www.nvidia.com/Download/index.aspx) 下载最新驱动。
+  3. **NVIDIA Container Toolkit** （GPU 支持必需）：此工具包允许 Docker 容器访问宿主机的 NVIDIA GPU。请按照官方 [NVIDIA Container Toolkit 安装指南](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) 中的详细说明进行操作。
+
+
+
+### Link to this section设置 NVIDIA Container Toolkit（GPU 用户）#
+
+首先，通过运行以下命令验证 NVIDIA 驱动程序是否安装正确：
+    
+    
+    nvidia-smi
+
+此命令应显示有关你的 GPU 和已安装驱动程序版本的信息。
+
+接下来，安装 NVIDIA Container Toolkit。以下命令适用于 Ubuntu 等基于 Debian 的系统以及 Fedora/CentOS 等基于 RHEL 的系统，但请参考上面链接的官方指南以获取特定于你发行版的说明：
+    
+    
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+      && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+      | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+        | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+更新软件包列表并安装 nvidia-container-toolkit 软件包：
+    
+    
+    sudo apt-get update
+
+安装最新版本的 nvidia-container-toolkit：
+    
+    
+    sudo apt-get install -y nvidia-container-toolkit \
+      nvidia-container-toolkit-base libnvidia-container-tools \
+      libnvidia-container1
+
+可选：安装特定版本的 nvidia-container-toolkit
+
+你可以选择通过设置 `NVIDIA_CONTAINER_TOOLKIT_VERSION` 环境变量来安装特定版本的 nvidia-container-toolkit：
+    
+    
+    export NVIDIA_CONTAINER_TOOLKIT_VERSION=1.17.8-1
+    sudo apt-get install -y \
+      nvidia-container-toolkit=${NVIDIA_CONTAINER_TOOLKIT_VERSION} \
+      nvidia-container-toolkit-base=${NVIDIA_CONTAINER_TOOLKIT_VERSION} \
+      libnvidia-container-tools=${NVIDIA_CONTAINER_TOOLKIT_VERSION} \
+      libnvidia-container1=${NVIDIA_CONTAINER_TOOLKIT_VERSION}
+    
+    
+    sudo nvidia-ctk runtime configure --runtime=docker
+    sudo systemctl restart docker
+
+### Link to this section验证 Docker 的 NVIDIA 运行时#
+
+运行 `docker info | grep -i runtime` 以确保 `nvidia` 出现在运行时列表中：
+    
+    
+    docker info | grep -i runtime
+
+你应该会看到 `nvidia` 列为可用运行时之一。
+
+## Link to this section第 1 步：拉取 YOLOv5 Docker 镜像#
+
+Ultralytics 在 [Docker Hub](https://hub.docker.com/) 上提供了官方 YOLOv5 镜像。`latest` 标签跟踪仓库的最新提交，确保你始终获得最新版本。使用以下命令拉取镜像：
+    
+    
+    # Define the image name with tag
+    t=ultralytics/yolov5:latest
+    
+    # Pull the latest YOLOv5 image from Docker Hub
+    sudo docker pull $t
+
+你可以在 [Ultralytics YOLOv5 Docker Hub 仓库](https://hub.docker.com/r/ultralytics/yolov5) 浏览所有可用镜像。
+
+## Link to this section第 2 步：运行 Docker 容器#
+
+拉取镜像后，你就可以将其作为容器运行。
+
+### Link to this section仅使用 CPU#
+
+若要使用仅 CPU 运行交互式容器实例，请使用 `-it` 标志。`--ipc=host` 标志允许共享宿主机 IPC 命名空间，这对共享内存访问非常重要。
+    
+    
+    # Run an interactive container instance using CPU
+    sudo docker run -it --ipc=host $t
+
+### Link to this section使用 GPU#
+
+若要在容器内启用 GPU 访问，请使用 `--gpus` 标志。这需要正确安装 NVIDIA Container Toolkit。
+    
+    
+    # Run with access to all available GPUs
+    sudo docker run -it --runtime=nvidia --ipc=host --gpus all $t
+    
+    # Run with access to specific GPUs (e.g., GPUs 2 and 3)
+    sudo docker run -it --runtime=nvidia --ipc=host --gpus '"device=2,3"' $t
+
+有关命令选项的更多详细信息，请参考 [Docker 运行参考](https://docs.docker.com/engine/containers/run/)。
+
+### Link to this section挂载本地目录#
+
+要在容器内使用本地文件（数据集、模型权重等），请使用 `-v` 标志将宿主机目录挂载到容器中：
+    
+    
+    # Mount /path/on/host (your local machine) to /path/in/container (inside the container)
+    sudo docker run -it --runtime=nvidia --ipc=host --gpus all -v /path/on/host:/path/in/container $t
+
+将 `/path/on/host` 替换为你机器上的实际路径，并将 `/path/in/container` 替换为 Docker 容器内的目标路径（例如 `/usr/src/datasets`）。
+
+## Link to this section第 3 步：在 Docker 容器内使用 YOLOv5 🚀#
+
+你现在已进入运行中的 YOLOv5 Docker 容器！在这里，你可以执行标准的 YOLOv5 命令来进行各种 [机器学习](https://www.ultralytics.com/glossary/machine-learning-ml) 和 [深度学习](https://www.ultralytics.com/glossary/deep-learning-dl) 任务，例如 [目标检测](https://www.ultralytics.com/glossary/object-detection)。
+    
+    
+    # Train a YOLOv5 model on your custom dataset (ensure data is mounted or downloaded)
+    python train.py --data your_dataset.yaml --weights yolov5s.pt --img 640 # Start training
+    
+    # Validate the trained model's performance (Precision, Recall, mAP)
+    python val.py --weights path/to/your/best.pt --data your_dataset.yaml # Validate accuracy
+    
+    # Run inference on images or videos using a trained model
+    python detect.py --weights yolov5s.pt --source path/to/your/images_or_videos # Perform detection
+    
+    # Export the trained model to various formats like ONNX, CoreML, or TFLite for deployment
+    python export.py --weights yolov5s.pt --include onnx coreml tflite # Export model
+
+探索文档以了解不同模式的详细用法：
+
+  * [训练](/zh/modes/train)
+  * [验证](/zh/modes/val)
+  * [预测](/zh/modes/predict)
+  * [导出](/zh/modes/export)
+
+
+
+详细了解评估指标，如 [精确率](https://www.ultralytics.com/glossary/precision)、[召回率](https://www.ultralytics.com/glossary/recall) 和 [mAP](https://www.ultralytics.com/glossary/mean-average-precision-map)。了解不同的导出格式，如 [ONNX](/zh/integrations/onnx)、[CoreML](/zh/integrations/coreml) 和 [TFLite](/zh/integrations/tflite)，并探索各种 [模型部署选项](/zh/guides/model-deployment-options)。请记住有效地管理你的 [模型权重](https://www.ultralytics.com/glossary/model-weights)。
+
+![Running YOLOv5 inside a Docker container on GCP](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/gcp-running-docker.avif)
+
+你已成功在 Docker 容器中设置并运行了 YOLOv5。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/environments/docker-image-quickstart-tutorial.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+已创建 3天前已更新 3天前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

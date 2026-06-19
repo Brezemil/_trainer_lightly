@@ -1,0 +1,377 @@
+---
+source_url: https://docs.ultralytics.com/fr/guides/triton-inference-server
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/triton-inference-server.md)
+
+# Link to this sectionTriton Inference Server avec Ultralytics YOLO26#
+
+Le [Triton Inference Server](https://developer.nvidia.com/dynamo-triton) (anciennement appelé TensorRT Inference Server) est une solution logicielle open-source développée par NVIDIA. Il fournit une solution d'inférence cloud optimisée pour les GPU NVIDIA. Triton simplifie le déploiement de modèles d'IA à grande échelle en production. Intégrer [Ultralytics YOLO26](/fr/models/yolo26) avec Triton Inference Server te permet de déployer des charges de travail d'inférence de [deep learning](https://www.ultralytics.com/glossary/deep-learning-dl) évolutives et haute performance. Ce guide fournit les étapes pour configurer et tester l'intégration.
+
+  
+
+
+  
+**Watch:** Getting Started with NVIDIA Triton Inference Server. 
+
+## Link to this sectionQu'est-ce que le Triton Inference Server ?#
+
+Triton Inference Server est conçu pour déployer une variété de modèles d'IA en production. Il prend en charge une large gamme de frameworks de deep learning et de [machine learning](https://www.ultralytics.com/glossary/machine-learning-ml), dont [PyTorch](https://www.ultralytics.com/glossary/pytorch), [TensorFlow](/fr/integrations/tf-savedmodel), [ONNX](/fr/integrations/onnx), [OpenVINO](/fr/integrations/openvino), [TensorRT](/fr/integrations/tensorrt) et bien d'autres. Ses principaux cas d'usage sont :
+
+  * Servir plusieurs modèles à partir d'une seule instance de serveur
+  * Chargement et déchargement dynamiques de modèles sans redémarrage du serveur
+  * Inférence en ensemble, permettant l'utilisation conjointe de plusieurs modèles pour obtenir des résultats
+  * Versionnage de modèles pour les tests A/B et les mises à jour progressives
+
+
+
+## Link to this sectionAvantages clés du Triton Inference Server#
+
+Utiliser Triton Inference Server avec [Ultralytics YOLO26](/fr/models/yolo26) offre plusieurs avantages :
+
+  * **Batching automatique** : Regroupe plusieurs requêtes d'IA avant de les traiter, réduisant la latence et améliorant la vitesse d'inférence
+  * **Intégration Kubernetes** : Sa conception cloud-native fonctionne parfaitement avec Kubernetes pour gérer et scaler les applications d'IA
+  * **Optimisations spécifiques au matériel** : Tire pleinement parti des GPU NVIDIA pour une performance maximale
+  * **Flexibilité des frameworks** : Prend en charge plusieurs frameworks d'IA, dont [PyTorch](https://www.ultralytics.com/glossary/pytorch), [TensorFlow](/fr/integrations/tf-savedmodel), [ONNX](/fr/integrations/onnx), [OpenVINO](/fr/integrations/openvino) et [TensorRT](/fr/integrations/tensorrt)
+  * **Open-source et personnalisable** : Peut être modifié pour répondre à des besoins spécifiques, garantissant une flexibilité pour diverses applications d'IA
+
+
+
+## Link to this sectionPrérequis#
+
+Assure-toi de disposer des prérequis suivants avant de poursuivre :
+
+  * Docker ou Podman installé sur ta machine
+  * Installe `ultralytics` : 
+        
+        pip install ultralytics
+
+  * Installe `tritonclient` : 
+        
+        pip install tritonclient[all]
+
+
+
+
+## Link to this sectionConfiguration de Triton Inference Server#
+
+Exécute ce bloc de configuration complet pour exporter [Ultralytics YOLO26](/fr/models/yolo26) vers [ONNX](/fr/integrations/onnx), construire le dépôt de modèles Triton et démarrer Triton Inference Server :
+
+Remarque
+
+Utilise le paramètre `runtime` dans le script pour choisir ton moteur de conteneur :
+
+  * Définit `runtime = "docker"` pour Docker
+  * Définit `runtime = "podman"` pour Podman
+
+
+    
+    
+    import contextlib
+    import subprocess
+    import time
+    from pathlib import Path
+    
+    from tritonclient.http import InferenceServerClient
+    
+    from ultralytics import YOLO
+    
+    runtime = "docker"  # set to "podman" to use Podman
+    
+    # 1) Exporting YOLO26 to ONNX Format
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")  # load an official model
+    
+    # Retrieve metadata during export. Metadata needs to be added to config.pbtxt. See next section.
+    metadata = []
+    
+    def export_cb(exporter):
+        metadata.append(exporter.metadata)
+    
+    model.add_callback("on_export_end", export_cb)
+    
+    # Export the model
+    onnx_file = model.export(format="onnx", dynamic=True)
+    
+    # 2) Setting Up Triton Model Repository
+    
+    # Define paths
+    model_name = "yolo"
+    triton_repo_path = Path("tmp") / "triton_repo"
+    triton_model_path = triton_repo_path / model_name
+    
+    # Create directories
+    (triton_model_path / "1").mkdir(parents=True, exist_ok=True)
+    
+    # Move ONNX model to Triton Model path
+    Path(onnx_file).rename(triton_model_path / "1" / "model.onnx")
+    
+    # Create config file
+    (triton_model_path / "config.pbtxt").touch()
+    
+    data = """
+    # Add metadata
+    parameters {
+      key: "metadata"
+      value {
+        string_value: "%s"
+      }
+    }
+    
+    # (Optional) Enable TensorRT for GPU inference
+    # First run will be slow due to TensorRT engine conversion
+    optimization {
+      execution_accelerators {
+        gpu_execution_accelerator {
+          name: "tensorrt"
+          parameters {
+            key: "precision_mode"
+            value: "FP16"
+          }
+          parameters {
+            key: "max_workspace_size_bytes"
+            value: "3221225472"
+          }
+          parameters {
+            key: "trt_engine_cache_enable"
+            value: "1"
+          }
+          parameters {
+            key: "trt_engine_cache_path"
+            value: "/models/yolo/1"
+          }
+        }
+      }
+    }
+    """ % metadata[0]  # noqa
+    
+    with open(triton_model_path / "config.pbtxt", "w") as f:
+        f.write(data)
+    
+    # 3) Running Triton Inference Server
+    
+    # Define image https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tritonserver
+    tag = "nvcr.io/nvidia/tritonserver:26.02-py3"  # 16.17 GB (Compressed Size)
+    
+    subprocess.call(f"{runtime} pull {tag}", shell=True)
+    
+    # GPU flags differ between Docker and Podman
+    gpu_flags = "--device nvidia.com/gpu=all" if runtime == "podman" else "--runtime=nvidia --gpus all"
+    
+    container_name = "triton_server"
+    
+    # Note: The :z flag on the volume mount is necessary for systems with SELinux (like Fedora/RHEL)
+    subprocess.call(
+        f"{runtime} run -d --rm --name {container_name} {gpu_flags} -v {triton_repo_path.absolute()}:/models:z -p 8000:8000 {tag} tritonserver --model-repository=/models",
+        shell=True,
+    )
+    
+    # Wait for the Triton server to start
+    triton_client = InferenceServerClient(url="127.0.0.1:8000", verbose=False, ssl=False)
+    
+    # Wait until model is ready
+    for _ in range(10):
+        with contextlib.suppress(Exception):
+            assert triton_client.is_model_ready(model_name)
+            break
+        time.sleep(1)
+
+## Link to this sectionExécution de l'inférence#
+
+Exécute l'inférence en utilisant le modèle Triton Server :
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the Triton Server model
+    model = YOLO("http://127.0.0.1:8000/yolo", task="detect")
+    
+    # Run inference on the server
+    results = model("path/to/image.jpg")
+
+Nettoie le conteneur (`runtime` et `container_name` sont définis dans le bloc de configuration ci-dessus) :
+    
+    
+    import subprocess
+    
+    runtime = "docker"  # set to "podman" to use Podman
+    container_name = "triton_server"  # Kill the named container
+    subprocess.call(f"{runtime} kill {container_name}", shell=True)
+
+## Link to this sectionOptimisation TensorRT (Optionnel)#
+
+Pour une performance encore plus grande, tu peux utiliser [TensorRT](/fr/integrations/tensorrt) avec Triton Inference Server. TensorRT est un optimiseur de deep learning haute performance conçu spécifiquement pour les GPU NVIDIA, capable d'augmenter significativement la vitesse d'inférence.
+
+Les avantages clés de l'utilisation de [TensorRT](/fr/integrations/tensorrt) avec Triton incluent :
+
+  * Jusqu'à 36x plus rapide en inférence comparé aux modèles non optimisés
+  * Optimisations matérielles spécifiques pour une utilisation maximale du GPU
+  * Prise en charge des formats de précision réduite (INT8, FP16) tout en maintenant la précision
+  * Fusion de couches pour réduire la surcharge computationnelle
+
+
+
+Pour utiliser TensorRT directement, tu peux exporter ton modèle [Ultralytics YOLO26](/fr/models/yolo26) au format TensorRT :
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Export the model to TensorRT format
+    model.export(format="engine")  # creates 'yolo26n.engine'
+
+Pour plus d'informations sur l'optimisation TensorRT, consulte le [guide d'intégration TensorRT](/fr/integrations/tensorrt).
+
+* * *
+
+En suivant les étapes ci-dessus, tu peux déployer et exécuter des modèles [Ultralytics YOLO26](/fr/models/yolo26) efficacement sur Triton Inference Server, offrant une solution évolutive et haute performance pour les tâches d'inférence de deep learning. Si tu rencontres des problèmes ou si tu as d'autres questions, reporte-toi à la [documentation officielle de Triton](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/index.html) ou contacte la communauté Ultralytics pour obtenir de l'aide.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionComment configurer Ultralytics YOLO26 avec NVIDIA Triton Inference Server ?#
+
+La configuration de [Ultralytics YOLO26](/fr/models/yolo26) avec [NVIDIA Triton Inference Server](https://developer.nvidia.com/dynamo-triton) implique quelques étapes clés :
+
+  1. **Exporter YOLO26 au format ONNX** :
+         
+         from ultralytics import YOLO
+         
+         # Load a model
+         model = YOLO("yolo26n.pt")  # load an official model
+         
+         # Export the model to ONNX format
+         onnx_file = model.export(format="onnx", dynamic=True)
+
+  2. **Configurer le dépôt de modèles Triton** :
+         
+         from pathlib import Path
+         
+         # Define paths
+         model_name = "yolo"
+         triton_repo_path = Path("tmp") / "triton_repo"
+         triton_model_path = triton_repo_path / model_name
+         
+         # Create directories
+         (triton_model_path / "1").mkdir(parents=True, exist_ok=True)
+         Path(onnx_file).rename(triton_model_path / "1" / "model.onnx")
+         (triton_model_path / "config.pbtxt").touch()
+
+  3. **Exécuter le serveur Triton** :
+         
+         import contextlib
+         import subprocess
+         import time
+         
+         from tritonclient.http import InferenceServerClient
+         
+         # Define image https://catalog.ngc.nvidia.com/orgs/nvidia/containers/tritonserver
+         tag = "nvcr.io/nvidia/tritonserver:26.02-py3"
+         
+         runtime = "docker"  # set to "podman" to use Podman
+         subprocess.call(f"{runtime} pull {tag}", shell=True)
+         
+         # GPU flags differ between Docker and Podman
+         gpu_flags = "--device nvidia.com/gpu=all" if runtime == "podman" else "--runtime=nvidia --gpus all"
+         
+         container_name = "triton_server"
+         subprocess.call(
+             f"{runtime} run -d --rm --name {container_name} {gpu_flags} -v {triton_repo_path.absolute()}:/models:z -p 8000:8000 {tag} tritonserver --model-repository=/models",
+             shell=True,
+         )
+         
+         triton_client = InferenceServerClient(url="127.0.0.1:8000", verbose=False, ssl=False)
+         
+         for _ in range(10):
+             with contextlib.suppress(Exception):
+                 assert triton_client.is_model_ready(model_name)
+                 break
+             time.sleep(1)
+
+
+
+
+Cette configuration peut t'aider à déployer efficacement des modèles [Ultralytics YOLO26](/fr/models/yolo26) à grande échelle sur Triton Inference Server pour une inférence de modèle d'IA haute performance.
+
+### Link to this sectionQuels avantages offre l'utilisation d'Ultralytics YOLO26 avec NVIDIA Triton Inference Server ?#
+
+L'intégration de [Ultralytics YOLO26](/fr/models/yolo26) avec [NVIDIA Triton Inference Server](https://developer.nvidia.com/dynamo-triton) offre plusieurs avantages :
+
+  * **Inférence IA évolutive** : Triton permet de servir plusieurs modèles depuis une seule instance de serveur, prenant en charge le chargement et le déchargement dynamiques de modèles, ce qui le rend hautement évolutif pour diverses charges de travail d'IA.
+  * **Haute performance** : Optimisé pour les GPU NVIDIA, Triton Inference Server garantit des opérations d'inférence à haute vitesse, parfaites pour les applications en temps réel comme la [détection d'objets](https://www.ultralytics.com/glossary/object-detection).
+  * **Ensemble et versionnage de modèles** : Le mode ensemble de Triton permet de combiner plusieurs modèles pour améliorer les résultats, et son versionnage de modèles prend en charge les tests A/B et les mises à jour progressives.
+  * **Batching automatique** : Triton regroupe automatiquement plusieurs requêtes d'inférence, améliorant significativement le débit et réduisant la latence.
+  * **Déploiement simplifié** : Optimisation progressive des workflows d'IA sans nécessiter de refonte complète du système, facilitant ainsi une montée en charge efficace.
+
+
+
+Pour des instructions détaillées sur la configuration et l'exécution de [Ultralytics YOLO26](/fr/models/yolo26) avec Triton, reporte-toi à **Configuration de Triton Inference Server** et **Exécution de l'inférence**.
+
+### Link to this sectionPourquoi devrais-je exporter mon modèle YOLO26 au format ONNX avant d'utiliser Triton Inference Server ?#
+
+Utiliser le format ONNX (Open Neural Network Exchange) pour ton modèle [Ultralytics YOLO26](/fr/models/yolo26) avant de le déployer sur [NVIDIA Triton Inference Server](https://developer.nvidia.com/dynamo-triton) offre plusieurs avantages clés :
+
+  * **Interopérabilité** : Le format ONNX prend en charge le transfert entre différents frameworks de deep learning (comme PyTorch, TensorFlow), garantissant une plus large compatibilité.
+  * **Optimisation** : De nombreux environnements de déploiement, y compris Triton, sont optimisés pour ONNX, permettant une inférence plus rapide et de meilleures performances.
+  * **Facilité de déploiement** : ONNX est largement pris en charge par les frameworks et les plateformes, simplifiant le processus de déploiement dans divers systèmes d'exploitation et configurations matérielles.
+  * **Indépendance vis-à-vis des frameworks** : Une fois converti en ONNX, ton modèle n'est plus lié à son framework d'origine, le rendant plus portable.
+  * **Standardisation** : ONNX fournit une représentation standardisée qui aide à surmonter les problèmes de compatibilité entre différents frameworks d'IA.
+
+
+
+Pour exporter ton modèle, utilise :
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    onnx_file = model.export(format="onnx", dynamic=True)
+
+Tu peux suivre les étapes du [guide d'intégration ONNX](https://docs.ultralytics.com/integrations/onnx) pour terminer le processus.
+
+### Link to this sectionPuis-je exécuter une inférence en utilisant le modèle Ultralytics YOLO26 sur Triton Inference Server ?#
+
+Oui, tu peux exécuter une inférence en utilisant le modèle [Ultralytics YOLO26](/fr/models/yolo26) sur [NVIDIA Triton Inference Server](https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/index.html). Une fois ton modèle configuré dans le dépôt de modèles Triton et le serveur en cours d'exécution, tu peux charger et exécuter l'inférence sur ton modèle comme suit :
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the Triton Server model
+    model = YOLO("http://127.0.0.1:8000/yolo", task="detect")
+    
+    # Run inference on the server
+    results = model("path/to/image.jpg")
+
+Cette approche te permet de tirer parti des optimisations de Triton tout en utilisant l'interface familière Ultralytics YOLO.
+
+### Link to this sectionComment Ultralytics YOLO26 se compare-t-il aux modèles TensorFlow et PyTorch pour le déploiement ?#
+
+[Ultralytics YOLO26](/fr/models/yolo26) offre plusieurs avantages uniques comparé aux modèles [TensorFlow](https://www.ultralytics.com/glossary/tensorflow) et PyTorch pour le déploiement :
+
+  * **Performance en temps réel** : Optimisé pour les tâches de détection d'objets en temps réel, [Ultralytics YOLO26](/fr/models/yolo26) offre une [précision](https://www.ultralytics.com/glossary/accuracy) et une vitesse de pointe, le rendant idéal pour les applications nécessitant des analyses vidéo en direct.
+  * **Facilité d'utilisation** : [Ultralytics YOLO26](/fr/models/yolo26) s'intègre parfaitement avec Triton Inference Server et prend en charge divers formats d'exportation ([ONNX](/fr/integrations/onnx), [TensorRT](/fr/integrations/tensorrt)), le rendant flexible pour divers scénarios de déploiement.
+  * **Fonctionnalités avancées** : [Ultralytics YOLO26](/fr/models/yolo26) inclut des fonctionnalités comme le chargement dynamique de modèles, le versionnage de modèles et l'inférence en ensemble, qui sont cruciales pour des déploiements d'IA évolutifs et fiables.
+  * **API simplifiée** : L'API Ultralytics fournit une interface cohérente à travers différentes cibles de déploiement, réduisant la courbe d'apprentissage et le temps de développement.
+  * **Optimisation Edge** : Les modèles [Ultralytics YOLO26](/fr/models/yolo26) sont conçus pour le déploiement en edge, offrant d'excellentes performances même sur des appareils aux ressources limitées.
+
+
+
+Pour plus de détails, compare les options de déploiement dans le [guide d'exportation de modèle](/fr/modes/export).
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/triton-inference-server.md)
+
+[GLglenn-jocher17](https://github.com/glenn-jocher)[Y-Y-T-G4](https://github.com/Y-T-G)[ONonuralpszr2](https://github.com/onuralpszr)[LEleonnil1](https://github.com/leonnil)
+
+Créé 12 nov. 2023Mis à jour le mois dernier
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

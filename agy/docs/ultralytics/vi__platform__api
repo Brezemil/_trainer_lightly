@@ -1,0 +1,2062 @@
+---
+source_url: https://docs.ultralytics.com/vi/platform/api
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+# Link to this sectionTham chiếu REST API#
+
+[Ultralytics Platform](https://platform.ultralytics.com) cung cấp một REST API toàn diện để truy cập theo lập trình vào các tập dữ liệu, mô hình, quá trình huấn luyện và triển khai.
+
+![Tổng quan về API của Ultralytics Platform](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/platform/platform-api-overview.avif)
+
+Bắt đầu nhanh
+    
+    
+    # List your datasets
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+Tài liệu API tương tác
+
+Khám phá tham chiếu API tương tác đầy đủ trong [tài liệu API của Ultralytics Platform](https://platform.ultralytics.com/api/docs).
+
+## Link to this sectionTổng quan về API#
+
+API được tổ chức xung quanh các tài nguyên nền tảng cốt lõi:
+    
+    
+    graph LR
+        A[API Key] --> B[Datasets]
+        A --> C[Projects]
+        A --> D[Models]
+        A --> E[Deployments]
+        B -->|train on| D
+        C -->|contains| D
+        D -->|deploy to| E
+        D -->|export| F[Exports]
+        B -->|auto-annotate| B
+
+Tài nguyên| Mô tả| Các thao tác chính  
+---|---|---  
+[Datasets](/vi/platform/data/datasets)| Các bộ sưu tập hình ảnh được gán nhãn| CRUD, hình ảnh, nhãn, xuất, phiên bản, sao chép (clone)  
+[Projects](/vi/platform/train/projects)| Không gian làm việc huấn luyện| CRUD, sao chép (clone), biểu tượng  
+[Models](/vi/platform/train/models)| Các checkpoint đã huấn luyện| CRUD, dự đoán (predict), tải xuống, sao chép (clone), xuất  
+[Deployments](/vi/platform/deploy/endpoints)| Các endpoint suy luận chuyên dụng| CRUD, bắt đầu/dừng, số liệu, nhật ký (logs), trạng thái (health)  
+[Exports](/vi/platform/train/models#export-model)| Các tác vụ chuyển đổi định dạng| Tạo, trạng thái, tải xuống  
+[Training](/vi/platform/train/cloud-training)| Các tác vụ huấn luyện trên GPU đám mây| Bắt đầu, trạng thái, hủy  
+[Billing](/vi/platform/account/billing)| Tín dụng và đăng ký| Số dư, nạp tiền, phương thức thanh toán  
+[Teams](/vi/platform/account/teams)| Cộng tác trong không gian làm việc| Thành viên, lời mời, vai trò  
+  
+## Link to this sectionXác thực#
+
+Các API tài nguyên như datasets, projects, models, training, exports và dự đoán sử dụng xác thực API-key. Các endpoint công khai (liệt kê các datasets, projects và models công khai) hỗ trợ truy cập đọc ẩn danh mà không cần key. Các tuyến đường hướng tài khoản — bao gồm hoạt động, cài đặt, teams, billing và các luồng GDPR — hiện yêu cầu phiên trình duyệt đã xác thực và không khả dụng thông qua API key.
+
+### Link to this sectionLấy API Key#
+
+  1. Truy cập `Settings` > `API Keys`
+  2. Nhấp vào `Create Key`
+  3. Sao chép key đã tạo
+
+
+
+Xem [API Keys](/vi/platform/account/api-keys) để biết hướng dẫn chi tiết.
+
+### Link to this sectionTiêu đề ủy quyền (Authorization Header)#
+
+Bao gồm API key của bạn trong tất cả các yêu cầu:
+    
+    
+    Authorization: Bearer YOUR_API_KEY
+
+Định dạng API Key
+
+API keys sử dụng định dạng `ul_` theo sau là 40 ký tự hex. Hãy giữ bí mật key của bạn -- không bao giờ commit nó vào hệ thống quản lý phiên bản hoặc chia sẻ công khai.
+
+### Link to this sectionVí dụ#
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+## Link to this sectionBase URL#
+
+Tất cả các API endpoint sử dụng:
+
+`https://platform.ultralytics.com/api `
+
+## Link to this sectionGiới hạn tốc độ (Rate Limits)#
+
+API thực thi các giới hạn tốc độ theo mỗi API key (sliding-window, hỗ trợ bởi Upstash Redis) để bảo vệ chống lại lạm dụng trong khi vẫn giữ cho việc sử dụng hợp pháp không bị hạn chế. Lưu lượng truy cập ẩn danh được bảo vệ bổ sung bởi các biện pháp kiểm soát lạm dụng ở cấp độ nền tảng của Vercel.
+
+Khi bị điều tiết, API sẽ trả về mã `429` cùng với siêu dữ liệu thử lại:
+    
+    
+    Retry-After: 12
+    X-RateLimit-Reset: 2026-02-21T12:34:56.000Z
+
+### Link to this sectionGiới hạn theo API Key#
+
+Các giới hạn tốc độ được áp dụng tự động dựa trên endpoint đang được gọi. Các tác vụ tốn kém có giới hạn nghiêm ngặt hơn để ngăn chặn lạm dụng, trong khi các tác vụ CRUD tiêu chuẩn chia sẻ một hạn mức mặc định hào phóng:
+
+Endpoint| Giới hạn| Áp dụng cho  
+---|---|---  
+**Mặc định**|  100 yêu cầu/phút| Tất cả các endpoint không được liệt kê bên dưới (liệt kê, lấy, tạo, cập nhật, xóa)  
+**Training**|  10 yêu cầu/phút| Bắt đầu các tác vụ huấn luyện trên đám mây (`POST /api/training/start`)  
+**Tải lên (Upload)**|  10 yêu cầu/phút| Tải lên tệp, URL đã ký và nhập dữ liệu tập huấn luyện  
+**Predict**|  20 yêu cầu/phút| Suy luận mô hình dùng chung (`POST /api/models/{id}/predict`)  
+**Xuất**|  20 yêu cầu/phút| Xuất định dạng mô hình (`POST /api/exports`), xuất tập dữ liệu NDJSON và tạo phiên bản  
+**Tải xuống (Download)**|  30 yêu cầu/phút| Tải xuống tệp trọng số mô hình (`GET /api/models/{id}/files`)  
+**Chuyên dụng (Dedicated)**| **Không giới hạn**| [Các endpoint chuyên dụng](/vi/platform/deploy/endpoints) — dịch vụ của riêng bạn, không có giới hạn API  
+  
+Mỗi danh mục có một bộ đếm độc lập theo mỗi API key. Ví dụ, thực hiện 20 yêu cầu dự đoán không ảnh hưởng đến hạn mức mặc định 100 yêu cầu/phút của bạn.
+
+### Link to this sectionEndpoint chuyên dụng (Không giới hạn)#
+
+[Các endpoint chuyên dụng](/vi/platform/deploy/endpoints) **không chịu giới hạn tốc độ của API key**. Khi bạn triển khai một mô hình tới một endpoint chuyên dụng, các yêu cầu đến URL endpoint đó (ví dụ: `https://predict-abc123.run.app/predict`) đi trực tiếp đến dịch vụ chuyên dụng của bạn mà không bị giới hạn tốc độ từ Nền tảng. Bạn đang chi trả cho tài nguyên tính toán, vì vậy bạn nhận được thông lượng từ cấu hình dịch vụ chuyên dụng của mình thay vì các giới hạn API dùng chung.
+
+Xử lý giới hạn tốc độ
+
+Khi bạn nhận được mã trạng thái `429`, hãy đợi theo `Retry-After` (hoặc cho đến khi `X-RateLimit-Reset`) trước khi thử lại. Xem Câu hỏi thường gặp về giới hạn tốc độ để biết cách triển khai exponential backoff.
+
+## Link to this sectionĐịnh dạng phản hồi#
+
+### Link to this sectionPhản hồi thành công#
+
+Các phản hồi trả về JSON với các trường cụ thể cho từng tài nguyên:
+    
+    
+    {
+        "datasets": [...],
+        "total": 100
+    }
+
+### Link to this sectionPhản hồi lỗi#
+    
+    
+    {
+        "error": "Dataset not found"
+    }
+
+Mã trạng thái HTTP| Ý nghĩa  
+---|---  
+`200`| Thành công  
+`201`| Đã tạo  
+`400`| Yêu cầu không hợp lệ  
+`401`| Yêu cầu xác thực  
+`403`| Không đủ quyền hạn  
+`404`| Không tìm thấy tài nguyên  
+`409`| Xung đột (trùng lặp)  
+`429`| Đã vượt quá giới hạn tốc độ (rate limit)  
+`500`| Lỗi máy chủ  
+  
+* * *
+
+## Link to this sectionDatasets API#
+
+Tạo, duyệt và quản lý các tập dữ liệu hình ảnh đã gán nhãn để huấn luyện các model YOLO. Xem [tài liệu Datasets](/vi/platform/data/datasets).
+
+### Link to this sectionLiệt kê Datasets#
+    
+    
+    GET /api/datasets
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`username`| string| Lọc theo username  
+`slug`| string| Lấy thông tin một dataset bằng slug  
+`limit`| int| Số lượng mục mỗi trang (mặc định: 1000, tối đa: 1000)  
+`owner`| string| Username của chủ sở hữu không gian làm việc (workspace owner)  
+      
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=10"
+
+**Phản hồi (Response):**
+    
+    
+    {
+        "datasets": [
+            {
+                "_id": "dataset_abc123",
+                "name": "my-dataset",
+                "slug": "my-dataset",
+                "task": "detect",
+                "imageCount": 1000,
+                "classCount": 10,
+                "classNames": ["person", "car"],
+                "visibility": "private",
+                "username": "johndoe",
+                "starCount": 3,
+                "isStarred": false,
+                "sampleImages": [
+                    {
+                        "url": "https://storage.example.com/...",
+                        "width": 1920,
+                        "height": 1080,
+                        "labels": [{ "classId": 0, "bbox": [0.5, 0.4, 0.3, 0.6] }]
+                    }
+                ],
+                "createdAt": "2024-01-15T10:00:00Z",
+                "updatedAt": "2024-01-16T08:30:00Z"
+            }
+        ],
+        "total": 1,
+        "region": "us"
+    }
+
+### Link to this sectionLấy Dataset#
+    
+    
+    GET /api/datasets/{datasetId}
+
+Trả về chi tiết đầy đủ của dataset bao gồm metadata, tên lớp (class names), và số lượng phân chia (split counts).
+
+### Link to this sectionTạo Dataset#
+    
+    
+    POST /api/datasets
+
+**Body:**
+    
+    
+    {
+        "slug": "my-dataset",
+        "name": "My Dataset",
+        "task": "detect",
+        "description": "A custom detection dataset",
+        "visibility": "private",
+        "classNames": ["person", "car"]
+    }
+
+Các tác vụ được hỗ trợ
+
+Các giá trị `task` hợp lệ: `detect`, `segment`, `semantic`, `classify`, `pose`, `obb`.
+
+### Link to this sectionCập nhật Dataset#
+    
+    
+    PATCH /api/datasets/{datasetId}
+
+**Body (cập nhật một phần):**
+    
+    
+    {
+        "name": "Updated Name",
+        "description": "New description",
+        "visibility": "public"
+    }
+
+### Link to this sectionBiểu tượng tập dữ liệu#
+
+Tải lên biểu tượng tập dữ liệu (multipart form với tệp hình ảnh):
+    
+    
+    POST /api/datasets/{datasetId}/icon
+
+Xóa biểu tượng tập dữ liệu:
+    
+    
+    DELETE /api/datasets/{datasetId}/icon
+
+Cả hai đều yêu cầu một phiên trình duyệt nền tảng đang hoạt động — không khả dụng thông qua API key.
+
+### Link to this sectionXóa Dataset#
+    
+    
+    DELETE /api/datasets/{datasetId}
+
+Xóa mềm dataset (được chuyển vào [thùng rác](/vi/platform/account/trash), có thể khôi phục trong 30 ngày).
+
+### Link to this sectionSao chép (Clone) Dataset#
+    
+    
+    POST /api/datasets/{datasetId}/clone
+
+Tạo bản sao của tập dữ liệu cùng tất cả hình ảnh và nhãn. Chỉ có thể sao chép các tập dữ liệu công khai, do bạn sở hữu hoặc trong workspace có quyền chỉnh sửa. Yêu cầu một phiên trình duyệt nền tảng đang hoạt động — không khả dụng qua API key.
+
+**Body (tất cả các trường đều tùy chọn):**
+    
+    
+    {
+        "name": "cloned-dataset",
+        "description": "My cloned dataset",
+        "visibility": "private",
+        "owner": "team-username"
+    }
+
+### Link to this sectionXuất Dataset#
+    
+    
+    GET /api/datasets/{datasetId}/export
+
+Trả về phản hồi JSON với một URL tải xuống được ký (signed download URL) cho bản xuất dataset mới nhất.
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`v`| integer| Số phiên bản (bắt đầu từ 1). Nếu bỏ qua, sẽ trả về bản xuất mới nhất (không lưu cache).  
+  
+**Phản hồi (Response):**
+    
+    
+    {
+        "downloadUrl": "https://storage.example.com/export.ndjson?signed=...",
+        "cached": true
+    }
+
+### Link to this sectionTạo Phiên bản Dataset#
+    
+    
+    POST /api/datasets/{datasetId}/export
+
+Tạo một bản snapshot phiên bản mới của dataset. Chỉ dành cho chủ sở hữu. Phiên bản này ghi lại số lượng hình ảnh, số lượng lớp, số lượng chú thích và phân chia hiện tại, sau đó tạo và lưu trữ một bản xuất NDJSON không thể thay đổi.
+
+**Request Body:**
+    
+    
+    {
+        "description": "Added 500 training images"
+    }
+
+Tất cả các trường đều là tùy chọn. Trường `description` là nhãn do người dùng cung cấp cho phiên bản này.
+
+**Phản hồi (Response):**
+    
+    
+    {
+        "version": 3,
+        "downloadUrl": "https://storage.example.com/v3.ndjson?signed=..."
+    }
+
+### Link to this sectionCập nhật Mô tả Phiên bản#
+    
+    
+    PATCH /api/datasets/{datasetId}/export
+
+Cập nhật mô tả của một phiên bản hiện có. Chỉ dành cho chủ sở hữu.
+
+**Request Body:**
+    
+    
+    {
+        "version": 2,
+        "description": "Fixed mislabeled classes"
+    }
+
+**Phản hồi (Response):**
+    
+    
+    {
+        "ok": true
+    }
+
+### Link to this sectionLấy Thống kê Lớp (Class Statistics)#
+    
+    
+    GET /api/datasets/{datasetId}/class-stats
+
+Trả về phân bổ lớp, bản đồ nhiệt vị trí (location heatmap) và thống kê kích thước. Kết quả được lưu cache tối đa 5 phút.
+
+**Phản hồi (Response):**
+    
+    
+    {
+        "classes": [{ "classId": 0, "count": 1500, "imageCount": 450 }],
+        "imageStats": {
+            "widthHistogram": [{ "bin": 640, "count": 120 }],
+            "heightHistogram": [{ "bin": 480, "count": 95 }],
+            "pointsHistogram": [{ "bin": 4, "count": 200 }]
+        },
+        "locationHeatmap": {
+            "bins": [
+                [5, 10],
+                [8, 3]
+            ],
+            "maxCount": 50
+        },
+        "dimensionHeatmap": {
+            "bins": [
+                [2, 5],
+                [3, 1]
+            ],
+            "maxCount": 12,
+            "minWidth": 10,
+            "maxWidth": 1920,
+            "minHeight": 10,
+            "maxHeight": 1080
+        },
+        "classNames": ["person", "car", "dog"],
+        "cached": true,
+        "sampled": false,
+        "sampleSize": 1000
+    }
+
+### Link to this sectionQuản lý Lớp (Classes)#
+
+Hợp nhất các lớp (gán lại các annotation từ các lớp nguồn sang một lớp đích, sau đó xóa các lớp nguồn):
+    
+    
+    POST /api/datasets/{datasetId}/classes/merge
+
+Xóa các lớp:
+    
+    
+    POST /api/datasets/{datasetId}/classes/delete
+
+### Link to this sectionPhân bổ lại Tập dữ liệu (Splits)#
+    
+    
+    POST /api/datasets/{datasetId}/splits/redistribute
+
+Gán lại hình ảnh qua các tập train/val/test. Cả ba đều yêu cầu một phiên trình duyệt nền tảng đang hoạt động — không khả dụng qua API key.
+
+### Link to this sectionEmbeddings tập dữ liệu#
+    
+    
+    GET /api/datasets/{datasetId}/embeddings
+    POST /api/datasets/{datasetId}/embeddings
+    DELETE /api/datasets/{datasetId}/embeddings
+
+GET trả về tóm tắt phân tích UMAP hiện tại và trạng thái công việc đang hoạt động; POST đưa công việc phân tích embeddings vào hàng đợi; DELETE hủy công việc đang hoạt động.
+
+### Link to this sectionPhân cụm hình ảnh#
+    
+    
+    GET /api/datasets/{datasetId}/images/clustering
+
+Trả về bố cục UMAP 2D và metadata cho mỗi hình ảnh trong chế độ xem phân tán (paged và rate-limited).
+
+### Link to this sectionLấy các Model đã huấn luyện trên Dataset#
+    
+    
+    GET /api/datasets/{datasetId}/models
+
+Trả về các model đã được huấn luyện sử dụng dataset này.
+
+**Phản hồi (Response):**
+    
+    
+    {
+        "models": [
+            {
+                "_id": "model_abc123",
+                "name": "experiment-1",
+                "slug": "experiment-1",
+                "status": "completed",
+                "task": "detect",
+                "epochs": 100,
+                "bestEpoch": 87,
+                "projectId": "project_xyz",
+                "projectSlug": "my-project",
+                "projectIconColor": "#3b82f6",
+                "projectIconLetter": "M",
+                "username": "johndoe",
+                "startedAt": "2024-01-14T22:00:00Z",
+                "completedAt": "2024-01-15T10:00:00Z",
+                "createdAt": "2024-01-14T21:55:00Z",
+                "metrics": {
+                    "mAP50": 0.85,
+                    "mAP50-95": 0.72,
+                    "precision": 0.88,
+                    "recall": 0.81
+                }
+            }
+        ],
+        "count": 1
+    }
+
+### Link to this sectionTự động gán nhãn Dataset (Auto-Annotate)#
+    
+    
+    POST /api/datasets/{datasetId}/predict
+
+Chạy inference YOLO trên các hình ảnh của dataset để tự động tạo chú thích. Sử dụng một model đã chọn để dự đoán nhãn cho các hình ảnh chưa được gán nhãn.
+
+**Body:**
+
+Trường (Field)| Loại| Bắt buộc| Mô tả  
+---|---|---|---  
+`imageHash`| string| Có| Hash của hình ảnh cần gán nhãn  
+`modelId`| string| Không| Model được sử dụng để suy luận (inference), dưới dạng URI `ul://` (ví dụ: `ul://username/project/model`). Nếu bỏ qua, model mặc định theo tác vụ của tập dữ liệu sẽ được sử dụng.  
+`confidence`| float| Không| Ngưỡng tin cậy (default: 0.25)  
+`iou`| float| Không| Ngưỡng IoU (default: 0.7)  
+  
+### Link to this sectionNhập liệu Dataset (Ingest)#
+    
+    
+    POST /api/datasets/ingest
+
+Tạo công việc nhập liệu dataset để xử lý các tệp ZIP hoặc TAR đã tải lên, bao gồm `.tar.gz` và `.tgz`, chứa hình ảnh và nhãn.
+
+Phần thân yêu cầu (request body) nhận đúng một trong các tham số `sessionId` (phiên tải lên của một tệp lưu trữ đã tải lên) hoặc `sourceUrl` (một URL ZIP, TAR, TAR.GZ, TGZ hoặc NDJSON từ xa), cộng với một `targetSplit` tùy chọn (`train`, `val`, hoặc `test`) để ghi đè cấu trúc phân chia của tệp lưu trữ.
+    
+    
+    graph LR
+        A[Upload Archive] --> B[POST /api/datasets/ingest]
+        B --> C[Process Archive]
+        C --> D[Extract images]
+        C --> E[Parse labels]
+        C --> F[Generate thumbnails]
+        D & E & F --> G[Dataset ready]
+
+### Link to this sectionHình ảnh Dataset#
+
+#### Link to this sectionLiệt kê hình ảnh#
+    
+    
+    GET /api/datasets/{datasetId}/images
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`split`| string| Lọc theo split: `train`, `val`, `test`  
+`offset`| int| Offset phân trang (default: 0)  
+`limit`| int| Số lượng mục mỗi trang (default: 50, max: 5000)  
+`sort`| string| Thứ tự sắp xếp: `newest`, `oldest`, `name-asc`, `name-desc`, `height-asc`, `height-desc`, `width-asc`, `width-desc`, `size-asc`, `size-desc`, `labels-asc`, `labels-desc` (một số bị vô hiệu hóa đối với các dataset >100k hình ảnh)  
+`hasLabel`| string| Lọc theo trạng thái nhãn (`true` hoặc `false`)  
+`hasError`| string| Lọc theo trạng thái lỗi (`true` hoặc `false`)  
+`search`| string| Tìm kiếm theo tên tệp hoặc hash hình ảnh  
+`classIds`| string| Các ID lớp được phân tách bằng dấu phẩy; trả về các hình ảnh chứa bất kỳ lớp nào được chỉ định  
+`includeThumbnails`| string| Bao gồm các URL thumbnail đã ký (default: `true`)  
+`includeImageUrls`| string| Bao gồm các URL hình ảnh đầy đủ đã ký (default: `false`)  
+  
+#### Link to this sectionLấy URL Hình ảnh Đã ký#
+    
+    
+    POST /api/datasets/{datasetId}/images/urls
+
+Lấy các URL đã ký cho một loạt các hash hình ảnh (để hiển thị trong trình duyệt).
+
+#### Link to this sectionXóa hình ảnh#
+    
+    
+    DELETE /api/datasets/{datasetId}/images/{hash}
+
+#### Link to this sectionLấy Nhãn hình ảnh#
+    
+    
+    GET /api/datasets/{datasetId}/images/{hash}/labels
+
+Trả về các chú thích và tên lớp cho một hình ảnh cụ thể.
+
+#### Link to this sectionCập nhật Nhãn hình ảnh#
+    
+    
+    PUT /api/datasets/{datasetId}/images/{hash}/labels
+
+**Body:**
+    
+    
+    {
+        "labels": [
+            { "classId": 0, "bbox": [0.5, 0.5, 0.2, 0.3] },
+            { "classId": 1, "segments": [0.1, 0.2, 0.3, 0.2, 0.2, 0.4] }
+        ]
+    }
+
+Định dạng tọa độ
+
+Tọa độ nhãn sử dụng các giá trị chuẩn hóa YOLO từ 0 đến 1. Bounding boxes sử dụng `[x_center, y_center, width, height]`. Nhãn phân đoạn (Segmentation labels) sử dụng `segments`, một danh sách phẳng các đỉnh đa giác `[x1, y1, x2, y2, ...]`.
+
+#### Link to this sectionThao tác hình ảnh hàng loạt#
+
+Di chuyển hình ảnh giữa các split (train/val/test) trong một dataset:
+    
+    
+    PATCH /api/datasets/{datasetId}/images/bulk
+
+Xóa hình ảnh hàng loạt:
+    
+    
+    DELETE /api/datasets/{datasetId}/images/bulk
+
+* * *
+
+## Link to this sectionProjects API#
+
+Tổ chức các model của bạn thành các project. Mỗi model thuộc về một project. Xem [tài liệu Projects](/vi/platform/train/projects).
+
+### Link to this sectionLiệt kê Project#
+    
+    
+    GET /api/projects
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`username`| string| Lọc theo username  
+`limit`| int| Số lượng mục mỗi trang  
+`owner`| string| Username của chủ sở hữu không gian làm việc (workspace owner)  
+  
+### Link to this sectionLấy Project#
+    
+    
+    GET /api/projects/{projectId}
+
+### Link to this sectionTạo Project#
+    
+    
+    POST /api/projects
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"name": "my-project", "slug": "my-project", "description": "Detection experiments"}' \
+      https://platform.ultralytics.com/api/projects
+
+### Link to this sectionCập nhật Project#
+    
+    
+    PATCH /api/projects/{projectId}
+
+### Link to this sectionXóa Project#
+    
+    
+    DELETE /api/projects/{projectId}
+
+Xóa mềm project (được chuyển vào [thùng rác](/vi/platform/account/trash)).
+
+### Link to this sectionClone Dự án#
+    
+    
+    POST /api/projects/{projectId}/clone
+
+Sao chép một project công khai (cùng tất cả các model của nó) vào workspace của bạn. Yêu cầu một phiên trình duyệt nền tảng đang hoạt động — không khả dụng qua API key.
+
+### Link to this sectionBiểu tượng Project#
+
+Tải lên biểu tượng project (multipart form với tệp hình ảnh):
+    
+    
+    POST /api/projects/{projectId}/icon
+
+Xóa biểu tượng project:
+    
+    
+    DELETE /api/projects/{projectId}/icon
+
+Cả hai đều yêu cầu một phiên trình duyệt nền tảng đang hoạt động — không khả dụng thông qua API key.
+
+* * *
+
+## Link to this sectionAPI Models#
+
+Quản lý các model YOLO đã huấn luyện — xem số liệu, tải trọng số (weights), chạy inference và xuất ra các định dạng khác. Xem [Tài liệu về Models](/vi/platform/train/models).
+
+### Link to this sectionLiệt kê Models#
+    
+    
+    GET /api/models
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Bắt buộc| Mô tả  
+---|---|---|---  
+`projectId`| string| Có| ID dự án (bắt buộc)  
+`fields`| string| Không| Bộ trường: `summary`, `charts`  
+`ids`| string| Không| Các ID model được phân tách bằng dấu phẩy  
+`limit`| int| Không| Số kết quả tối đa (mặc định 20, tối đa 100)  
+  
+### Link to this sectionLiệt kê các Model đã hoàn tất#
+    
+    
+    GET /api/models/completed
+
+Trả về các model đã huấn luyện xong (để sử dụng trong các trình chọn model và triển khai).
+
+### Link to this sectionLấy Model#
+    
+    
+    GET /api/models/{modelId}
+
+### Link to this sectionTạo Model#
+    
+    
+    POST /api/models
+
+**JSON Body:**
+
+Trường (Field)| Loại| Bắt buộc| Mô tả  
+---|---|---|---  
+`projectId`| string| Có| ID dự án đích  
+`slug`| string| Không| URL slug (chữ cái thường, chữ số/dấu gạch ngang)  
+`name`| string| Không| Tên hiển thị (tối đa 100 ký tự)  
+`description`| string| Không| Mô tả model (tối đa 1000 ký tự)  
+`task`| string| Không| Loại tác vụ (detect, segment, semantic, pose, obb, classify)  
+  
+Tải lên tệp Model
+
+Việc tải lên tệp model `.pt` được xử lý riêng biệt. Sử dụng UI của nền tảng để kéo và thả các tệp model vào một dự án.
+
+### Link to this sectionCập nhật Model#
+    
+    
+    PATCH /api/models/{modelId}
+
+### Link to this sectionXóa Model#
+    
+    
+    DELETE /api/models/{modelId}
+
+### Link to this sectionTải xuống các tệp Model#
+    
+    
+    GET /api/models/{modelId}/files
+
+Trả về các URL tải xuống đã được ký cho các tệp model.
+
+### Link to this sectionSao chép (Clone) Model#
+    
+    
+    POST /api/models/{modelId}/clone
+
+Sao chép một model công khai vào một trong các dự án của bạn. Yêu cầu phiên trình duyệt nền tảng đang hoạt động — không khả dụng thông qua API key.
+
+**Body:**
+    
+    
+    {
+        "targetProjectSlug": "my-project",
+        "modelName": "cloned-model",
+        "description": "Cloned from public model",
+        "owner": "team-username"
+    }
+
+Trường (Field)| Loại| Bắt buộc| Mô tả  
+---|---|---|---  
+`targetProjectSlug`| string| Có| Slug của dự án đích  
+`modelName`| string| Không| Tên cho model đã sao chép  
+`description`| string| Không| Mô tả model  
+`owner`| string| Không| Tên người dùng nhóm (để sao chép trong workspace)  
+  
+### Link to this sectionTheo dõi lượt tải xuống#
+    
+    
+    POST /api/models/{modelId}/track-download
+
+Theo dõi phân tích lượt tải xuống model.
+
+### Link to this sectionChạy Inference#
+    
+    
+    POST /api/models/{modelId}/predict
+
+**Multipart Form:**
+
+Trường (Field)| Loại| Mô tả  
+---|---|---  
+`file`| tệp| Tệp hình ảnh hoặc video (ví dụ: JPG, PNG, WebP, BMP, TIFF; MP4, MOV, AVI)  
+`conf`| float| Ngưỡng tin cậy (default: 0.25)  
+`iou`| float| Ngưỡng IoU (default: 0.7)  
+`imgsz`| int| Kích thước hình ảnh theo pixel (mặc định: 640)  
+`source`| string| URL hình ảnh hoặc hình ảnh được mã hóa base64 (thay thế cho `file`)  
+  
+Kích thước tải lên tối đa là 100 MB.
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -F "file=@image.jpg" \
+      -F "conf=0.5" \
+      https://platform.ultralytics.com/api/models/MODEL_ID/predict
+
+**Phản hồi (Response):**
+    
+    
+    {
+        "images": [
+            {
+                "shape": [1080, 1920],
+                "results": [
+                    {
+                        "class": 0,
+                        "name": "person",
+                        "confidence": 0.92,
+                        "box": { "x1": 100, "y1": 50, "x2": 300, "y2": 400 }
+                    }
+                ]
+            }
+        ],
+        "metadata": {
+            "imageCount": 1
+        }
+    }
+
+### Link to this sectionLấy Predict Token#
+    
+    
+    POST /api/models/{modelId}/predict/token
+
+Chỉ dành cho phiên trình duyệt
+
+Tuyến đường này được sử dụng bởi tab Predict trong ứng dụng để cấp các token inference tồn tại trong thời gian ngắn cho các cuộc gọi trực tiếp từ trình duyệt → predict-service (độ trễ thấp hơn, không qua proxy API). Nó yêu cầu một phiên trình duyệt nền tảng đang hoạt động và không khả dụng thông qua API key. Đối với inference theo chương trình, hãy gọi `POST /api/models/{modelId}/predict` bằng API key của bạn.
+
+### Link to this sectionKhởi động Model (Warmup)#
+    
+    
+    POST /api/models/{modelId}/predict/warmup
+
+Chỉ dành cho phiên trình duyệt
+
+Tuyến đường warmup được tab Predict sử dụng để tải trước trọng số của model trên dịch vụ dự đoán trước khi người dùng thực hiện lần inference đầu tiên. Nó yêu cầu một phiên trình duyệt nền tảng đang hoạt động và không khả dụng thông qua API key.
+
+* * *
+
+## Link to this sectionAPI Training#
+
+Khởi chạy quá trình đào tạo YOLO trên cloud GPU (26 loại GPU từ RTX 2000 Ada đến B300) và theo dõi tiến độ theo thời gian thực. Xem [tài liệu Cloud Training](/vi/platform/train/cloud-training).
+    
+    
+    graph LR
+        A[POST /training/start] --> B[Job Created]
+        B --> C{Training}
+        C -->|progress| D[GET /models/id/training]
+        C -->|cancel| E[DELETE /models/id/training]
+        C -->|complete| F[Model Ready]
+        F --> G[Deploy or Export]
+
+### Link to this sectionBắt đầu huấn luyện#
+    
+    
+    POST /api/training/start
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "modelId": "MODEL_ID",
+        "projectId": "PROJECT_ID",
+        "gpuType": "rtx-4090",
+        "trainArgs": {
+          "model": "yolo26n.pt",
+          "data": "ul://username/datasets/my-dataset",
+          "epochs": 100,
+          "imgsz": 640,
+          "batch": 16
+        }
+      }' \
+      https://platform.ultralytics.com/api/training/start
+
+Các loại GPU
+
+Các loại GPU khả dụng bao gồm `rtx-4090`, `a100-80gb-pcie`, `a100-80gb-sxm`, `h100-sxm`, `rtx-pro-6000`, `b300` và các loại khác. Xem [Cloud Training](/vi/platform/train/cloud-training) để biết danh sách đầy đủ cùng với bảng giá.
+
+### Link to this sectionLấy trạng thái khả dụng của GPU#
+    
+    
+    GET /api/training/gpu-availability
+
+Trả về trạng thái kho GPU hiện tại (`High`, `Medium`, `Low`, hoặc `null`) theo ID loại GPU. Công khai, không yêu cầu xác thực; được cache trong 5 phút.
+
+### Link to this sectionLấy trạng thái huấn luyện#
+    
+    
+    GET /api/models/{modelId}/training
+
+Trả về trạng thái công việc huấn luyện hiện tại, số liệu và tiến độ của model. Các dự án công khai có thể được truy cập ẩn danh; các dự án riêng tư yêu cầu một phiên trình duyệt nền tảng đang hoạt động (tuyến đường này không chấp nhận xác thực bằng API key).
+
+### Link to this sectionHủy huấn luyện#
+    
+    
+    DELETE /api/models/{modelId}/training
+
+Chấm dứt instance tính toán đang chạy và đánh dấu công việc là đã hủy. Yêu cầu một phiên trình duyệt nền tảng đang hoạt động — không khả dụng thông qua API key.
+
+* * *
+
+## Link to this sectionAPI Deployments#
+
+Triển khai các model đến các endpoint inference chuyên dụng với kiểm tra tình trạng và giám sát. Các bản triển khai mới sử dụng scale-to-zero theo mặc định và API chấp nhận một đối tượng `resources` tùy chọn. Xem [Tài liệu về Endpoints](/vi/platform/deploy/endpoints).
+
+Hỗ trợ API-key theo tuyến đường
+
+Chỉ có `GET /api/deployments`, `POST /api/deployments`, `GET /api/deployments/{deploymentId}` và `DELETE /api/deployments/{deploymentId}` hỗ trợ xác thực bằng API key. Các tuyến đường phụ `predict`, `health`, `logs`, `metrics`, `start` và `stop` yêu cầu phiên trình duyệt nền tảng đang hoạt động — chúng là các proxy tiện ích cho UI trong ứng dụng. Đối với inference theo chương trình, hãy gọi trực tiếp URL endpoint của bản triển khai (ví dụ: `https://predict-abc123.run.app/predict`) với API key của bạn. [Các endpoint chuyên dụng](/vi/platform/deploy/endpoints#using-endpoints) không bị giới hạn tốc độ (rate-limited).
+    
+    
+    graph LR
+        A[Create] --> B[Deploying]
+        B --> C[Ready]
+        C -->|stop| D[Stopped]
+        D -->|start| C
+        C -->|delete| E[Deleted]
+        D -->|delete| E
+        C -->|predict| F[Inference Results]
+
+### Link to this sectionLiệt kê các bản triển khai#
+    
+    
+    GET /api/deployments
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`modelId`| string| Lọc theo model  
+`status`| string| Lọc theo trạng thái  
+`limit`| int| Số kết quả tối đa (mặc định: 20, tối đa: 100)  
+`owner`| string| Username của chủ sở hữu không gian làm việc (workspace owner)  
+  
+### Link to this sectionTạo bản triển khai#
+    
+    
+    POST /api/deployments
+
+**Body:**
+    
+    
+    {
+        "modelId": "model_abc123",
+        "name": "my-deployment",
+        "region": "us-central1",
+        "resources": {
+            "cpu": 1,
+            "memoryGi": 2,
+            "minInstances": 0,
+            "maxInstances": 1
+        }
+    }
+
+Trường (Field)| Loại| Bắt buộc| Mô tả  
+---|---|---|---  
+`modelId`| string| Có| ID model cần triển khai  
+`name`| string| Có| Tên bản triển khai  
+`region`| string| Có| Khu vực triển khai  
+`resources`| đối tượng| Không| Cấu hình tài nguyên (`cpu`, `memoryGi`, `minInstances`, `maxInstances`)  
+  
+Tạo một endpoint inference chuyên dụng trong khu vực được chỉ định. Endpoint có thể truy cập toàn cầu thông qua một URL duy nhất.
+
+Tài nguyên mặc định
+
+Hộp thoại triển khai hiện gửi các mặc định cố định gồm `cpu=1`, `memoryGi=2`, `minInstances=0` và `maxInstances=1`. Tuyến đường API chấp nhận đối tượng `resources`, nhưng giới hạn của gói đăng ký sẽ chặn `minInstances` ở mức `0` và `maxInstances` ở mức `1`.
+
+Chọn khu vực
+
+Chọn một khu vực gần người dùng của bạn để có độ trễ thấp nhất. UI của nền tảng hiển thị các ước tính độ trễ cho tất cả 43 khu vực có sẵn.
+
+### Link to this sectionLấy bản triển khai#
+    
+    
+    GET /api/deployments/{deploymentId}
+
+### Link to this sectionXóa bản triển khai#
+    
+    
+    DELETE /api/deployments/{deploymentId}
+
+### Link to this sectionBắt đầu bản triển khai#
+    
+    
+    POST /api/deployments/{deploymentId}/start
+
+Tiếp tục một bản triển khai đã dừng.
+
+### Link to this sectionDừng bản triển khai#
+    
+    
+    POST /api/deployments/{deploymentId}/stop
+
+Tạm dừng một bản triển khai đang chạy (ngừng tính phí).
+
+### Link to this sectionKiểm tra tình trạng#
+    
+    
+    GET /api/deployments/{deploymentId}/health
+
+Trả về trạng thái tình trạng của endpoint triển khai.
+
+### Link to this sectionChạy Inference trên bản triển khai#
+    
+    
+    POST /api/deployments/{deploymentId}/predict
+
+Gửi hình ảnh trực tiếp đến một endpoint triển khai để thực hiện inference. Về mặt chức năng tương đương với dự đoán model, nhưng được định tuyến qua endpoint chuyên dụng để có độ trễ thấp hơn.
+
+**Multipart Form:**
+
+Trường (Field)| Loại| Mô tả  
+---|---|---  
+`file`| tệp| Tệp hình ảnh (JPEG, PNG, WebP)  
+`conf`| float| Ngưỡng tin cậy (default: 0.25)  
+`iou`| float| Ngưỡng IoU (default: 0.7)  
+`imgsz`| int| Kích thước hình ảnh theo pixel (mặc định: 640)  
+  
+### Link to this sectionLấy số liệu#
+    
+    
+    GET /api/deployments/{deploymentId}/metrics
+
+Trả về số lượng yêu cầu, độ trễ và số liệu tỷ lệ lỗi cùng với dữ liệu biểu đồ sparkline.
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`range`| string| Phạm vi thời gian: `1h`, `6h`, `24h` (mặc định), `7d`, `30d`  
+`sparkline`| string| Đặt là `true` để có dữ liệu sparkline được tối ưu hóa cho chế độ xem bảng điều khiển (dashboard)  
+  
+### Link to this sectionLấy nhật ký (logs)#
+    
+    
+    GET /api/deployments/{deploymentId}/logs
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`severity`| string| Bộ lọc phân tách bằng dấu phẩy: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`  
+`limit`| int| Số lượng mục nhập (mặc định: 50, tối đa: 200)  
+`pageToken`| string| Token phân trang từ phản hồi trước đó  
+  
+* * *
+
+## Link to this sectionAPI giám sát#
+
+Chỉ dành cho phiên trình duyệt
+
+`GET /api/monitoring` là một route chỉ dành cho UI và yêu cầu một phiên trình duyệt nền tảng đang hoạt động. Nó không chấp nhận xác thực bằng API-key. Hãy truy vấn các chỉ số triển khai riêng lẻ thông qua các route cho mỗi lần triển khai (cũng chỉ dành cho phiên trình duyệt) hoặc sử dụng [Cloud Monitoring exports](https://cloud.google.com/monitoring) trên dịch vụ Cloud Run đã triển khai để truy cập theo lập trình.
+
+### Link to this sectionSố liệu Tổng hợp#
+    
+    
+    GET /api/monitoring
+
+Trả về các số liệu tổng hợp trên tất cả các triển khai của người dùng: tổng số yêu cầu, triển khai đang hoạt động, tỷ lệ lỗi và độ trễ trung bình.
+
+* * *
+
+## Link to this sectionAPI Xuất#
+
+Chuyển đổi các model sang các định dạng tối ưu như ONNX, TensorRT, CoreML và TFLite để triển khai trên thiết bị ngoại vi. Xem [Tài liệu triển khai](/vi/platform/deploy).
+
+### Link to this sectionDanh sách Xuất#
+    
+    
+    GET /api/exports
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`modelId`| string| Model ID (bắt buộc)  
+`status`| string| Lọc theo trạng thái  
+`limit`| int| Số kết quả tối đa (mặc định: 20, tối đa: 100)  
+  
+### Link to this sectionTạo Xuất#
+    
+    
+    POST /api/exports
+
+**Body:**
+
+Trường (Field)| Loại| Bắt buộc| Mô tả  
+---|---|---|---  
+`modelId`| string| Có| ID model nguồn  
+`format`| string| Có| Định dạng xuất (xem bảng bên dưới)  
+`gpuType`| string| Có điều kiện| Bắt buộc khi `format` là `engine` (TensorRT)  
+`args`| đối tượng| Không| Các tham số xuất (`imgsz`, `half`, `dynamic`, v.v.)  
+      
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"modelId": "MODEL_ID", "format": "onnx"}' \
+      https://platform.ultralytics.com/api/exports
+
+**Các định dạng được hỗ trợ:**
+
+Định dạng| Giá trị| Trường hợp sử dụng  
+---|---|---  
+ONNX| `onnx`| Inference đa nền tảng  
+TorchScript| `torchscript`| Triển khai PyTorch  
+OpenVINO| `openvino`| Phần cứng Intel  
+TensorRT| `engine`| Tối ưu hóa GPU NVIDIA  
+CoreML| `coreml`| Thiết bị Apple  
+TFLite| `tflite`| Thiết bị di động và nhúng  
+TF SavedModel| `saved_model`| TensorFlow Serving  
+TF GraphDef| `pb`| TensorFlow frozen graph  
+PaddlePaddle| `paddle`| Baidu PaddlePaddle  
+NCNN| `ncnn`| Mạng thần kinh di động  
+Edge TPU| `edgetpu`| Thiết bị Google Coral  
+TF.js| `tfjs`| Inference trên trình duyệt  
+MNN| `mnn`| Inference trên thiết bị di động Alibaba  
+RKNN| `rknn`| Rockchip NPU  
+Qualcomm| `qnn`| Qualcomm Snapdragon NPU  
+IMX| `imx`| Cảm biến Sony IMX500  
+Axelera| `axelera`| Các bộ tăng tốc Axelera AI  
+ExecuTorch| `executorch`| Meta ExecuTorch runtime  
+DeepX| `deepx`| Các bộ tăng tốc DeepX NPU  
+  
+### Link to this sectionLấy trạng thái xuất#
+    
+    
+    GET /api/exports/{exportId}
+
+### Link to this sectionHủy xuất#
+    
+    
+    DELETE /api/exports/{exportId}
+
+### Link to this sectionTheo dõi tải xuống bản xuất#
+    
+    
+    POST /api/exports/{exportId}/track-download
+
+* * *
+
+## Link to this sectionAPI Hoạt động#
+
+Xem nguồn cấp dữ liệu các hành động gần đây trên tài khoản của bạn — các lần training, lượt tải lên và nhiều hơn nữa. Xem [Tài liệu hoạt động](/vi/platform/account/activity).
+
+Chỉ phiên trình duyệt
+
+Các route Hoạt động được vận hành bởi các yêu cầu xác thực trình duyệt từ platform UI. Chúng không được công khai dưới dạng API, không chấp nhận xác thực API-key và các cấu trúc route bên dưới chỉ được ghi lại để tham khảo. Sử dụng nguồn cấp dữ liệu Hoạt động trong platform UI để xem, đánh dấu hoặc lưu trữ các sự kiện.
+
+### Link to this sectionLiệt kê hoạt động#
+    
+    
+    GET /api/activity
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`limit`| int| Kích thước trang (mặc định: 20, tối đa: 100)  
+`page`| int| Số trang (mặc định: 1)  
+`archived`| boolean| `true` cho tab Lưu trữ, `false` cho Hộp thư đến  
+`search`| string| Tìm kiếm không phân biệt hoa thường trong các trường sự kiện  
+  
+### Link to this sectionĐánh dấu sự kiện đã xem#
+    
+    
+    POST /api/activity/mark-seen
+
+**Body:**
+    
+    
+    {
+        "all": true
+    }
+
+Hoặc chuyển các ID cụ thể:
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"]
+    }
+
+### Link to this sectionLưu trữ sự kiện#
+    
+    
+    POST /api/activity/archive
+
+**Body:**
+    
+    
+    {
+        "all": true,
+        "archive": true
+    }
+
+Hoặc chuyển các ID cụ thể:
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"],
+        "archive": false
+    }
+
+* * *
+
+## Link to this sectionAPI Thùng rác#
+
+Xem và khôi phục các mục đã xóa. Các mục bị xóa vĩnh viễn sau 30 ngày. Xem [Tài liệu thùng rác](/vi/platform/account/trash).
+
+### Link to this sectionLiệt kê thùng rác#
+    
+    
+    GET /api/trash
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`type`| string| Bộ lọc: `all`, `project`, `dataset`, `model`  
+`page`| int| Số trang (mặc định: 1)  
+`limit`| int| Các mục trên mỗi trang (mặc định: 50, tối đa: 200)  
+`owner`| string| Username của chủ sở hữu không gian làm việc (workspace owner)  
+  
+### Link to this sectionKhôi phục mục#
+    
+    
+    POST /api/trash
+
+**Body:**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+### Link to this sectionXóa mục vĩnh viễn#
+    
+    
+    DELETE /api/trash
+
+**Body:**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+Không thể đảo ngược
+
+Việc xóa vĩnh viễn không thể hoàn tác. Tài nguyên và tất cả dữ liệu liên quan sẽ bị xóa.
+
+### Link to this sectionLàm trống thùng rác#
+    
+    
+    DELETE /api/trash/empty
+
+Xóa vĩnh viễn tất cả các mục trong thùng rác.
+
+Xác thực
+
+`DELETE /api/trash/empty` yêu cầu phiên trình duyệt đã xác thực và không khả dụng thông qua API key. Hãy sử dụng nút **Làm trống thùng rác** trong UI thay vào đó.
+
+* * *
+
+## Link to this sectionAPI Thanh toán#
+
+Kiểm tra số dư tín dụng, mua tín dụng, xem lịch sử giao dịch và định cấu hình tự động nạp tiền. Xem [Tài liệu thanh toán](/vi/platform/account/billing).
+
+Đơn vị tiền tệ
+
+Số tiền thanh toán sử dụng cent (`creditsCents`) trong đó `100 = $1.00`.
+
+### Link to this sectionLấy số dư#
+    
+    
+    GET /api/billing/balance
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`owner`| string| Username của chủ sở hữu không gian làm việc (workspace owner)  
+  
+**Phản hồi (Response):**
+    
+    
+    {
+        "creditsCents": 2500,
+        "plan": "free"
+    }
+
+### Link to this sectionLấy tóm tắt sử dụng#
+    
+    
+    GET /api/billing/usage-summary
+
+Trả về chi tiết gói, giới hạn và số liệu sử dụng.
+
+### Link to this sectionLấy giao dịch#
+    
+    
+    GET /api/billing/transactions
+
+Trả về lịch sử giao dịch (gần nhất trước tiên).
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`owner`| string| Username của chủ sở hữu không gian làm việc (workspace owner)  
+  
+### Link to this sectionTạo phiên thanh toán#
+    
+    
+    POST /api/billing/checkout-session
+
+**Body:**
+    
+    
+    {
+        "amount": 25,
+        "owner": "team-username"
+    }
+
+Trường (Field)| Loại| Bắt buộc| Mô tả  
+---|---|---|---  
+`amount`| number| Có| Số tiền tính bằng đô la ($5-$1000)  
+`owner`| string| Không| Tên người dùng nhóm cho việc nạp tiền workspace (yêu cầu vai trò quản trị viên)  
+  
+Tạo một phiên thanh toán để mua tín dụng.
+
+### Link to this sectionTạo thanh toán đăng ký#
+    
+    
+    POST /api/billing/subscription-checkout
+
+Tạo một phiên thanh toán để nâng cấp đăng ký Pro.
+
+**Body:**
+    
+    
+    {
+        "planId": "pro",
+        "billingCycle": "monthly",
+        "owner": "team-username"
+    }
+
+Trường (Field)| Loại| Bắt buộc| Mô tả  
+---|---|---|---  
+`planId`| string| Có| Gói để đăng ký (`pro`)  
+`billingCycle`| string| Không| Chu kỳ thanh toán: `monthly` (mặc định) hoặc `yearly`  
+`owner`| string| Không| Tên người dùng nhóm cho việc nâng cấp workspace (yêu cầu vai trò quản trị viên)  
+  
+### Link to this sectionHủy hoặc Tiếp tục đăng ký#
+    
+    
+    DELETE /api/billing/subscription-checkout
+
+Mặc định hủy đăng ký Pro khi kết thúc kỳ. Gửi `{"resume": true}` để tiếp tục một yêu cầu hủy đã được lên lịch trước khi kỳ thanh toán kết thúc.
+
+**Body:**
+    
+    
+    {
+        "resume": true
+    }
+
+### Link to this sectionTự động nạp tiền#
+
+Tự động thêm tín dụng khi số dư giảm xuống dưới ngưỡng quy định.
+
+#### Link to this sectionLấy Cấu hình Tự động Nạp tiền#
+    
+    
+    GET /api/billing/auto-topup
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`owner`| string| Username của chủ sở hữu không gian làm việc (workspace owner)  
+  
+#### Link to this sectionCập nhật Cấu hình Tự động Nạp tiền#
+    
+    
+    PATCH /api/billing/auto-topup
+
+**Body:**
+    
+    
+    {
+        "enabled": true,
+        "thresholdCents": 500,
+        "amountCents": 2500
+    }
+
+### Link to this sectionPhương thức Thanh toán#
+
+#### Link to this sectionLiệt kê các Phương thức Thanh toán#
+    
+    
+    GET /api/billing/payment-methods
+
+#### Link to this sectionTạo Ý định Thiết lập (Setup Intent)#
+    
+    
+    POST /api/billing/payment-methods/setup
+
+Trả về một client secret để thêm phương thức thanh toán mới.
+
+#### Link to this sectionĐặt Phương thức Thanh toán Mặc định#
+    
+    
+    POST /api/billing/payment-methods/default
+
+**Body:**
+    
+    
+    {
+        "paymentMethodId": "pm_123"
+    }
+
+#### Link to this sectionCập nhật Thông tin Thanh toán#
+    
+    
+    PATCH /api/billing/payment-methods
+
+**Body:**
+    
+    
+    {
+        "name": "Jane Doe",
+        "address": {
+            "line1": "123 Main St",
+            "city": "San Francisco",
+            "state": "CA",
+            "postal_code": "94105",
+            "country": "US"
+        }
+    }
+
+#### Link to this sectionXóa Phương thức Thanh toán#
+    
+    
+    DELETE /api/billing/payment-methods/{id}
+
+* * *
+
+## Link to this sectionAPI Lưu trữ#
+
+Kiểm tra phân tích mức sử dụng lưu trữ của bạn theo danh mục (tập dữ liệu, model, xuất file) và xem các mục lớn nhất.
+
+Chỉ dành cho phiên trình duyệt
+
+Các route lưu trữ yêu cầu một phiên trình duyệt nền tảng đang hoạt động và không thể truy cập thông qua API key. Hãy sử dụng trang [Cài đặt > Hồ sơ](/vi/platform/account/settings#storage-usage) trong UI để xem phân tích tương tác.
+
+### Link to this sectionLấy Thông tin Lưu trữ#
+    
+    
+    GET /api/storage
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`details`| boolean| Đặt thành `true` để bao gồm `topItems` (các tập dữ liệu, model, bản xuất lớn nhất).  
+  
+**Phản hồi (Response):**
+    
+    
+    {
+        "tier": "free",
+        "usage": {
+            "storage": {
+                "current": 1073741824,
+                "limit": 107374182400,
+                "percent": 1.0
+            }
+        },
+        "region": "us",
+        "username": "johndoe",
+        "updatedAt": "2024-01-15T10:00:00Z",
+        "breakdown": {
+            "byCategory": {
+                "datasets": { "bytes": 536870912, "count": 2 },
+                "models": { "bytes": 268435456, "count": 4 },
+                "exports": { "bytes": 268435456, "count": 3 }
+            },
+            "topItems": [
+                {
+                    "_id": "dataset_abc123",
+                    "name": "my-dataset",
+                    "slug": "my-dataset",
+                    "sizeBytes": 536870912,
+                    "type": "dataset"
+                },
+                {
+                    "_id": "model_def456",
+                    "name": "experiment-1",
+                    "slug": "experiment-1",
+                    "sizeBytes": 134217728,
+                    "type": "model",
+                    "parentName": "My Project",
+                    "parentSlug": "my-project"
+                }
+            ]
+        }
+    }
+
+* * *
+
+## Link to this sectionAPI Tải lên#
+
+Tải tệp trực tiếp lên bộ nhớ đám mây bằng các signed URL để truyền dữ liệu nhanh và tin cậy. Sử dụng luồng hai bước: lấy signed URL, sau đó tải tệp lên. Xem [Tài liệu dữ liệu](/vi/platform/data).
+
+### Link to this sectionLấy Signed URL Tải lên#
+    
+    
+    POST /api/upload/signed-url
+
+Yêu cầu một signed URL để tải tệp trực tiếp lên bộ nhớ đám mây. Signed URL sẽ bỏ qua máy chủ API để thực hiện truyền tệp dung lượng lớn.
+
+**Body:**
+    
+    
+    {
+        "assetType": "images",
+        "assetId": "abc123",
+        "filename": "my-image.jpg",
+        "contentType": "image/jpeg",
+        "totalBytes": 5242880
+    }
+
+Trường (Field)| Loại| Mô tả  
+---|---|---  
+`assetType`| string| Loại tài sản: `models`, `datasets`, `images`, `videos`  
+`assetId`| string| ID của tài sản mục tiêu  
+`filename`| string| Tên tệp gốc  
+`contentType`| string| Loại MIME  
+`totalBytes`| int| Kích thước tệp tính bằng byte  
+  
+**Phản hồi (Response):**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "uploadUrl": "https://storage.example.com/...",
+        "gcsPath": "gs://bucket/users/user123/images/abc123/my-image.jpg",
+        "downloadUrl": "https://cdn.example.com/...",
+        "expiresAt": "2026-02-22T12:00:00Z"
+    }
+
+### Link to this sectionHoàn tất Tải lên#
+    
+    
+    POST /api/upload/complete
+
+Thông báo cho nền tảng rằng việc tải tệp lên đã hoàn tất để bắt đầu xử lý.
+
+**Body:**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "checksum": "<optional sha-256 hex>"
+    }
+
+* * *
+
+## Link to this sectionAPI Tích hợp#
+
+Nhập tập dữ liệu từ các dịch vụ bên thứ ba. Xem [Tài liệu Tích hợp](/vi/platform/integrations).
+
+### Link to this sectionXem trước Nhập từ Roboflow#
+    
+    
+    POST /api/integrations/roboflow/preview
+
+Giải mã API key Roboflow sang một gói nhập hàng loạt: thông tin workspace, những dự án nào sẽ được nhập mới, số lượng phiên bản đã nhập (bị bỏ qua) và các loại dự án không được hỗ trợ. API key Roboflow được truyền trong phần thân yêu cầu và không được lưu lại.
+
+### Link to this sectionNhập từ Roboflow#
+    
+    
+    POST /api/integrations/roboflow/import
+
+Xếp hàng các công việc nạp dữ liệu để nhập các dự án Roboflow đã chọn vào workspace của bạn. Yêu cầu dung lượng lưu trữ, và mỗi tập dữ liệu phải phù hợp với giới hạn kích thước mỗi lần nhập trong gói của bạn.
+
+* * *
+
+## Link to this sectionAPI API Keys#
+
+Quản lý các API key của bạn để truy cập theo chương trình. Xem [Tài liệu API Keys](/vi/platform/account/api-keys).
+
+### Link to this sectionLiệt kê các API Keys#
+    
+    
+    GET /api/api-keys
+
+### Link to this sectionTạo API Key#
+    
+    
+    POST /api/api-keys
+
+**Body:**
+    
+    
+    {
+        "name": "training-server"
+    }
+
+### Link to this sectionXóa API Key#
+    
+    
+    DELETE /api/api-keys
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`keyId`| string| ID API key cần thu hồi  
+  
+**Ví dụ:**
+    
+    
+    curl -X DELETE \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/api-keys?keyId=KEY_ID"
+
+* * *
+
+## Link to this sectionAPI Nhóm & Thành viên#
+
+Tạo không gian làm việc nhóm, mời thành viên và quản lý vai trò để cộng tác. Xem [Tài liệu Nhóm](/vi/platform/account/teams).
+
+### Link to this sectionLiệt kê các Nhóm#
+    
+    
+    GET /api/teams
+
+### Link to this sectionTạo Nhóm#
+    
+    
+    POST /api/teams/create
+
+**Body:**
+    
+    
+    {
+        "username": "my-team",
+        "fullName": "My Team"
+    }
+
+### Link to this sectionLiệt kê các Thành viên#
+    
+    
+    GET /api/members
+
+Trả về các thành viên của không gian làm việc hiện tại.
+
+### Link to this sectionMời Thành viên#
+    
+    
+    POST /api/members
+
+**Body:**
+    
+    
+    {
+        "email": "user@example.com",
+        "role": "editor"
+    }
+
+Vai trò Thành viên
+
+Vai trò| Quyền  
+---|---  
+`viewer`| Quyền truy cập chỉ đọc vào tài nguyên của không gian làm việc  
+`editor`| Tạo, chỉnh sửa và xóa tài nguyên  
+`admin`| Quản lý thành viên, thanh toán và tất cả các tài nguyên (chỉ chủ sở hữu nhóm mới có thể gán quyền này)  
+  
+Chủ sở hữu (`owner`) nhóm là người tạo và không thể được mời. Chủ sở hữu được chuyển giao riêng biệt thông qua `POST /api/members/transfer-ownership`. Xem [Teams](/vi/platform/account/teams) để biết chi tiết đầy đủ về vai trò.
+
+### Link to this sectionCập nhật Vai trò Thành viên#
+    
+    
+    PATCH /api/members/{userId}
+
+### Link to this sectionXóa Thành viên#
+    
+    
+    DELETE /api/members/{userId}
+
+### Link to this sectionChuyển nhượng Quyền sở hữu#
+    
+    
+    POST /api/members/transfer-ownership
+
+### Link to this sectionLời mời#
+
+#### Link to this sectionChấp nhận Lời mời#
+    
+    
+    POST /api/invites/accept
+
+#### Link to this sectionLấy Thông tin Lời mời#
+    
+    
+    GET /api/invites/info
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`token`| string| Token lời mời  
+  
+#### Link to this sectionThu hồi Lời mời#
+    
+    
+    DELETE /api/invites/{inviteId}
+
+#### Link to this sectionGửi lại Lời mời#
+    
+    
+    POST /api/invites/{inviteId}/resend
+
+* * *
+
+## Link to this sectionAPI Khám phá (Explore)#
+
+Tìm kiếm và duyệt qua các tập dữ liệu công khai và dự án được cộng đồng chia sẻ. Xem [Tài liệu Khám phá](/vi/platform/explore).
+
+### Link to this sectionTìm kiếm Nội dung Công khai#
+    
+    
+    GET /api/explore/search
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`q`| string| Truy vấn tìm kiếm  
+`type`| string| Loại tài nguyên: `all` (mặc định), `projects`, `datasets`  
+`sort`| string| Thứ tự sắp xếp: `newest` (mặc định), `stars`, `oldest`, `name-asc`, `name-desc`, `count-desc`, `count-asc`  
+`offset`| int| Offset phân trang (mặc định: 0). Kết quả trả về 20 mục mỗi trang.  
+`task`| string| Tùy chọn: các loại tác vụ YOLO được phân tách bằng dấu phẩy để lọc tập dữ liệu (`detect`, `segment`, `semantic`, `classify`, `pose`, `obb`)  
+  
+### Link to this sectionDữ liệu Thanh bên#
+    
+    
+    GET /api/explore/sidebar
+
+Trả về nội dung được chọn lọc cho thanh bên Khám phá.
+
+* * *
+
+## Link to this sectionAPI Người dùng & Cài đặt#
+
+Quản lý hồ sơ, API keys, mức sử dụng lưu trữ và cài đặt quyền riêng tư dữ liệu của bạn. Xem [Tài liệu Cài đặt](/vi/platform/account/settings).
+
+### Link to this sectionLấy Người dùng theo Tên người dùng#
+    
+    
+    GET /api/users
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`username`| string| Tên người dùng cần tìm  
+  
+### Link to this sectionTheo dõi hoặc Bỏ theo dõi Người dùng#
+    
+    
+    PATCH /api/users
+
+**Body:**
+    
+    
+    {
+        "username": "target-user",
+        "followed": true
+    }
+
+### Link to this sectionKiểm tra tính sẵn sàng của Tên người dùng#
+    
+    
+    GET /api/username/check
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`username`| string| Tên người dùng cần kiểm tra  
+`suggest`| bool| Tùy chọn: `true` để bao gồm gợi ý nếu tên đã được sử dụng  
+  
+### Link to this sectionCài đặt#
+    
+    
+    GET /api/settings
+    POST /api/settings
+
+Lấy hoặc cập nhật cài đặt hồ sơ người dùng (tên hiển thị, tiểu sử, liên kết mạng xã hội, v.v.).
+
+### Link to this sectionBiểu tượng Hồ sơ#
+    
+    
+    POST /api/settings/icon
+    DELETE /api/settings/icon
+
+Tải lên hoặc xóa ảnh đại diện.
+
+### Link to this sectionOnboarding#
+    
+    
+    POST /api/onboarding
+
+Hoàn thành quy trình onboarding (thiết lập vùng dữ liệu, tên người dùng).
+
+* * *
+
+## Link to this sectionAPI GDPR#
+
+Yêu cầu xuất tất cả dữ liệu của bạn hoặc xóa vĩnh viễn tài khoản của bạn. Xem [Tài liệu Cài đặt](/vi/platform/account/settings).
+
+### Link to this sectionLấy Trạng thái Công việc GDPR#
+    
+    
+    GET /api/gdpr
+
+**Tham số truy vấn (Query Parameters):**
+
+Tham số| Loại| Mô tả  
+---|---|---  
+`jobId`| string| ID công việc GDPR cần kiểm tra  
+  
+Trả về trạng thái công việc. Đối với các công việc xuất dữ liệu đã hoàn thành, phản hồi bao gồm một `downloadUrl`.
+
+### Link to this sectionBắt đầu Quy trình Xuất hoặc Xóa#
+    
+    
+    POST /api/gdpr
+
+**Body:**
+    
+    
+    {
+        "action": "export"
+    }
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE"
+    }
+
+Tùy chọn cho không gian làm việc nhóm:
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE",
+        "teamUsername": "my-team"
+    }
+
+Hành động Không thể đảo ngược
+
+Việc xóa tài khoản là vĩnh viễn và không thể hoàn tác. Tất cả dữ liệu, model và quá trình triển khai sẽ bị xóa.
+
+* * *
+
+## Link to this sectionMã lỗi#
+
+Mã| Mã trạng thái HTTP| Mô tả  
+---|---|---  
+`UNAUTHORIZED`| 401| API key không hợp lệ hoặc bị thiếu  
+`FORBIDDEN`| 403| Không đủ quyền hạn  
+`NOT_FOUND`| 404| Không tìm thấy tài nguyên  
+`VALIDATION_ERROR`| 400| Dữ liệu yêu cầu không hợp lệ  
+`RATE_LIMITED`| 429| Quá nhiều yêu cầu  
+`INTERNAL_ERROR`| 500| Lỗi máy chủ  
+  
+* * *
+
+## Link to this sectionTích hợp Python#
+
+Để tích hợp dễ dàng hơn, hãy sử dụng gói Python của Ultralytics, gói này tự động xử lý việc xác thực, tải lên và phát trực tuyến các chỉ số theo thời gian thực.
+
+### Link to this sectionCài đặt & Thiết lập#
+    
+    
+    pip install ultralytics
+
+Xác minh cài đặt:
+    
+    
+    yolo check
+
+Yêu cầu phiên bản gói
+
+Tích hợp nền tảng yêu cầu **ultralytics >=8.4.60**. Các phiên bản thấp hơn sẽ KHÔNG hoạt động với Platform.
+
+### Link to this sectionXác thực#
+    
+    
+    yolo settings api_key=YOUR_API_KEY
+
+### Link to this sectionSử dụng tập dữ liệu (dataset) của Platform#
+
+Tham chiếu tập dữ liệu với URI `ul://`:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Train on your Platform dataset
+    model.train(
+        data="ul://your-username/datasets/your-dataset",
+        epochs=100,
+        imgsz=640,
+    )
+
+**Định dạng URI:**
+
+Mẫu| Mô tả  
+---|---  
+`ul://username/datasets/slug`| Tập dữ liệu (Dataset)  
+`ul://username/project-name`| Dự án  
+`ul://username/project/model-name`| Model cụ thể  
+`ul://ultralytics/yolo26/yolo26n`| Model chính thức  
+  
+### Link to this sectionĐẩy dữ liệu lên Platform#
+
+Gửi kết quả đến một dự án trên Platform:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Results automatically sync to Platform
+    model.train(
+        data="coco8.yaml",
+        epochs=100,
+        project="your-username/my-project",
+        name="experiment-1",
+    )
+
+**Những gì được đồng bộ:**
+
+  * Chỉ số huấn luyện (thời gian thực)
+  * Trọng số model cuối cùng
+  * Biểu đồ xác thực (validation)
+  * Đầu ra console
+  * Chỉ số hệ thống
+
+
+
+### Link to this sectionVí dụ về API#
+
+**Tải model từ Platform:**
+    
+    
+    # Your own model
+    model = YOLO("ul://username/project/model-name")
+    
+    # Official model
+    model = YOLO("ul://ultralytics/yolo26/yolo26n")
+
+**Chạy suy luận (inference):**
+    
+    
+    results = model("image.jpg")
+    
+    # Access results
+    for r in results:
+        boxes = r.boxes  # Detection boxes
+        masks = r.masks  # Segmentation masks
+        keypoints = r.keypoints  # Pose keypoints
+        probs = r.probs  # Classification probabilities
+
+**Xuất model:**
+    
+    
+    # Export to ONNX
+    model.export(format="onnx", imgsz=640, half=True)
+    
+    # Export to TensorRT
+    model.export(format="engine", imgsz=640, half=True)
+    
+    # Export to CoreML
+    model.export(format="coreml", imgsz=640)
+
+**Xác thực (Validation):**
+    
+    
+    metrics = model.val(data="ul://username/datasets/my-dataset")
+    
+    print(f"mAP50: {metrics.box.map50}")
+    print(f"mAP50-95: {metrics.box.map}")
+
+* * *
+
+## Link to this sectionWebhook#
+
+Platform sử dụng webhook nội bộ để truyền phát các chỉ số huấn luyện theo thời gian thực từ `ultralytics` Python SDK (đang chạy trên GPU đám mây hoặc máy từ xa/cục bộ) về Platform — bao gồm loss theo từng epoch, mAP, thông số hệ thống và trạng thái hoàn thành. Các webhook này được xác thực thông qua HMAC `webhookSecret` được cung cấp cho mỗi tác vụ huấn luyện và không dành cho người dùng ứng dụng tiêu thụ.
+
+Thực hiện ở phía bạn
+
+**Tất cả các gói** : Tiến trình huấn luyện thông qua `ultralytics` SDK (chỉ số thời gian thực, thông báo hoàn thành) hoạt động tự động trên mọi gói — chỉ cần đặt `project=username/my-project name=my-run` khi huấn luyện và SDK sẽ tự động gửi sự kiện về Platform. Không cần đăng ký webhook từ phía người dùng.
+
+**Đăng ký webhook hướng tới người dùng** (POST callback đến một URL do bạn kiểm soát) đang nằm trong lộ trình phát triển của Enterprise và hiện chưa khả dụng. Trong thời gian chờ đợi, hãy thực hiện poll `GET /api/models/{modelId}/training` để kiểm tra trạng thái hoặc sử dụng activity feed trong giao diện UI.
+
+* * *
+
+## Link to this sectionCâu hỏi thường gặp#
+
+### Link to this sectionLàm cách nào để phân trang (paginate) các kết quả lớn?#
+
+Hầu hết các endpoint sử dụng tham số `limit` để kiểm soát số lượng kết quả được trả về cho mỗi yêu cầu:
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=50"
+
+Các endpoint Activity và Trash cũng hỗ trợ tham số `page` để phân trang theo trang:
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/activity?page=2&limit=20"
+
+Endpoint Explore Search sử dụng `offset` thay vì `page`, với kích thước trang cố định là 20:
+    
+    
+    curl "https://platform.ultralytics.com/api/explore/search?type=datasets&offset=20&sort=stars"
+
+### Link to this sectionTôi có thể sử dụng API mà không cần SDK không?#
+
+Có, tất cả các chức năng đều khả dụng qua REST. Python SDK là một trình bao bọc tiện ích bổ sung các tính năng như truyền phát chỉ số thời gian thực và tự động tải model lên. Bạn cũng có thể khám phá tất cả các endpoint một cách tương tác tại [platform.ultralytics.com/api/docs](https://platform.ultralytics.com/api/docs).
+
+### Link to this sectionCó thư viện client API nào không?#
+
+Hiện tại, hãy sử dụng gói Python của Ultralytics hoặc thực hiện các yêu cầu HTTP trực tiếp. Các thư viện client chính thức cho các ngôn ngữ khác đang được lên kế hoạch.
+
+### Link to this sectionLàm cách nào để xử lý giới hạn tốc độ (rate limit)?#
+
+Sử dụng header `Retry-After` từ phản hồi 429 để đợi một khoảng thời gian hợp lý:
+    
+    
+    import time
+    
+    import requests
+    
+    def api_request_with_retry(url, headers, max_retries=3):
+        for attempt in range(max_retries):
+            response = requests.get(url, headers=headers)
+            if response.status_code != 429:
+                return response
+            wait = int(response.headers.get("Retry-After", 2**attempt))
+            time.sleep(wait)
+        raise Exception("Rate limit exceeded")
+
+### Link to this sectionLàm cách nào để tìm ID của model hoặc tập dữ liệu?#
+
+ID tài nguyên được trả về khi bạn tạo tài nguyên thông qua API. Bạn cũng có thể tìm thấy chúng trong URL của nền tảng:
+    
+    
+    https://platform.ultralytics.com/username/project/model-name
+                                      ^^^^^^^^ ^^^^^^^ ^^^^^^^^^^
+                                      username project   model
+
+Sử dụng các endpoint liệt kê (list) để tìm kiếm theo tên hoặc lọc theo dự án.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[MYmykolaxboiko2](https://github.com/mykolaxboiko)[LAlaodouya1](https://github.com/laodouya)[RAraimbekovm1](https://github.com/raimbekovm)[SEsergiuwaxmann1](https://github.com/sergiuwaxmann)[LALaughing-q1](https://github.com/Laughing-q)
+
+Đã tạo 5 tháng trướcĐã cập nhật 5 giờ trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

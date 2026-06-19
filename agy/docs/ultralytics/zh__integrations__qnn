@@ -1,0 +1,349 @@
+---
+source_url: https://docs.ultralytics.com/zh/integrations/qnn
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/qnn.md)
+
+# Link to this section用于 Ultralytics YOLO 模型的 Qualcomm QNN 导出#
+
+在 Qualcomm Snapdragon 设备上部署计算机视觉模型需要针对 Qualcomm AI Engine Direct (QNN) 运行时进行调优的模型格式。将 [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) 模型导出为 QNN 格式，让你能够在数十亿台移动电话、笔记本电脑、汽车系统和物联网设备中配备的 Snapdragon CPU、Adreno GPU 和 Hexagon NPU 硬件上运行加速的设备端推理。本指南介绍了如何将 YOLO 导出到 Qualcomm QNN，并将其部署以在 Snapdragon 硬件上进行快速、低功耗的推理。
+
+立即使用官方移动应用在 Snapdragon NPU 上运行 YOLO
+
+官方 [Ultralytics Flutter plugin](https://github.com/ultralytics/yolo-flutter-app) 可直接在 Hexagon NPU 上运行 QNN 导出模型，支持实时摄像头推理、单张图像预测以及所有六项 YOLO26 任务的自动模型下载。关于 iOS 部署，请参阅 [Ultralytics YOLO iOS SDK](https://github.com/ultralytics/yolo-ios-app) 和 [CoreML integration](/zh/integrations/coreml)。
+
+## Link to this section什么是 Qualcomm QNN？#
+
+![Qualcomm QNN on-device inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/qnn_cover.avif)
+
+[Qualcomm AI Engine Direct](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk)（通常简称为 **QNN** ，作为 Qualcomm AI Runtime (QAIRT) SDK 的一部分进行分发）是 Qualcomm 针对 [Snapdragon](https://www.qualcomm.com/products) 处理器提供的底层推理堆栈。它提供了一个统一的 API 和后端专用库，旨在适配 Snapdragon CPU、Adreno GPU 以及 Hexagon Tensor Processor (HTP)——即现代 Snapdragon SoC 中专用的 [神经网络](https://www.ultralytics.com/glossary/neural-network-nn) 处理单元 (NPU)。QNN 为开发者提供了访问这些 Snapdragon AI 加速器的全栈权限，它是旧版 [Snapdragon Neural Processing Engine (SNPE)](https://www.qualcomm.com/developer/software/neural-processing-sdk-for-ai) SDK 的现代继任者。它为 Snapdragon 8 Gen 2、8 Gen 3 和 8 Elite 移动平台、Snapdragon X 笔记本电脑以及汽车和 XR 产品上的端侧 AI 提供支持。
+
+## Link to this section为什么要导出到 Qualcomm QNN？#
+
+Snapdragon 是全球部署最广泛的移动计算平台。将 Ultralytics YOLO 导出为 Qualcomm QNN 格式可以解锁这些设备上的专用 AI 硬件：
+
+  * **Hexagon NPU 加速** ：在 Hexagon Tensor Processor 上运行 YOLO 可提供比 CPU 推理显著更高的吞吐量和更低的功耗——非常适合 [实时推理](https://www.ultralytics.com/glossary/real-time-inference) 以及在 Snapdragon 上实现全天候运行的计算机视觉。
+  * **设备端且离线** ：QNN 推理完全在 Snapdragon 设备上运行，因此没有云端往返，延迟保持在较低水平，并且数据绝不会离开设备。
+  * **量化效率** ：QNN 导出将 YOLO [量化](https://www.ultralytics.com/glossary/model-quantization) 为具有 16 位激活值的 INT8 权重，这是 Hexagon NPU 首选的精度/性能平衡，可以缩小模型大小并最大限度地提高电池供电硬件上的每秒帧数。
+  * **一种格式，多种设备** ：单个 Qualcomm QNN 导出即可覆盖 Snapdragon 8 Gen 2、8 Gen 3 和 8 Elite 系列及后续产品中的 Snapdragon CPU、Adreno GPU 和 Hexagon NPU。
+  * **生产就绪的 Qualcomm AI 栈** ：QNN (Qualcomm AI Engine Direct / QAIRT) 是 Qualcomm 当前积极维护的设备端 AI 运行时，也是 SNPE 的推荐替代方案。
+
+
+
+## Link to this sectionQNN 导出格式#
+
+Ultralytics 使用 [ONNX Runtime](https://onnxruntime.ai/) QNN 执行提供程序（可通过 pip 安装的 `onnxruntime-qnn` 包，其中捆绑了 QAIRT 库）**在本地** 将 YOLO 模型编译为 QNN。导出器将你的模型转换为 [ONNX](/zh/integrations/onnx)，使用校准数据将其**量化** 为 16 位激活值和 INT8 权重（这是 Hexagon NPU 的推荐平衡），然后初始化一个启用了上下文二进制缓存的 ONNX Runtime 会话——这将把量化后的图编译为嵌入在 `<model>_qnn.onnx` 中的 **QNN 上下文二进制文件** 。无需 Qualcomm 帐户、云端上传或单独下载 SDK。
+
+与基于云的 [Qualcomm AI Hub](https://aihub.qualcomm.com/) 不同（后者在 Qualcomm 托管的 Snapdragon 设备上编译和分析模型，并需要 Qualcomm 帐户），Ultralytics QNN 导出完全在你的本地机器上运行，只需调用一次 `export(format="qnn")` 即可。你可以获得相同的 QNN/QAIRT 运行时目标——Snapdragon CPU、Adreno GPU 和 Hexagon NPU——无需注册、上传限制或排队时间，并且它可以直接融入标准的 YOLO 导出工作流程。
+
+导出的 `*_qnn.onnx` 文件是自包含的：它嵌入了 QNN 上下文二进制文件以及诸如类别名称、图像尺寸和任务等 ONNX 元数据。
+
+## Link to this sectionQNN 模型的主要特点#
+
+  * **量化** ：该模型使用 ONNX Runtime QNN QDQ 流和校准数据集量化为 16 位激活值和 INT8 权重，这是 Hexagon NPU 推荐的精度/性能平衡。了解更多关于 [模型量化](https://www.ultralytics.com/glossary/model-quantization) 的信息。
+  * **完全本地编译** ：上下文二进制文件完全在你的主机上生成——无需 Qualcomm 帐户、API 令牌或云端上传。
+  * **全 Snapdragon 加速** ：通过统一的运行时在 Hexagon NPU (HTP)、Adreno GPU 或 CPU 上运行推理。
+  * **广泛的设备覆盖范围** ：针对广泛应用于手机、PC（Windows on Snapdragon）、汽车、XR 和嵌入式产品的 Snapdragon 平台。
+  * **预编译上下文二进制文件** ：交付上下文二进制文件可最大限度地减少设备上的图编译，从而降低目标设备上的模型加载延迟。
+  * **自包含输出** ：导出的 ONNX 文件包含预编译的 QNN 上下文二进制文件和元数据，便于直接部署。
+
+
+
+## Link to this section性能测试#
+
+### Link to this sectionAndroid 手机#
+
+在搭载 Qualcomm Snapdragon 8 Elite Gen 5 (SM8850) 的 Xiaomi 17 手机上，对官方 YOLO26n 模型进行端到端的单张图像推理。该芯片包含 Qualcomm Oryon CPU、Adreno GPU 和 Hexagon NPU (HTP v81)。每个单元格展示了 **总时间** （预处理 + 推理 + 后处理，不含标注），下方则是各阶段的耗时拆解。CPU 和 GPU 通过 LiteRT 运行 INT8 TFLite；NPU 运行 QNN 上下文二进制文件（INT8 权重，16 位激活）。
+
+模型| 任务| 尺寸  
+(像素)| CPU  
+INT8 TFLite  
+(ms)| GPU Adreno  
+INT8 TFLite  
+(ms)| NPU Hexagon  
+QNN A16W8  
+(ms)  
+---|---|---|---|---|---  
+YOLO26n| 检测| 640| 53.3  
+3.6 / 47.4 / 2.4| 17.2  
+3.6 / 9.1 / 4.5| **11.3**  
+3.5 / 5.6 / 2.2  
+YOLO26n-seg| 分割| 640| 76.0  
+3.6 / 64.7 / 7.7| 23.9  
+3.6 / 11.8 / 8.6| **21.3**  
+3.5 / 7.9 / 10.0  
+YOLO26n-sem| 语义| 1024| 66.6  
+3.6 / 46.3 / 16.8| **37.7**  
+3.6 / 17.4 / 16.7| 49.11  
+8.8 / 20.8 / 19.5  
+YOLO26n-cls| 分类| 224| 5.2  
+0.8 / 4.0 / 0.5| 4.5  
+1.6 / 2.2 / 0.7| **2.4**  
+1.1 / 0.6 / 0.7  
+YOLO26n-pose| 姿态| 640| 57.7  
+3.5 / 52.4 / 1.8| 15.2  
+3.6 / 9.7 / 1.9| **10.8**  
+3.5 / 5.6 / 1.8  
+YOLO26n-obb| OBB| 1024| 50.3  
+3.6 / 45.4 / 1.3| **13.9**  
+3.8 / 8.2 / 1.8| 21.0  
+8.8 / 10.9 / 1.3  
+  
+  * **Speed** 值是指**单图突发延迟** — 即在 `bus.jpg` 上进行 3 次预热运行后的 15 次运行平均值，通过 [Flutter 插件](https://github.com/ultralytics/yolo-flutter-app)的设备端基准测试工具在处于热平衡状态的设备上测得。持续实时摄像头的帧时间会更高（包括每帧捕获的 letterboxing 处理和热稳定过程）；请使用应用屏幕上的预处理/推理/后处理拆解数据，以获取你设备上的稳态数值。
+  * 1 语义分割 QNN 使用了此版本中图内 (in-graph) 的 ArgMax 类图输出，这取代了以往不稳定的 123-1065 ms Logits 解码，实现了稳定的 ~49 ms；在 1024px 分辨率下，GPU 在处理语义分割任务时仍然略快。
+
+
+
+### Link to this section运行 Windows 的 Snapdragon 笔记本电脑#
+
+在搭载 Qualcomm Snapdragon X Elite (X1E78100) 的 Lenovo 笔记本电脑上对官方 YOLO26n 模型进行端到端单图推理——配备 Qualcomm Oryon CPU 和 Hexagon NPU (HTP v73)、32 GB 内存、Windows 11 系统。此 Windows-on-Snapdragon 对比展示了大多数桌面开发者采用的原生 PyTorch FP32 CPU 基准与 QNN Hexagon NPU 路径的性能差异。每个单元格显示了 **完整的`model.predict()` 实际耗时**，并在下方列出了预处理/推理/后处理的具体耗时；总耗时可能包含这三个阶段之外的框架开销。CPU 数据基于 PyTorch FP32 (`torch==2.10.0+cpu`)，NPU 数据基于 ONNX Runtime QNN (`onnxruntime-qnn==2.2.0`，使用 INT8 权重/16 位激活值)。
+
+模型| 任务| 尺寸  
+(像素)| CPU  
+PT FP32  
+(ms)| NPU Hexagon  
+QNN A16W8  
+(ms)  
+---|---|---|---|---  
+YOLO26n| 检测| 640| 91.4  
+4.3 / 75.2 / 0.1| **27.2**  
+4.9 / 19.4 / 0.9  
+YOLO26n-seg| 分割| 640| 138.8  
+4.5 / 127.1 / 2.8| **34.3**  
+5.0 / 24.0 / 5.1  
+YOLO26n-sem| 语义| 1024| 295.8  
+9.1 / 189.2 / 94.8| **133.0**  
+8.8 / 37.4 / 83.9  
+YOLO26n-cls| 分类| 224| 15.4  
+3.0 / 9.8 / 0.0| **11.7**  
+2.7 / 5.5 / 0.0  
+YOLO26n-pose| 姿态| 640| 109.6  
+4.6 / 102.9 / 0.2| **28.9**  
+5.3 / 23.3 / 0.6  
+YOLO26n-obb| OBB| 1024| 267.8  
+8.1 / 254.6 / 0.1| **64.8**  
+8.9 / 54.7 / 0.6  
+  
+  * **Speed** values are **single-image burst latencies** — the mean of 100 runs after 10 warmup runs on `bus.jpg`, measured with `time.perf_counter()` around the full `model.predict()` call on a thermally rested device (`ultralytics==8.4.67`, Python 3.12.10).
+  * Hexagon NPU 在 640-1024 px 任务上的运行速度大约比 PyTorch CPU 基准快 **2-4 倍** （检测任务约 3.4 倍），而在 224 px 分类任务上差距缩小至约 1.3 倍，这是因为固定的预处理开销在微小工作负载中占主导地位。
+
+
+
+## Link to this section支持的任务#
+
+QNN 导出支持每个模型系列中可用的标准任务集，包括 YOLO26 语义分割。
+
+任务| 已支持  
+---|---  
+[目标检测](https://docs.ultralytics.com/tasks/detect)| ✅  
+[实例分割](https://docs.ultralytics.com/tasks/segment)| ✅  
+[语义分割](https://docs.ultralytics.com/tasks/semantic)| ✅  
+[姿态估计](https://docs.ultralytics.com/tasks/pose)| ✅  
+[旋转目标检测 (OBB Detection)](https://docs.ultralytics.com/tasks/obb)| ✅  
+[分类](https://docs.ultralytics.com/tasks/classify)| ✅  
+  
+## Link to this section导出到 QNN：转换你的 YOLO 模型#
+
+将 Ultralytics YOLO 模型导出为 QNN 格式以在 Snapdragon 硬件上部署。上下文二进制文件是针对目标 Hexagon Tensor Processor (HTP) 架构完成的，你可以使用 `name` 参数进行选择——这与在 [RKNN 导出](/zh/integrations/rockchip-rknn) 中定位芯片所使用的参数相同。
+
+### Link to this section支持的 HTP 架构#
+
+通过 `name` 传递目标架构（例如 `name="73"`）。有效值：
+
+`name`| Hexagon HTP| Snapdragon 平台  
+---|---|---  
+`68`| v68| Snapdragon 888  
+`69`| v69| Snapdragon 8 Gen 1 / 8+ Gen 1  
+`73`| v73| Snapdragon 8 Gen 2, X Elite (默认)  
+`75`| v75| Snapdragon 8 Gen 3  
+`79`| v79| Snapdragon 8 Elite  
+`81`| v81| Snapdragon 8 Elite Gen 5  
+  
+平台支持
+
+QNN 导出使用 `onnxruntime-qnn` 包。预构建的 wheels 适用于 **Windows (x64 和 ARM64)** 和 **Linux ARM64 (aarch64)** ；在 **Linux x86-64** 上，请通过 `--use_qnn` 从源代码编译 ONNX Runtime（未发布预构建的 wheel，且 macOS 不是受支持的 QNN 主机）。QNN 上下文二进制生成在 x64 主机（Windows x64 或 Linux x86-64）上运行，导出步骤不需要 Snapdragon 设备。
+
+### Link to this section安装#
+
+要安装所需的软件包，请运行：
+
+安装
+    
+    
+    # Install the required package for YOLO
+    pip install ultralytics
+
+`onnxruntime-qnn` 包（提供 ONNX Runtime QNN 执行提供程序并捆绑 QAIRT 库）会在首次导出时自动安装。有关安装过程的详细说明和最佳实践，请查看我们的 [Ultralytics 安装指南](/zh/quickstart)。如果在为 YOLO 安装所需包时遇到任何困难，请参考我们的 [常见问题指南](/zh/guides/yolo-common-issues) 获取解决方案和建议。
+
+### Link to this section用法#
+
+QNN 格式支持 [导出](/zh/modes/export)、[预测](/zh/modes/predict) 和 [验证](/zh/modes/val) 模式。推理和验证通过 ONNX Runtime 的 QNN 执行提供程序（与用于导出的 `onnxruntime-qnn` 包相同）在 Qualcomm Snapdragon 硬件上运行。导出你的模型，然后在 Snapdragon 设备上加载导出的模型以运行推理或验证其精度。
+
+导出
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Export to Qualcomm QNN format (INT8, enforced automatically), targeting an HTP architecture via 'name'
+    # 'name' can be one of 68, 69, 73, 75, 79, 81 (Snapdragon 888, 8 Gen 1, 8 Gen 2, 8 Gen 3, 8 Elite, 8 Elite Gen 5)
+    model.export(format="qnn", name="73")  # creates 'yolo26n_qnn.onnx'
+
+预测
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported QNN model (on a Snapdragon device with onnxruntime-qnn)
+    model = YOLO("yolo26n_qnn.onnx")
+    
+    # Run inference
+    results = model("https://ultralytics.com/images/bus.jpg")
+
+验证
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported QNN model (on a Snapdragon device with onnxruntime-qnn)
+    model = YOLO("yolo26n_qnn.onnx")
+    
+    # Validate accuracy on the COCO8 dataset
+    metrics = model.val(data="coco8.yaml")
+
+### Link to this section导出参数#
+
+参数| 类型| 默认值| 描述  
+---|---|---|---  
+`format`| `str`| `'qnn'`| 导出模型的目标格式，定义与 Qualcomm QNN 运行时的兼容性。  
+`imgsz`| `int` 或 `tuple`| `640`| 模型输入所需的图像尺寸。可以是正方形图像的整数或元组 `(height, width)`。  
+`batch`| `int`| `1`| 指定导出模型的批处理大小，该大小已嵌入到生成的 QNN 上下文二进制文件中。  
+`name`| `str`| `'73'`| 目标 Hexagon HTP 架构版本：`68`、`69`、`73`、`75`、`79` 或 `81`（Snapdragon 888、8 Gen 1、8 Gen 2、8 Gen 3、8 Elite、8 Elite Gen 5）。上下文二进制文件是针对此架构完成的。  
+`int8`| `bool`| `True`| 启用 INT8 量化。QNN HTP 导出必需——如果未指定，将自动设置为 `True`。  
+`data`| `str`| `'coco8.yaml'`| 用于 INT8 校准的数据集配置文件。指定校准图像源。  
+`fraction`| `float`| `1.0`| 用于 INT8 量化的校准数据集比例。  
+`device`| `str`| `None`| 指定 ONNX 导出步骤的设备：GPU (`device=0`) 或 CPU (`device=cpu`)。  
+  
+精确率
+
+QNN 导出功能将模型量化为 **16 位激活值和 INT8 权重** —— 这是 Hexagon NPU 推荐的精度与性能平衡方案 —— 该过程使用 [ONNX Runtime QDQ quantization](https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html) 流程，并采用 `data` 中的校准图像。`int8=True` 会被强制自动执行。
+
+有关导出过程的更多详细信息，请访问 [Ultralytics 导出文档页面](/zh/modes/export)。
+
+### Link to this section输出结构#
+
+成功导出后，将创建一个自包含的 ONNX 文件：
+
+`yolo26n_qnn.onnx # ONNX wrapping the precompiled QNN context binary and metadata `
+
+`yolo26n_qnn.onnx` 文件嵌入了 QNN 上下文二进制文件，并由 ONNX Runtime 使用 Snapdragon 设备上的 QNN 执行提供程序加载。它还在 ONNX `metadata_props` 中携带模型元数据，如类别名称、图像尺寸和任务。
+
+## Link to this section部署导出的 YOLO QNN 模型#
+
+QNN 模型在 Qualcomm Snapdragon 硬件上运行，使得设备端 [模型部署](https://www.ultralytics.com/glossary/model-deployment) 非常直接。在安装了 `onnxruntime-qnn` 的 Snapdragon 设备上，直接使用 Ultralytics API (`yolo predict`/`yolo val`，参见上方的 使用方法) 运行导出的模型——Ultralytics 通过 [ONNX Runtime QNN 执行提供程序](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html) 加载上下文二进制文件，并选择 HTP (NPU)、GPU 或 CPU 后端。
+
+对于自定义流水线，你还可以直接使用 ONNX Runtime 加载上下文二进制 [ONNX](https://onnx.ai/) 文件。`onnxruntime-qnn` 是一个插件执行提供程序，因此请在运行时注册它：
+    
+    
+    import onnxruntime as ort
+    import onnxruntime_qnn as qnn_ep
+    
+    # On the Snapdragon device, register the QNN plugin EP and select its device(s)
+    ort.register_execution_provider_library("QNNExecutionProvider", qnn_ep.get_library_path())
+    devices = [d for d in ort.get_ep_devices() if d.ep_name == "QNNExecutionProvider"]
+    
+    options = ort.SessionOptions()
+    options.add_provider_for_devices(devices, {"backend_path": qnn_ep.get_qnn_htp_path()})
+    session = ort.InferenceSession("yolo26n_qnn.onnx", sess_options=options)
+    outputs = session.run(None, {"images": input_tensor})  # input_tensor: float32 NCHW
+
+由于 QNN 上下文二进制文件是预编译的，会话可以快速加载，而无需在设备上重新编译图。
+
+## Link to this section推荐工作流程#
+
+  1. **训练** 你的模型，使用 Ultralytics [训练模式](/zh/modes/train)
+  2. **导出** ：在受支持的平台（Windows x64 或 ARM64，或 Linux ARM64）上使用 `model.export(format="qnn")` 导出为 QNN 格式。
+  3. **部署** ：将导出的 `*_qnn.onnx` 文件部署到你的 Snapdragon 设备。
+  4. **运行** ：使用 ONNX Runtime 和 QNN 执行提供程序运行推理，选择 HTP、GPU 或 CPU 后端。
+
+
+
+## Link to this section实际应用场景#
+
+在 Qualcomm Snapdragon 硬件上运行的 YOLO 模型非常适合各种 [边缘 AI](https://www.ultralytics.com/glossary/edge-ai) 应用：
+
+  * **智能手机** ：在相机和照片应用中实现实时 [目标检测](https://www.ultralytics.com/glossary/object-detection) 和场景理解，并利用 NPU 加速。
+  * **Windows on Snapdragon** ：在 Copilot+ PC 上实现设备端计算机视觉，无需卸载到云端。
+  * **汽车** ：在 Snapdragon Digital Chassis 平台上实现驾驶员监控、乘客检测和 ADAS 功能。
+  * **XR 和可穿戴设备** ：为 AR/VR 头显和智能眼镜提供低功耗、低延迟的感知能力。
+  * **物联网和机器人** ：在基于 Snapdragon 的相机、无人机和嵌入式系统上实现高效的视觉推理。
+
+
+
+## Link to this section总结#
+
+在本指南中，你已经学习了如何使用 ONNX Runtime QNN 执行提供程序**在本地** 将 Ultralytics YOLO 模型导出为 Qualcomm QNN 格式。导出流水线将你的模型转换为 ONNX，然后将其编译为主机上的 QNN 上下文二进制文件——无需 Qualcomm 帐户或云端——生成针对 Snapdragon CPU、Adreno GPU 和 Hexagon NPU 硬件通过 QNN/QAIRT 运行时进行优化的 `*_qnn.onnx` 文件。
+
+[Ultralytics YOLO](https://www.ultralytics.com/yolo) 与 Qualcomm 设备端 AI 栈的结合，为在广泛的 Snapdragon 生态系统中运行高级 [计算机视觉](https://www.ultralytics.com/glossary/computer-vision-cv) 工作负载提供了一种有效的解决方案。
+
+有关其他设备端和移动部署目标，请参阅相关的 [ONNX](/zh/integrations/onnx)、[CoreML](/zh/integrations/coreml)、[NCNN](/zh/integrations/ncnn)、[TFLite](/zh/integrations/tflite)、[ExecuTorch](/zh/integrations/executorch)、[RKNN](/zh/integrations/rockchip-rknn)、[Sony IMX500](/zh/integrations/sony-imx500) 和 [TensorRT](/zh/integrations/tensorrt) 导出指南。在交付前比较不同格式，请使用 [基准测试模式](/zh/modes/benchmark)。有关完整格式和选项列表，请访问 [导出模式](/zh/modes/export) 文档和 [集成指南页面](/zh/integrations)。
+
+## Link to this section常见问题解答#
+
+### Link to this section如何将我的 Ultralytics YOLO 模型导出为 QNN 格式？#
+
+你可以使用 Python 中的 `export()` 方法或通过 CLI 使用 `format="qnn"` 导出你的模型。导出过程首先创建 ONNX 模型，然后使用 ONNX Runtime QNN 执行提供程序在本地将其编译为 QNN 上下文二进制文件。`onnxruntime-qnn` 包会在首次导出时自动安装。
+
+示例
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    model.export(format="qnn")
+
+### Link to this section我需要 Qualcomm 帐户或云端访问权限吗？#
+
+不需要。QNN 导出完全在你的本地机器上使用 `onnxruntime-qnn` 包运行，该包捆绑了 QAIRT 库。无需 Qualcomm 帐户、API 令牌或网络访问。
+
+### Link to this sectionUltralytics QNN 导出与 Qualcomm AI Hub 相比如何？#
+
+[Qualcomm AI Hub](https://aihub.qualcomm.com/) 是 Qualcomm 用于在托管的 Snapdragon 设备上编译、分析和基准测试模型的云服务，需要 Qualcomm 帐户。Ultralytics QNN 导出目标是相同的 QNN/QAIRT 运行时（Snapdragon CPU、Adreno GPU 和 Hexagon NPU），但使用 ONNX Runtime QNN 执行提供程序**在本地** 编译上下文二进制文件——无需帐户、无需上传、无需排队。这是从 `.pt` 模型到 Snapdragon 就绪构建的最快方式，直接在标准的 YOLO 导出工作流程中完成。
+
+### Link to this section我可以在哪些平台上进行导出？#
+
+`onnxruntime-qnn` 为 **Windows (x64 和 ARM64)** 和 **Linux ARM64 (aarch64)** 提供预构建的 wheels；在 **Linux x86-64** 上，请使用 `--use_qnn` 从源代码编译 ONNX Runtime（未发布预构建的 wheel，且 macOS 不是受支持的 QNN 主机）。上下文二进制生成在 x64 主机（Windows x64 或 Linux x86-64）上运行，不需要物理 Snapdragon 设备。
+
+### Link to this section如何在 Qualcomm Snapdragon NPU 上运行 YOLO？#
+
+使用 `model.export(format="qnn")` 进行导出，将生成的 `yolo26n_qnn.onnx` 文件复制到你的 Snapdragon 设备，然后运行 `yolo predict model=yolo26n_qnn.onnx source=image.jpg`（或 `yolo val`）。Ultralytics 通过 ONNX Runtime QNN 执行提供程序加载上下文二进制文件，并在 Hexagon NPU 上运行它——参见 部署导出的 YOLO QNN 模型。
+
+### Link to this sectionQNN 和 SNPE 之间有什么区别？#
+
+QNN (Qualcomm AI Engine Direct，属于 QAIRT SDK 的一部分) 是 Qualcomm 当前的推理栈，也是旧版 Snapdragon Neural Processing Engine (SNPE) SDK 的推荐替代方案。新的部署应以 QNN 为目标。
+
+### Link to this section我可以使用 `yolo predict` 和 `yolo val` 运行 QNN 模型吗？#
+
+可以，在安装了 `onnxruntime-qnn` 的 Qualcomm Snapdragon 设备上——`YOLO("yolo26n_qnn.onnx")` 会通过 QNN 执行提供程序加载上下文二进制文件，并像其他任何格式一样运行 `predict`/`val`。在没有 QNN 硬件的 x86 主机上，模型无法执行，因为上下文二进制文件是针对 Snapdragon NPU 的。
+
+### Link to this sectionQNN 导出的输出是什么？#
+
+导出将创建一个自包含的上下文二进制 ONNX 文件（例如 `yolo26n_qnn.onnx`），其中嵌入了类别名称、图像尺寸、任务以及其他模型元数据，存储在 ONNX `metadata_props` 中。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/qnn.md)
+
+[GLglenn-jocher8](https://github.com/glenn-jocher)[SHShuaiLYU1](https://github.com/ShuaiLYU)
+
+已创建 3周前已更新 3天前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

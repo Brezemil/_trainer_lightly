@@ -1,0 +1,210 @@
+---
+source_url: https://docs.ultralytics.com/ar/yolov5/tutorials/multi-gpu-training
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/multi-gpu-training.md)
+
+# Link to this sectionالتدريب باستخدام وحدات معالجة رسومية (GPU) متعددة مع YOLOv5#
+
+يشرح هذا الدليل كيفية تدريب YOLOv5 باستخدام وحدات معالجة رسومية (GPU) **متعددة** على جهاز واحد أو عبر أجهزة متعددة.
+
+## Link to this sectionقبل البدء#
+
+قم باستنساخ المستودع وتثبيت [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) في بيئة [**Python >=3.8.0**](https://www.python.org/)، بما في ذلك [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). يتم تنزيل [النماذج](https://github.com/ultralytics/yolov5/tree/master/models) و[مجموعات البيانات](https://github.com/ultralytics/yolov5/tree/master/data) تلقائيًا من أحدث [إصدار](https://github.com/ultralytics/yolov5/releases) لـ YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+استخدم Docker
+
+يُنصح باستخدام **صورة Ultralytics Docker** لجميع عمليات التدريب باستخدام وحدات GPU متعددة. راجع [دليل البدء السريع لـ Docker](/ar/yolov5/environments/docker-image-quickstart-tutorial). [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+PyTorch >= 1.9
+
+يحل `torch.distributed.run` محل `torch.distributed.launch` في **[PyTorch](https://www.ultralytics.com/glossary/pytorch) >= 1.9**. راجع [وثائق PyTorch الموزعة](https://docs.pytorch.org/docs/stable/distributed.html) للحصول على التفاصيل.
+
+## Link to this sectionالتدريب#
+
+اختر نموذجًا مدربًا مسبقًا لبدء التدريب منه. هنا نختار [YOLOv5s](https://github.com/ultralytics/yolov5/blob/master/models/yolov5s.yaml)، وهو نموذج صغير وسريع. راجع [الجدول](https://github.com/ultralytics/yolov5#pretrained-checkpoints) في ملف README الخاص بنا للحصول على مقارنة كاملة لجميع النماذج. سنقوم بتدريب هذا النموذج باستخدام وحدات معالجة رسومية متعددة على مجموعة بيانات [COCO](https://github.com/ultralytics/yolov5/blob/master/data/scripts/get_coco.sh).
+
+![YOLOv5 Models](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-model-comparison.avif)
+
+### Link to this sectionوحدة معالجة رسومية (GPU) واحدة#
+    
+    
+    python train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0
+
+### Link to this sectionوضع [DataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.DataParallel) لوحدات معالجة رسومية متعددة (⚠️ غير مستحسن)#
+
+مرر معرفات متعددة لوحدات معالجة الرسومات إلى `--device` لتمكين وضع DataParallel:
+    
+    
+    python train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0,1
+
+يعد DataParallel بطيئًا ولا يسرع التدريب بشكل ملحوظ مقارنة باستخدام وحدة معالجة رسومية واحدة.
+
+### Link to this sectionوضع [DistributedDataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.parallel.DistributedDataParallel) لوحدات معالجة رسومية متعددة (✅ مستحسن)#
+
+ابدأ أمر التدريب بـ `python -m torch.distributed.run --nproc_per_node`، ثم مرر الوسائط المعتادة:
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --weights yolov5s.pt --device 0,1
+
+  * `--nproc_per_node` هو عدد وحدات معالجة الرسومات المراد استخدامها. في المثال أعلاه، هو `2`.
+  * `--batch` هو إجمالي حجم الدفعة (batch size)، مقسومًا بالتساوي عبر كل وحدة معالجة رسومية. في المثال أعلاه، هو `64 / 2 = 32` لكل وحدة.
+
+
+
+يستخدم الأمر أعلاه وحدات معالجة الرسومات `0...(N-1)`. للتحكم في رؤية الجهاز من خلال متغيرات البيئة بدلاً من ذلك، اضبط `CUDA_VISIBLE_DEVICES=2,3` (أو أي قائمة أخرى) قبل التشغيل.
+
+Use specific GPUs (click to expand)
+
+مرر `--device` متبوعًا بمعرفات وحدات معالجة الرسومات المحددة. يستخدم المثال أدناه وحدات معالجة الرسومات `2,3`.
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights '' --device 2,3
+
+Use SyncBatchNorm (click to expand)
+
+يمكن أن يزيد [SyncBatchNorm](https://docs.pytorch.org/docs/master/generated/torch.nn.SyncBatchNorm.html) من [الدقة](https://www.ultralytics.com/glossary/accuracy) في التدريب باستخدام وحدات معالجة رسومية متعددة، ولكنه يبطئ التدريب بشكل كبير. وهو متاح **فقط** لتدريب DistributedDataParallel باستخدام وحدات معالجة رسومية متعددة.
+
+يفضل استخدامه عندما يكون حجم الدفعة على **كل** وحدة معالجة رسومية صغيرًا (`<= 8`).
+
+لتمكين SyncBatchNorm، مرر `--sync-bn`:
+    
+    
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights '' --sync-bn
+
+Use Multiple machines (click to expand)
+
+هذا متاح **فقط** لتدريب DistributedDataParallel باستخدام وحدات معالجة رسومية متعددة.
+
+قبل المتابعة، تأكد من مطابقة مجموعة البيانات، وقاعدة الكود، وأي تبعيات أخرى عبر جميع الأجهزة، ثم تحقق من أن الأجهزة يمكنها الوصول إلى بعضها البعض عبر الشبكة.
+
+اختر جهازًا رئيسيًا (الذي ستتصل به الأجهزة الأخرى)، وسجل عنوانه (`master_addr`)، واختر منفذًا (`master_port`). يستخدم المثال أدناه `master_addr = 192.168.1.1` و `master_port = 1234`.
+
+ثم قم بتشغيل:
+    
+    
+    # On master machine 0
+    python -m torch.distributed.run --nproc_per_node G --nnodes N --node_rank 0 --master_addr "192.168.1.1" --master_port 1234 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights ''
+    
+    
+    # On machine R
+    python -m torch.distributed.run --nproc_per_node G --nnodes N --node_rank R --master_addr "192.168.1.1" --master_port 1234 train.py --batch 64 --data coco.yaml --cfg yolov5s.yaml --weights ''
+
+حيث `G` هو عدد وحدات معالجة الرسومات لكل جهاز، و `N` هو عدد الأجهزة، و `R` هو رتبة الجهاز في `0...(N-1)`. على سبيل المثال، مع وجود جهازين ووحدتي معالجة رسومات لكل منهما، اضبط `G = 2` و `N = 2` و `R = 1` على الجهاز الثاني.
+
+لا يبدأ التدريب حتى تتصل **جميع** الأجهزة `N`. يتم عرض المخرجات فقط على الجهاز الرئيسي.
+
+### Link to this sectionملاحظات#
+
+  * دعم Windows غير مختبر؛ يُنصح باستخدام Linux.
+
+  * يجب أن يكون `--batch` مضاعفًا لعدد وحدات معالجة الرسومات.
+
+  * تستخدم وحدة معالجة الرسومات 0 ذاكرة أكثر قليلاً من غيرها لأنها تحتفظ بـ EMA وتتعامل مع نقاط التحقق (checkpointing).
+
+  * إذا حصلت على `RuntimeError: Address already in use`، فهذا يعني عادةً أن عمليات تدريب متعددة تستخدم نفس المنفذ. حدد منفذًا مختلفًا باستخدام `--master_port`:
+        
+        python -m torch.distributed.run --master_port 1234 --nproc_per_node 2 ...
+
+
+
+
+## Link to this sectionالنتائج#
+
+نتائج تحليل DDP على مثيل [AWS EC2 P4d](/ar/yolov5/environments/aws-quickstart-tutorial) مجهز بـ 8 وحدات A100 SXM4-40GB لنموذج YOLOv5l لدورة تدريبية ([epoch](https://www.ultralytics.com/glossary/epoch)) واحدة على مجموعة بيانات COCO.
+
+Profiling code
+    
+    
+    # prepare
+    t=ultralytics/yolov5:latest && sudo docker pull $t && sudo docker run -it --runtime=nvidia --ipc=host --gpus all -v "$(pwd)"/coco:/usr/src/coco $t
+    pip3 install torch==1.9.0+cu111 torchvision==0.10.0+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+    cd .. && rm -rf app && git clone https://github.com/ultralytics/yolov5 -b master app && cd app
+    cp data/coco.yaml data/coco_profile.yaml
+    
+    # profile
+    python train.py --batch-size 16 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0
+    python -m torch.distributed.run --nproc_per_node 2 train.py --batch-size 32 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1
+    python -m torch.distributed.run --nproc_per_node 4 train.py --batch-size 64 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1,2,3
+    python -m torch.distributed.run --nproc_per_node 8 train.py --batch-size 128 --data coco_profile.yaml --weights yolov5l.pt --epochs 1 --device 0,1,2,3,4,5,6,7
+
+وحدات معالجة الرسومات  
+A100| حجم الدفعة| ذاكرة CUDA  
+الجهاز 0 (G)| COCO  
+تدريب| COCO  
+تحقق  
+---|---|---|---|---  
+1x| 16| 26GB| 20:39| 0:55  
+2x| 32| 26GB| 11:43| 0:57  
+4x| 64| 26GB| 5:57| 0:55  
+8x| 128| 26GB| 3:09| 0:57  
+  
+كما هو موضح في النتائج، فإن استخدام [DistributedDataParallel](https://docs.pytorch.org/docs/stable/nn.html#torch.nn.parallel.DistributedDataParallel) مع وحدات معالجة رسومية متعددة يوفر تحجيمًا خطيًا تقريبًا في سرعة التدريب. مع 8 وحدات معالجة رسومية، يكتمل التدريب أسرع بحوالي 6.5 مرة مقارنة باستخدام وحدة معالجة رسومية واحدة، مع الحفاظ على نفس استخدام الذاكرة لكل جهاز.
+
+## Link to this sectionالأسئلة الشائعة#
+
+اقرأ قائمة المراجعة أدناه قبل فتح إصدار (issue) - غالبًا ما يوفر ذلك الوقت.
+
+Checklist (click to expand)
+
+  * هل قرأت هذا الدليل من البداية إلى النهاية؟
+  * هل قمت بإعادة استنساخ قاعدة الكود؟ تتغير الأكواد **يوميًا**.
+  * هل بحثت عن رسالة الخطأ؟ ربما واجه شخص آخر نفس المشكلة وشارك حلاً لها.
+  * هل قمت بتثبيت جميع المتطلبات (بما في ذلك إصدارات Python و PyTorch الصحيحة)؟
+  * هل جربت إحدى البيئات المدعومة المدرجة أدناه؟
+  * هل جربت مجموعة بيانات أصغر مثل `coco128` أو `coco2017` لعزل السبب الجذري؟
+
+
+
+إذا كان كل ما سبق صحيحًا، فافتح إصدارًا (Issue) بأكبر قدر ممكن من التفاصيل، باتباع النموذج المخصص.
+
+## Link to this sectionالبيئات المدعومة#
+
+توفر Ultralytics مجموعة من البيئات الجاهزة للاستخدام، حيث يتم تثبيت التبعيات الأساسية مسبقًا مثل [CUDA](https://developer.nvidia.com/cuda)، و [CUDNN](https://developer.nvidia.com/cudnn)، و [Python](https://www.python.org/)، و [PyTorch](https://pytorch.org/)، لبدء مشاريعك.
+
+  * **دفاتر ملاحظات مجانية لوحدات معالجة الرسومات** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [GCP Quickstart Guide](/ar/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [دليل البدء السريع لـ AWS](/ar/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [دليل البدء السريع لـ AzureML](/ar/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [دليل البدء السريع لـ Docker](/ar/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionحالة المشروع#
+
+[![YOLOv5 CI](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+تشير هذه الشارة إلى أن جميع اختبارات التكامل المستمر (CI) الخاصة بـ [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) تمر بنجاح. تقوم اختبارات CI هذه بفحص دقة وأداء YOLOv5 عبر جوانب رئيسية مختلفة بشكل صارم: [التدريب](https://github.com/ultralytics/yolov5/blob/master/train.py)، و[التحقق](https://github.com/ultralytics/yolov5/blob/master/val.py)، و[الاستدلال](https://github.com/ultralytics/yolov5/blob/master/detect.py)، و[التصدير](https://github.com/ultralytics/yolov5/blob/master/export.py)، و[المقاييس](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). وهي تضمن تشغيلًا متسقًا وموثوقًا على macOS و Windows و Ubuntu، مع إجراء الاختبارات كل 24 ساعة ومع كل التزام (commit) جديد.
+
+## Link to this sectionشكر وتقدير#
+
+نود أن نشكر @MagicFrogSJTU، الذي قام بجميع الأعمال الشاقة، و @glenn-jocher لتوجيهنا على طول الطريق.
+
+## Link to this sectionشاهد أيضًا#
+
+  * [وضع التدريب](https://docs.ultralytics.com/modes/train) \- تعرف على تدريب نماذج YOLO باستخدام Ultralytics
+  * [ضبط المعلمات الفائقة](https://docs.ultralytics.com/guides/hyperparameter-tuning) \- قم بتحسين أداء نموذجك
+  * [دليل البدء السريع لـ Docker](https://docs.ultralytics.com/guides/docker-quickstart) \- قم بإعداد بيئة Docker الخاصة بك للتدريب
+
+
+
+المساهمون
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/multi-gpu-training.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+تم الإنشاء قبل 3 أيامتم التحديث قبل 3 أيام
+
+## التعليقات
+
+في هذه الصفحة
+
+استكشف باستخدام الذكاء الاصطناعي

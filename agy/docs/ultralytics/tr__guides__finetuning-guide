@@ -1,0 +1,194 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/finetuning-guide
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+# Link to this sectionYOLO, Özel Bir Veri Kümesi Üzerinde Nasıl İnce Ayarlanır?#
+
+[İnce ayar](https://www.ultralytics.com/glossary/fine-tuning), önceden eğitilmiş bir modeli, rastgele başlatma yerine öğrenilmiş ağırlıklardan başlayarak yeni sınıfları tanıyacak şekilde uyarlar. Sıfırdan yüzlerce epoch boyunca eğitmek yerine, ince ayar önceden eğitilmiş [COCO](/tr/datasets/detect/coco) özelliklerinden yararlanır ve özel veriler üzerinde çok daha kısa sürede yakınsar.
+
+Bu rehber, [YOLO26](/tr/models/yolo26) modelinin özel veri kümeleri üzerinde ince ayarının yapılmasını, temel kullanımdan katman dondurma ve iki aşamalı eğitim gibi gelişmiş tekniklere kadar kapsar.
+
+## Link to this sectionİnce Ayar ile Sıfırdan Eğitim Arasındaki Fark#
+
+Önceden eğitilmiş bir model, milyonlarca görüntüden genel görsel özellikleri (kenar algılama, doku tanıma, şekil anlama) çoktan öğrenmiştir. İnce ayar yoluyla [Transfer öğrenme](https://www.ultralytics.com/glossary/transfer-learning), bu bilgiyi yeniden kullanır ve modele yalnızca yeni sınıfların neye benzediğini öğretir; bu yüzden daha hızlı yakınsar ve daha az veriye ihtiyaç duyar. Sıfırdan eğitim ise tüm bu bilgiyi çöpe atar ve modeli her şeyi piksel düzeyindeki kalıplardan itibaren öğrenmeye zorlar, bu da çok daha fazla kaynak gerektirir.
+
+| İnce Ayar (Fine-Tuning)| Sıfırdan Eğitim  
+---|---|---  
+**Başlangıç ağırlıkları**|  COCO üzerinde önceden eğitilmiş (80 sınıf)| Rastgele başlatma  
+**Komut**| `YOLO("yolo26n.pt")`| `YOLO("yolo26n.yaml")`  
+**Yakınsama**|  Daha hızlı - omurga zaten eğitilmiş durumda| Daha yavaş - tüm katmanlar sıfırdan öğrenir  
+**Veri gereksinimleri**|  Daha düşük - önceden eğitilmiş özellikler veri azlığını telafi eder| Daha yüksek - model tüm özellikleri yalnızca veri kümesinden öğrenmelidir  
+**Ne zaman kullanılır**|  Doğal görüntülere sahip özel sınıflar| COCO'dan temelden farklı alanlar (tıp, uydu, radar)  
+  
+İnce ayar ekstra kod gerektirmez
+
+Bir `.pt` dosyası `YOLO("yolo26n.pt")` ile yüklendiğinde, önceden eğitilmiş ağırlıklar modelde saklanır. Ardından `.train(data="custom.yaml")` çağrısı yapmak, uyumlu tüm ağırlıkları otomatik olarak yeni model mimarisine aktarır, eşleşmeyen katmanları (sınıf sayısı farklı olduğunda algılama başlığı gibi) yeniden başlatır ve eğitime başlar. Manuel ağırlık yükleme, katman manipülasyonu veya özel transfer öğrenme kodu gerekmez.
+
+### Link to this sectionÖnceden Eğitilmiş Ağırlık Aktarımı Nasıl Çalışır?#
+
+Önceden eğitilmiş bir modele, farklı sayıda sınıfa sahip bir veri kümesi üzerinde (örneğin, COCO'nun 80 sınıfından 5 özel sınıfa) ince ayar yapıldığında, Ultralytics şekil duyarlı ağırlık aktarımı gerçekleştirir:
+
+  1. **Omurga ve boyun tamamen aktarılır** \- bu katmanlar genel görsel özellikleri çıkarır ve şekilleri sınıf sayısından bağımsızdır.
+  2. **Algılama başlığı kısmen yeniden başlatılır** \- sınıflandırma çıktı katmanlarının (`cv3`, `one2one_cv3`) şekilleri sınıf sayısına (80'e karşı 5) bağlıdır, bu yüzden aktarılamazlar ve rastgele başlatılırlar. Başlıktaki kutu regresyon katmanları (`cv2`, `one2one_cv2`) sınıf sayısından bağımsız olarak sabit şekillere sahiptir, bu yüzden normal şekilde aktarılırlar.
+  3. Sınıf sayısı değiştirildiğinde **ağırlıkların büyük bir çoğunluğu aktarılır**. Yalnızca algılama başlığındaki sınıflandırmaya özgü katmanlar yeniden başlatılır; omurga, boyun ve kutu regresyon dalları bozulmadan kalır.
+
+
+
+Önceden eğitilmiş modelle aynı sayıda sınıfa sahip veri kümeleri için (örneğin, COCO ön eğitimli ağırlıkları 80 sınıflı başka bir veri kümesi üzerinde ince ayarlamak), algılama başlığı da dahil olmak üzere ağırlıkların %100'ü aktarılır.
+
+## Link to this sectionTemel İnce Ayar Örneği#
+
+Örnek
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")  # load pretrained model
+    model.train(data="path/to/data.yaml", epochs=50, imgsz=640)
+
+### Link to this sectionModel Boyutu Seçme#
+
+Daha büyük modeller daha fazla kapasiteye sahiptir ancak güncellenecek daha fazla parametreleri vardır, bu da eğitim verisi sınırlı olduğunda aşırı uyum (overfitting) riskini artırabilir. Küçük bir modelle (YOLO26n veya YOLO26s) başlamak ve yalnızca doğrulama metrikleri plato çizdiğinde büyütmek pratik bir yaklaşımdır. En uygun model boyutu; görevin karmaşıklığına, sınıf sayısına, veri kümesinin çeşitliliğine ve dağıtım için mevcut donanıma bağlıdır. Mevcut boyutlar ve performans kıyaslamaları için tam [YOLO26 model sayfasına](/tr/models/yolo26) bakın.
+
+## Link to this sectionOptimize Edici ve Öğrenme Oranı Seçimi#
+
+Varsayılan `optimizer=auto` ayarı, toplam eğitim yinelemesi sayısına bağlı olarak optimize ediciyi ve öğrenme oranını seçer:
+
+  * **< 10.000 yineleme** (küçük veri kümeleri veya az sayıda epoch): Düşük, otomatik hesaplanan öğrenme oranıyla AdamW
+  * **> 10.000 yineleme** (büyük veri kümeleri): lr=0.01 ile [MuSGD](/reference/optim/muon) (bir hibrit Muon+SGD optimize edici)
+
+
+
+Çoğu ince ayar görevi için, varsayılan ayar manuel ayar gerektirmeden iyi çalışır. Şu durumlarda optimize ediciyi açıkça ayarlamayı düşünün:
+
+  * **Eğitim kararsızsa** (kayıp ani yükseliyorsa veya sapıyorsa): daha kararlı bir yakınsama için `optimizer=AdamW, lr0=0.001` deneyin
+  * **Küçük bir veri kümesi üzerinde büyük bir modelde ince ayar yapıyorsanız** : `lr0=0.001` gibi daha düşük bir öğrenme oranı, önceden eğitilmiş özellikleri korumaya yardımcı olur
+
+
+
+Otomatik optimize edici, manuel lr0'ı geçersiz kılar
+
+`optimizer=auto` olduğunda, `lr0` ve `momentum` değerleri göz ardı edilir. Öğrenme oranını manuel olarak kontrol etmek için optimize ediciyi açıkça ayarlayın: `optimizer=SGD, lr0=0.005`.
+
+## Link to this sectionKatmanları Dondurma#
+
+Dondurma işlemi, eğitim sırasında belirli katmanların güncellenmesini engeller. Bu, eğitimi hızlandırır ve veri kümesi model kapasitesine göre küçük olduğunda [aşırı uyumu](https://www.ultralytics.com/glossary/overfitting) azaltır.
+
+`freeze` parametresi bir tam sayı veya liste kabul eder. `freeze=10` gibi bir tam sayı, ilk 10 katmanı (0'dan 9'a kadar, bu YOLO26'daki omurgaya karşılık gelir) dondurur. Bir liste, kısmi omurga dondurma için `freeze=[0, 3, 5]` gibi katman indekslerini veya bir katman içindeki belirli dallar üzerinde hassas kontrol için `freeze=["23.cv2"]` gibi modül adı dizelerini içerebilir.
+
+Örnek
+    
+    
+    model.train(data="custom.yaml", epochs=50, freeze=10)
+
+Doğru dondurma derinliği, hedef alanın önceden eğitilmiş verilere ne kadar benzer olduğuna ve ne kadar eğitim verisinin mevcut olduğuna bağlıdır:
+
+Senaryo| Öneri| Gerekçe  
+---|---|---  
+Büyük veri kümesi, benzer alan| `freeze=None` (varsayılan)| Tüm katmanları aşırı uyum olmadan uyarlamak için yeterli veri  
+Küçük veri kümesi, benzer alan| `freeze=10`| Omurga özelliklerini korur, eğitilebilir parametreleri azaltır  
+Çok küçük veri kümesi| `freeze=23`| Yalnızca algılama başlığı eğitilir, aşırı uyum riski en aza indirilir  
+COCO'dan uzak alan| `freeze=None`| Omurga özellikleri iyi aktarılmayabilir ve yeniden eğitilmeleri gerekebilir  
+  
+Dondurma derinliği bir hiperparametre olarak da ele alınabilir - birkaç değer (0, 5, 10) deneyip doğrulama mAP değerlerini karşılaştırmak, belirli bir veri kümesi için en iyi ayarı bulmanın pratik bir yoludur.
+
+## Link to this sectionİnce Ayar İçin Temel Hiperparametreler#
+
+İnce ayar genellikle sıfırdan eğitime göre daha az hiperparametre ayarı gerektirir. En önemli parametreler şunlardır:
+
+  * **`epochs`** : İnce ayar, sıfırdan eğitime göre daha hızlı yakınsar. Orta bir değerle başlayın ve doğrulama metrikleri plato çizdiğinde erken durdurma için `patience` kullanın.
+  * **`patience`** : 100 olan varsayılan değer, uzun eğitim koşuları için tasarlanmıştır. Bunu 10-20'ye düşürmek, zaten yakınsamış koşular üzerinde zaman kaybetmeyi önler.
+  * **`warmup_epochs`** : Varsayılan ısınma (3 epoch), öğrenme oranını sıfırdan kademeli olarak artırır; bu, büyük gradyan güncellemelerinin erken yinelemelerde önceden eğitilmiş özelliklere zarar vermesini önler. İnce ayar için bile varsayılanı korumak önerilir.
+
+
+
+Eğitim parametrelerinin tam listesi için [eğitim yapılandırma referansına](/tr/usage/cfg) bakın.
+
+## Link to this sectionİki Aşamalı İnce Ayar#
+
+İki aşamalı ince ayar, eğitimi iki faza ayırır. İlk aşama, omurgayı dondurur ve sadece boyun ve başlığı eğitir; bu, algılama katmanlarının önceden eğitilmiş özellikleri bozmadan yeni sınıflara uyum sağlamasına olanak tanır. İkinci aşama, tüm katmanların dondurmasını kaldırır ve omurgayı hedef alana göre hassaslaştırmak için tüm modeli daha düşük bir öğrenme oranıyla eğitir.
+
+Bu yaklaşım, özellikle hedef alan COCO'dan önemli ölçüde farklı olduğunda (tıbbi görüntüler, hava görüntüleri, mikroskopi) yararlıdır; burada omurganın uyarlanması gerekebilir ancak her şeyi aynı anda eğitmek kararsızlığa neden olur. Geri arama tabanlı bir yaklaşımla otomatik dondurma kaldırma için [Omurgayı Dondurma ve Dondurmayı Kaldırma](/tr/guides/custom-trainer#freezing-and-unfreezing-the-backbone) kısmına bakın.
+
+İki aşamalı ince ayar
+    
+    
+    from ultralytics import YOLO
+    
+    # Stage 1: freeze backbone, train head and neck
+    model = YOLO("yolo26n.pt")
+    model.train(data="custom.yaml", epochs=20, freeze=10, name="stage1", exist_ok=True)
+    
+    # Stage 2: unfreeze all, fine-tune with lower lr
+    model = YOLO("runs/detect/stage1/weights/best.pt")
+    model.train(data="custom.yaml", epochs=30, lr0=0.001, name="stage2", exist_ok=True)
+
+## Link to this sectionYaygın Hatalar#
+
+### Link to this sectionModel tahmin üretmiyor#
+
+  * **Yetersiz eğitim verisi** : çok az örnekle eğitim, en yaygın nedendir; model çok az veriden öğrenemez veya genelleme yapamaz. Diğer nedenleri araştırmadan önce sınıf başına yeterli çeşitli örnek olduğundan emin olun.
+  * **Veri kümesi yollarını kontrol edin** : `data.yaml` içindeki hatalı yollar sessizce sıfır etiket üretir. Etiketlerin doğru yüklendiğini doğrulamak için eğitimden önce `yolo detect val model=yolo26n.pt data=your_data.yaml` komutunu çalıştırın.
+  * **Daha düşük güven eşiği** : tahminler mevcut ancak filtreleniyorsa, çıkarım sırasında `conf=0.1` deneyin.
+  * **Verify class count** : ensure `nc` in `data.yaml` matches the actual number of classes in the label files.
+
+
+
+### Link to this sectionDoğrulama mAP değeri erken plato çiziyor#
+
+  * **Daha fazla veri ekleyin** : ince ayar, ek eğitim verilerinden, özellikle değişken açılara, ışıklandırmaya ve arka planlara sahip çeşitli örneklerden önemli ölçüde yararlanır.
+  * **Sınıf dengesini kontrol edin** : az temsil edilen sınıflar düşük AP değerine sahip olacaktır. Ters frekans sınıf ağırlıklandırması uygulamak için `cls_pw` kullanın (orta dereceli dengesizlik için `cls_pw=0.25` ile başlayın, şiddetli dengesizlik için `1.0`'a yükseltin).
+  * **Çoğaltmayı (augmentation) azaltın** : çok küçük veri kümeleri için ağır çoğaltma, yardımcı olmaktan çok zarar verebilir. `mosaic=0.5` veya `mosaic=0.0` deneyin.
+  * **Çözünürlüğü artırın** : küçük nesnelere sahip veri kümeleri için ayrıntıları korumak adına `imgsz=1280` deneyin.
+
+
+
+### Link to this sectionİnce ayardan sonra orijinal sınıflarda performans düşüyor#
+
+Bu, felaket unutma (catastrophic forgetting) olarak bilinir; model, yalnızca yeni veriler üzerinde ince ayar yapıldığında daha önce öğrendiği bilgileri kaybeder. Unutma, orijinal veri kümesi görüntülerini yeni verilerle birlikte dahil etmeden çoğunlukla kaçınılmazdır. Bunu hafifletmek için:
+
+  * **Veri kümelerini birleştirin** : ince ayar sırasında orijinal sınıfların örneklerini yeni sınıflarla birlikte dahil edin. Unutmayı önlemenin tek güvenilir yolu budur.
+  * **Omurgayı ve boynu dondurun** : omurga ve boynu dondurarak sadece algılama başlığının eğitilmesi, çok düşük bir öğrenme oranıyla kısa ince ayar koşuları için yardımcı olur.
+  * **Daha az epoch için eğitin** : model yeni veriler üzerinde ne kadar uzun süre eğitilirse unutma o kadar artar.
+
+
+
+## Link to this sectionSSS#
+
+### Link to this sectionYOLO'yu ince ayarlamak için kaç görüntüye ihtiyacım var?#
+
+Sabit bir minimum yoktur; sonuçlar görevin karmaşıklığına, sınıf sayısına ve alanın COCO'ya ne kadar benzer olduğuna bağlıdır. Daha çeşitli görüntüler (değişken ışıklandırma, açılar, arka planlar) ham miktardan daha önemlidir. Elinizdekilerle başlayın ve doğrulama metrikleri yetersiz kalırsa artırın.
+
+### Link to this sectionYOLO26'yı özel bir veri kümesi üzerinde nasıl ince ayarlarım?#
+
+Load a pretrained `.pt` file and call `.train()` with the path to a custom `data.yaml`. Ultralytics automatically handles [weight transfer](https://www.ultralytics.com/glossary/transfer-learning), detection head reinitialization, and optimizer selection. See the Basic Fine-Tuning section for the complete code example.
+
+### Link to this sectionİnce ayarlı YOLO modelim neden hiçbir şeyi algılamıyor?#
+
+En yaygın nedenler; `data.yaml` içindeki hatalı yollar (sessizce sıfır etiket üretir), YAML içindeki `nc` ile gerçek etiket dosyaları arasındaki uyuşmazlık veya çok yüksek bir güven eşiğidir. Eksiksiz bir sorun giderme kontrol listesi için Yaygın Hatalar kısmına bakın.
+
+### Link to this sectionİnce ayar için hangi YOLO katmanlarını dondurmalıyım?#
+
+Bu, veri kümesi boyutuna ve alan benzerliğine bağlıdır. COCO'ya benzer bir alana sahip küçük veri kümeleri için, omurgayı dondurmak (`freeze=10`) aşırı uyumu önler. COCO'dan çok farklı alanlar için, tüm katmanların dondurmasını kaldırmak (`freeze=None`), omurganın uyum sağlamasına olanak tanır. Ayrıntılı öneriler için Katmanları Dondurma kısmına bakın.
+
+### Link to this sectionYOLO'yu yeni sınıflar üzerinde ince ayarlarken felaket unutmayı nasıl önlerim?#
+
+Eğitim verilerine yeni sınıflarla birlikte orijinal sınıfların örneklerini dahil edin. Bu mümkün değilse, daha fazla katmanı dondurmak (`freeze=10` veya üstü) ve daha düşük bir öğrenme oranı kullanmak, önceden eğitilmiş bilgiyi korumaya yardımcı olur. Daha fazla ayrıntı için Performans orijinal sınıflarda düşüyor kısmına bakın.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/finetuning-guide.md)
+
+[RAraimbekovm1](https://github.com/raimbekovm)
+
+Oluşturulma geçen ayGüncellenme geçen ay
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

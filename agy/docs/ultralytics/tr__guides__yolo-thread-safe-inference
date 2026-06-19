@@ -1,0 +1,218 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/yolo-thread-safe-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+# Link to this sectionYOLO Modelleri ile İş Parçacığı Güvenli Çıkarım#
+
+YOLO modellerini çok iş parçacıklı bir ortamda çalıştırmak, iş parçacığı güvenliğini sağlamak için dikkatli bir değerlendirme gerektirir. Python'un `threading` modülü, birkaç iş parçacığını eş zamanlı olarak çalıştırmanıza olanak tanır ancak YOLO modellerini bu iş parçacıkları arasında kullanmaya gelince, dikkat etmeniz gereken önemli güvenlik sorunları vardır. Bu sayfa, iş parçacığı güvenli YOLO modeli çıkarımı oluşturma konusunda size yol gösterecektir.
+
+  
+
+
+  
+**Watch:** How to Perform Thread Safe Inference with Ultralytics YOLO Models in Python | Multi-Threading 🚀 
+
+## Link to this sectionPython İş Parçacığı Kullanımını (Threading) Anlamak#
+
+Python iş parçacıkları, programınızın birden fazla işlemi aynı anda çalıştırmasına olanak tanıyan bir paralellik biçimidir. Ancak, Python'un Küresel Yorumlayıcı Kilidi (GIL), aynı anda yalnızca bir iş parçacığının Python bayt kodunu yürütebileceği anlamına gelir.
+
+![Single-thread vs multi-thread inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/single-vs-multi-thread-examples.avif)
+
+Bu bir sınırlama gibi görünse de, iş parçacıkları özellikle G/Ç (I/O) odaklı işlemler için veya YOLO'nun temelindeki C kütüphanelerinin gerçekleştirdiği gibi GIL'i serbest bırakan işlemler kullanıldığında eş zamanlılık sağlayabilir.
+
+## Link to this sectionPaylaşılan Model Örneklerinin Tehlikesi#
+
+Bir YOLO modelini iş parçacıklarınızın dışında örneklendirip bu örneği birden fazla iş parçacığı arasında paylaşmak, modelin iç durumunun eş zamanlı erişimler nedeniyle tutarsız bir şekilde değiştirildiği yarış koşullarına (race conditions) yol açabilir. Bu durum, özellikle model veya bileşenleri iş parçacığı güvenli olacak şekilde tasarlanmamış bir durum tuttuğunda sorun yaratır.
+
+### Link to this sectionİş Parçacığı Güvenli Olmayan Örnek: Tek Model Örneği#
+
+Python'da iş parçacıkları kullanırken, eş zamanlılık sorunlarına yol açabilecek kalıpları tanımanız önemlidir. Kaçınmanız gereken şey şudur: tek bir YOLO model örneğini birden fazla iş parçacığı arasında paylaşmak.
+    
+    
+    # Unsafe: Sharing a single model instance across threads
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate the model outside the thread
+    shared_model = YOLO("yolo26n.pt")
+    
+    def predict(image_path):
+        """Predicts objects in an image using a preloaded YOLO model, take path string to image as argument."""
+        results = shared_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that share the same model instance
+    Thread(target=predict, args=("image1.jpg",)).start()
+    Thread(target=predict, args=("image2.jpg",)).start()
+
+Yukarıdaki örnekte `shared_model`, `predict` işlemi birden fazla iş parçacığı tarafından aynı anda yürütülebileceği için öngörülemeyen sonuçlara yol açabilecek birden fazla iş parçacığı tarafından kullanılmaktadır.
+
+### Link to this sectionİş Parçacığı Güvenli Olmayan Örnek: Çoklu Model Örnekleri#
+
+Benzer şekilde, işte birden fazla YOLO model örneğiyle ilgili güvenli olmayan bir kalıp:
+    
+    
+    # Unsafe: Sharing multiple model instances across threads can still lead to issues
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate multiple models outside the thread
+    shared_model_1 = YOLO("yolo26n_1.pt")
+    shared_model_2 = YOLO("yolo26n_2.pt")
+    
+    def predict(model, image_path):
+        """Runs prediction on an image using a specified YOLO model, returning the results."""
+        results = model.predict(image_path)
+        # Process results
+    
+    # Starting threads with individual model instances
+    Thread(target=predict, args=(shared_model_1, "image1.jpg")).start()
+    Thread(target=predict, args=(shared_model_2, "image2.jpg")).start()
+
+İki ayrı model örneği olmasına rağmen, eş zamanlılık sorunları riski hala mevcuttur. Eğer `YOLO`'nun iç uygulaması iş parçacığı güvenli değilse, ayrı örnekler kullanmak, özellikle bu örnekler iş parçacığına özgü olmayan temel kaynakları veya durumları paylaşıyorsa, yarış koşullarını önlemeyebilir.
+
+## Link to this sectionİş Parçacığı Güvenli Çıkarım#
+
+İş parçacığı güvenli çıkarım yapmak için her iş parçacığı içinde ayrı bir YOLO modeli örneklendirmelisiniz. Bu, her iş parçacığının kendi yalıtılmış model örneğine sahip olmasını sağlar ve yarış koşulları riskini ortadan kaldırır.
+
+### Link to this sectionİş Parçacığı Güvenli Örnek#
+
+İşte güvenli paralel çıkarım için her iş parçacığının içinde bir YOLO modeli örneklendirmenin yolu:
+    
+    
+    # Safe: Instantiating a single model inside each thread
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image using a new YOLO model instance in a thread-safe manner; takes image path as input."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that each have their own model instance
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Bu örnekte, her iş parçacığı kendi `YOLO` örneğini oluşturur. Bu, hiçbir iş parçacığının diğerinin model durumuna müdahale etmesini engeller ve böylece her iş parçacığının çıkarımı güvenli bir şekilde ve diğer iş parçacıklarıyla beklenmedik etkileşimler olmadan gerçekleştirmesini sağlar.
+
+## Link to this sectionThreadingLocked Dekoratörünü Kullanma#
+
+Ultralytics, fonksiyonların iş parçacığı güvenli yürütülmesini sağlamak için kullanılabilecek bir `ThreadingLocked` dekoratörü sağlar. Bu dekoratör, bir seferde yalnızca bir iş parçacığının dekore edilmiş fonksiyonu yürütebilmesini sağlamak için bir kilit kullanır.
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.utils import ThreadingLocked
+    
+    # Create a model instance
+    model = YOLO("yolo26n.pt")
+    
+    # Decorate the predict method to make it thread-safe
+    @ThreadingLocked()
+    def thread_safe_predict(image_path):
+        """Thread-safe prediction using a shared model instance."""
+        results = model.predict(image_path)
+        return results
+    
+    # Now you can safely call this function from multiple threads
+
+`ThreadingLocked` dekoratörü, özellikle bir model örneğini iş parçacıkları arasında paylaşmanız gerektiğinde ancak bir seferde yalnızca bir iş parçacığının ona erişebildiğinden emin olmak istediğinizde kullanışlıdır. Bu yaklaşım, her iş parçacığı için yeni bir model örneği oluşturmaya kıyasla bellekten tasarruf sağlayabilir ancak iş parçacıkları kilidin serbest bırakılmasını beklemek zorunda kalacağından eş zamanlılığı azaltabilir.
+
+## Link to this sectionSonuç#
+
+YOLO modellerini Python'un `threading` modülü ile kullanırken, iş parçacığı güvenliğini sağlamak için modellerinizi her zaman onları kullanacak olan iş parçacığı içinde örneklendirin. Bu uygulama, yarış koşullarını önler ve çıkarım görevlerinizin güvenilir bir şekilde çalışmasını sağlar.
+
+Daha gelişmiş senaryolar ve çok iş parçacıklı çıkarım performansınızı daha da optimize etmek için [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) ile süreç tabanlı paralelliği kullanmayı veya özel işçi süreçleriyle bir görev kuyruğundan yararlanmayı düşünün.
+
+## Link to this sectionSSS#
+
+### Link to this sectionÇok iş parçacıklı bir Python ortamında YOLO modellerini kullanırken yarış koşullarından nasıl kaçınabilirim?#
+
+Ultralytics YOLO modellerini çok iş parçacıklı bir Python ortamında kullanırken yarış koşullarını önlemek için, her iş parçacığı içinde ayrı bir YOLO modeli örneklendirin. Bu, her iş parçacığının model durumunun eş zamanlı değiştirilmesini önleyerek kendi yalıtılmış model örneğine sahip olmasını sağlar.
+
+Örnek:
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image in a thread-safe manner."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+İş parçacığı güvenliğini sağlama hakkında daha fazla bilgi için YOLO Modelleri ile İş Parçacığı Güvenli Çıkarım bölümünü ziyaret edin.
+
+### Link to this sectionPython'da çok iş parçacıklı YOLO modeli çıkarımı çalıştırmak için en iyi uygulamalar nelerdir?#
+
+Python'da çok iş parçacıklı YOLO modeli çıkarımını güvenli bir şekilde çalıştırmak için şu en iyi uygulamaları izleyin:
+
+  1. YOLO modellerini iş parçacıkları arasında tek bir model örneği paylaşmak yerine her iş parçacığı içinde örneklendirin.
+  2. Küresel Yorumlayıcı Kilidi (GIL) ile ilgili sorunlardan kaçınmak için paralel işleme için Python'un `multiprocessing` modülünü kullanın.
+  3. YOLO'nun temelindeki C kütüphaneleri tarafından gerçekleştirilen işlemleri kullanarak GIL'i serbest bırakın.
+  4. Belleğin önemli olduğu durumlarda paylaşılan model örnekleri için `ThreadingLocked` dekoratörünü kullanmayı düşünün.
+
+
+
+İş parçacığı güvenli model örneklendirme için örnek:
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Runs inference in a thread-safe manner with a new YOLO model instance."""
+        model = YOLO("yolo26n.pt")
+        results = model.predict(image_path)
+        # Process results
+    
+    # Initiate multiple threads
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Ek bağlam için, İş Parçacığı Güvenli Çıkarım bölümüne başvurun.
+
+### Link to this sectionNeden her iş parçacığının kendi YOLO model örneği olmalıdır?#
+
+Her iş parçacığının, yarış koşullarını önlemek için kendi YOLO model örneği olmalıdır. Tek bir model örneği birden fazla iş parçacığı arasında paylaşıldığında, eş zamanlı erişimler öngörülemeyen davranışlara ve modelin iç durumunun bozulmasına yol açabilir. Ayrı örnekler kullanarak, çok iş parçacıklı görevlerinizi güvenilir ve güvenli hale getirerek iş parçacığı yalıtımını sağlarsınız.
+
+Detaylı rehberlik için İş Parçacığı Güvenli Olmayan Örnek: Tek Model Örneği ve İş Parçacığı Güvenli Örnek bölümlerine göz atın.
+
+### Link to this sectionPython'un Küresel Yorumlayıcı Kilidi (GIL) YOLO modeli çıkarımını nasıl etkiler?#
+
+Python'un Küresel Yorumlayıcı Kilidi (GIL), aynı anda yalnızca bir iş parçacığının Python bayt kodunu yürütmesine izin verir, bu da CPU ağırlıklı çok iş parçacıklı görevlerin performansını sınırlayabilir. Ancak, G/Ç odaklı işlemler veya YOLO'nun temelindeki C kütüphaneleri gibi GIL'i serbest bırakan kütüphaneler kullanan işlemler için yine de eş zamanlılık elde edebilirsiniz. Daha iyi performans için, Python'un `multiprocessing` modülüyle süreç tabanlı paralellik kullanmayı düşünün.
+
+Python'da iş parçacığı kullanımı hakkında daha fazla bilgi için Python İş Parçacığı Kullanımını (Threading) Anlamak bölümüne bakın.
+
+### Link to this sectionYOLO modeli çıkarımı için iş parçacığı yerine süreç tabanlı paralellik kullanmak daha mı güvenli?#
+
+Evet, Python'un `multiprocessing` modülünü kullanmak daha güvenlidir ve genellikle YOLO modeli çıkarımını paralel olarak çalıştırmak için daha verimlidir. Süreç tabanlı paralellik, ayrı bellek alanları oluşturur, Küresel Yorumlayıcı Kilidi'nden (GIL) kaçınır ve eş zamanlılık sorunları riskini azaltır. Her süreç, kendi YOLO model örneğiyle bağımsız olarak çalışacaktır.
+
+YOLO modelleriyle süreç tabanlı paralellik hakkında daha fazla ayrıntı için İş Parçacığı Güvenli Çıkarım sayfasına başvurun.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+[GLglenn-jocher10](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+Oluşturulma 12 Kas 2023Güncellenme 2 hafta önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

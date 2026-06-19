@@ -1,0 +1,175 @@
+---
+source_url: https://docs.ultralytics.com/vi/guides/similarity-search
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/similarity-search.md)
+
+# Link to this sectionCách xây dựng hệ thống tìm kiếm hình ảnh ngữ nghĩa với OpenAI CLIP và Meta FAISS#
+
+Hướng dẫn này sẽ giúp bạn xây dựng một công cụ **tìm kiếm hình ảnh ngữ nghĩa** sử dụng [OpenAI CLIP](https://openai.com/index/clip/), [Meta FAISS](https://github.com/facebookresearch/faiss) và [Flask](https://flask.palletsprojects.com/en/stable/). Bằng cách kết hợp các [embeddings](https://developers.openai.com/api/docs/guides/embeddings) thị giác-ngôn ngữ của CLIP với khả năng tìm kiếm láng giềng gần nhất hiệu quả của FAISS, bạn có thể xây dựng một giao diện web cho phép truy xuất các hình ảnh liên quan từ các truy vấn ngôn ngữ tự nhiên mà không cần nhãn hoặc danh mục.
+
+  
+
+
+  
+**Watch:** How Similarity Search Works | Visual Search Using OpenAI CLIP, META FAISS and Ultralytics Package 🎉 
+
+![Tổng quan giao diện web Flask với kết quả tìm kiếm ngữ nghĩa](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/flask-ui.avif)
+
+Gói Python của Ultralytics bao bọc toàn bộ pipeline này đằng sau hai class, giúp bạn có thể khởi chạy một ứng dụng tìm kiếm hoạt động tốt hoặc chạy các truy vấn theo lập trình chỉ với vài dòng code. Hướng dẫn này bao gồm lý do tại sao tìm kiếm ngữ nghĩa hữu ích, cách thức hoạt động, chạy ứng dụng web, tìm kiếm theo lập trình, và cấu hình tham số.
+
+## Link to this sectionTại sao nên sử dụng tìm kiếm hình ảnh ngữ nghĩa?#
+
+Việc xây dựng hệ thống tìm kiếm hình ảnh ngữ nghĩa của riêng bạn với CLIP và FAISS mang lại nhiều ưu điểm vượt trội:
+
+  * **Khả năng zero-shot:** Bạn không cần huấn luyện trên tập dữ liệu của mình. [Zero-shot learning](https://www.ultralytics.com/glossary/zero-shot-learning) của CLIP cho phép bạn truy vấn bất kỳ bộ sưu tập hình ảnh nào bằng ngôn ngữ tự nhiên tự do, giúp tiết kiệm thời gian và tài nguyên.
+  * **Khả năng hiểu như con người:** Khác với tìm kiếm bằng từ khóa, CLIP hiểu ngữ cảnh ngữ nghĩa và truy xuất hình ảnh từ các truy vấn trừu tượng, cảm xúc hoặc mang tính liên hệ như "một đứa trẻ hạnh phúc trong thiên nhiên" hoặc "đường chân trời thành phố tương lai vào ban đêm."
+  * **Không cần nhãn hoặc siêu dữ liệu:** Phương pháp này chỉ cần dữ liệu ảnh thô. CLIP tự tạo ra các embedding mà không cần bất kỳ thao tác gắn nhãn thủ công nào.
+  * **Tìm kiếm linh hoạt và có khả năng mở rộng:** FAISS cung cấp khả năng tìm kiếm lân cận nhanh chóng ngay cả trên các tập dữ liệu lớn, với phản hồi thời gian thực trên hàng nghìn hoặc hàng triệu embedding.
+  * **Ứng dụng đa lĩnh vực:** Cho dù bạn đang xây dựng kho lưu trữ ảnh cá nhân, công cụ truyền cảm hứng sáng tạo, công cụ tìm kiếm sản phẩm hay hệ thống gợi ý nghệ thuật, cùng một ngăn xếp công nghệ này đều có thể thích ứng với rất ít tùy chỉnh.
+
+
+
+## Link to this sectionCách thức tìm kiếm hình ảnh ngữ nghĩa hoạt động#
+
+Pipeline này kết hợp ba thành phần, mỗi thành phần xử lý một giai đoạn chuyển đổi hình ảnh và văn bản thành các kết quả có thứ hạng:
+
+  * **CLIP** sử dụng một vision encoder (ví dụ: ResNet hoặc ViT) cho hình ảnh và một text encoder (dựa trên Transformer) cho ngôn ngữ để chiếu cả hai vào cùng một không gian embedding đa phương thức. Điều này cho phép so sánh trực tiếp giữa văn bản và hình ảnh bằng [cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity).
+  * **FAISS** (Facebook AI Similarity Search) xây dựng một index cho các embedding hình ảnh và cho phép truy xuất nhanh chóng, có khả năng mở rộng các vector gần nhất với một truy vấn cho trước.
+  * **Flask** cung cấp giao diện web đơn giản để gửi các truy vấn ngôn ngữ tự nhiên và hiển thị các hình ảnh phù hợp về mặt ngữ nghĩa từ index.
+
+
+
+![Quy trình truy xuất hình ảnh của OpenAI CLIP](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/clip-image-retrieval.avif)
+
+Vì cả hình ảnh và văn bản đều nằm trong cùng một không gian vector, việc truy xuất là zero-shot: bạn không cần nhãn hay danh mục, chỉ cần dữ liệu ảnh và một câu lệnh (prompt) tốt.
+
+![Quy trình xây dựng vector embedding của Meta FAISS](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/faiss-indexing-workflow.avif)
+
+## Link to this sectionChạy ứng dụng web tìm kiếm ngữ nghĩa#
+
+Class `SearchApp` khởi chạy giao diện Flask đầy đủ. Trong lần chạy đầu tiên, nó sẽ tải xuống một tập ảnh mẫu, xây dựng FAISS index và cung cấp một trang web nơi bạn có thể nhập truy vấn và xem các kết quả được xếp hạng.
+
+Cảnh báo về đường dẫn ảnh
+
+Nếu bạn sử dụng hình ảnh của riêng mình, hãy đảm bảo cung cấp đường dẫn tuyệt đối đến thư mục chứa ảnh. Nếu không, hình ảnh có thể không hiển thị trên trang web do hạn chế về phục vụ tệp tin của Flask.
+    
+    
+    from ultralytics import solutions
+    
+    app = solutions.SearchApp(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    app.run(debug=False)  # You can also use `debug=True` argument for testing
+
+## Link to this sectionTìm kiếm hình ảnh theo lập trình#
+
+Class `VisualAISearch` thực hiện tất cả các thao tác backend mà không cần lớp web:
+
+  * Tải hoặc xây dựng FAISS index từ hình ảnh cục bộ.
+  * Trích xuất các [embeddings](https://developers.openai.com/api/docs/guides/embeddings) hình ảnh và văn bản bằng cách sử dụng CLIP.
+  * Thực hiện tìm kiếm tương đồng bằng cosine similarity.
+
+
+
+Gọi trình tìm kiếm với truy vấn ngôn ngữ tự nhiên để nhận lại danh sách các tên tệp hình ảnh khớp, được xếp hạng theo độ tương đồng:
+    
+    
+    from ultralytics import solutions
+    
+    searcher = solutions.VisualAISearch(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    results = searcher("a dog sitting on a bench")
+    
+    # Ranked Results:
+    #     - 000000546829.jpg | Similarity: 0.3269
+    #     - 000000549220.jpg | Similarity: 0.2899
+    #     - 000000517069.jpg | Similarity: 0.2761
+    #     - 000000029393.jpg | Similarity: 0.2742
+    #     - 000000534270.jpg | Similarity: 0.2680
+
+## Link to this sectionCấu hình các tham số VisualAISearch#
+
+Bảng dưới đây phác thảo các tham số có sẵn cho `VisualAISearch`:
+
+Đối số| Loại| Mặc định| Mô tả  
+---|---|---|---  
+`data`| `str`| `'images'`| Đường dẫn đến thư mục hình ảnh được sử dụng để tìm kiếm tương đồng.  
+  
+Đối số| Loại| Mặc định| Mô tả  
+---|---|---|---  
+`device`| `str`| `None`| Chỉ định thiết bị để thực hiện suy luận (ví dụ: `cpu`, `cuda:0` hoặc `0`). Cho phép người dùng chọn giữa CPU, một GPU cụ thể, hoặc các thiết bị tính toán khác để thực thi model.  
+  
+Quản lý dữ liệu của bạn trên đám mây
+
+Để tìm kiếm các bộ sưu tập hình ảnh ở quy mô sản xuất mà không cần quản lý tệp cục bộ, bạn có thể sắp xếp và lập phiên bản cho hình ảnh của mình trên [Nền tảng Ultralytics](/vi/platform/data) trước khi index chúng bằng CLIP và FAISS.
+
+## Link to this sectionKết luận#
+
+Với CLIP, FAISS và gói Python của Ultralytics, bạn có thể thiết lập một công cụ tìm kiếm hình ảnh ngữ nghĩa zero-shot chỉ với vài dòng code, dưới dạng ứng dụng web Flask hoặc backend tìm kiếm lập trình. Từ đây, hãy trỏ `data` vào thư mục hình ảnh của riêng bạn để index, sau đó khám phá các [Giải pháp Ultralytics](/vi/solutions) khác để xây dựng trên quy trình làm việc thị giác máy tính của bạn.
+
+## Link to this sectionCâu hỏi thường gặp#
+
+### Link to this sectionCLIP hiểu cả hình ảnh và văn bản như thế nào?#
+
+[CLIP](https://github.com/openai/CLIP) (Contrastive Language Image Pretraining) là một model được phát triển bởi [OpenAI](https://openai.com/) giúp kết nối thông tin thị giác và ngôn ngữ. Nó được huấn luyện trên một tập dữ liệu khổng lồ gồm hình ảnh đi kèm với chú thích ngôn ngữ tự nhiên. Quá trình huấn luyện này cho phép nó ánh xạ cả hình ảnh và văn bản vào một không gian embedding chung, giúp bạn có thể so sánh chúng trực tiếp bằng độ tương đồng vector.
+
+### Link to this sectionTại sao CLIP được coi là mạnh mẽ đối với các tác vụ AI?#
+
+Điều làm nên sự nổi bật của CLIP là khả năng tổng quát hóa. Thay vì chỉ được huấn luyện cho các nhãn hoặc tác vụ cụ thể, nó học từ chính ngôn ngữ tự nhiên. Điều này cho phép nó xử lý các truy vấn linh hoạt như "một người đàn ông đang lái mô tô nước" hoặc "một khung cảnh giấc mơ siêu thực", giúp nó hữu ích cho mọi thứ từ phân loại đến tìm kiếm ngữ nghĩa sáng tạo mà không cần huấn luyện lại.
+
+### Link to this sectionFAISS thực sự làm gì trong dự án này (Tìm kiếm ngữ nghĩa)?#
+
+[FAISS](https://engineering.fb.com/2017/03/29/data-infrastructure/faiss-a-library-for-efficient-similarity-search/) (Facebook AI Similarity Search) là một bộ công cụ giúp bạn tìm kiếm qua các vector chiều cao một cách rất hiệu quả. Sau khi CLIP chuyển đổi hình ảnh của bạn thành các embedding, FAISS giúp tìm kiếm các kết quả khớp gần nhất với truy vấn văn bản trở nên nhanh chóng và dễ dàng, rất phù hợp cho việc truy xuất hình ảnh thời gian thực.
+
+### Link to this sectionWhy use the [Ultralytics](https://www.ultralytics.com/) [Python package](https://github.com/ultralytics/ultralytics/) if CLIP and FAISS are from OpenAI and Meta?#
+
+Mặc dù CLIP và FAISS được phát triển lần lượt bởi OpenAI và Meta, [gói Python của Ultralytics](https://pypi.org/project/ultralytics/) đóng gói cả hai thành một pipeline tìm kiếm hình ảnh ngữ nghĩa hoàn chỉnh phía sau vài dòng code hoạt động ngay lập tức:
+    
+    
+    from ultralytics import solutions
+    
+    searcher = solutions.VisualAISearch(
+        # data = "path/to/img/directory" # Optional, build search engine with your own images
+        device="cpu"  # configure the device for processing, e.g., "cpu" or "cuda"
+    )
+    
+    results = searcher("a dog sitting on a bench")
+
+Việc triển khai cấp cao này xử lý:
+
+  * Tạo embedding hình ảnh và văn bản dựa trên CLIP.
+  * Tạo và quản lý FAISS index.
+  * Tìm kiếm ngữ nghĩa hiệu quả với cosine similarity.
+  * Tải hình ảnh dựa trên thư mục và [trực quan hóa](https://www.ultralytics.com/glossary/data-visualization).
+
+
+
+### Link to this sectionTôi có thể tùy chỉnh frontend của ứng dụng này không?#
+
+Có. Thiết lập hiện tại sử dụng Flask với một frontend HTML cơ bản, nhưng bạn có thể thay thế nó bằng HTML của riêng bạn hoặc xây dựng một giao diện người dùng (UI) động hơn với React, Vue hoặc các framework frontend khác. Flask có thể đóng vai trò là REST API backend cho giao diện tùy chỉnh của bạn.
+
+### Link to this sectionCó thể tìm kiếm qua video thay vì hình ảnh tĩnh không?#
+
+Không trực tiếp. Một giải pháp thay thế đơn giản là trích xuất các khung hình riêng lẻ từ video của bạn (ví dụ: một khung hình mỗi giây), coi chúng như các hình ảnh độc lập và đưa chúng vào hệ thống. Bằng cách này, công cụ tìm kiếm có thể index các khoảnh khắc thị giác từ video của bạn một cách ngữ nghĩa.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/similarity-search.md)
+
+[GLglenn-jocher4](https://github.com/glenn-jocher)[RIRizwanMunawar3](https://github.com/RizwanMunawar)[RAraimbekovm1](https://github.com/raimbekovm)[PDpderrenger1](https://github.com/pderrenger)
+
+Đã tạo 4 thg 5, 2025Đã cập nhật 6 ngày trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

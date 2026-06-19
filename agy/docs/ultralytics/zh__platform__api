@@ -1,0 +1,2062 @@
+---
+source_url: https://docs.ultralytics.com/zh/platform/api
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+# Link to this sectionREST API 参考#
+
+[Ultralytics Platform](https://platform.ultralytics.com) 提供了一套全面的 REST API，用于以编程方式访问数据集、模型、训练和部署。
+
+![Ultralytics Platform API 概览](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/platform/platform-api-overview.avif)
+
+快速入门
+    
+    
+    # List your datasets
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+交互式 API 文档
+
+在 [Ultralytics Platform API 文档](https://platform.ultralytics.com/api/docs) 中浏览完整的交互式 API 参考。
+
+## Link to this sectionAPI 概览#
+
+该 API 围绕核心平台资源进行组织：
+    
+    
+    graph LR
+        A[API Key] --> B[Datasets]
+        A --> C[Projects]
+        A --> D[Models]
+        A --> E[Deployments]
+        B -->|train on| D
+        C -->|contains| D
+        D -->|deploy to| E
+        D -->|export| F[Exports]
+        B -->|auto-annotate| B
+
+资源| 描述| 关键操作  
+---|---|---  
+[数据集](/zh/platform/data/datasets)| 标注图像集| CRUD、图像、标签、导出、版本、克隆  
+[项目](/zh/platform/train/projects)| 训练工作区| CRUD、克隆、图标  
+[模型](/zh/platform/train/models)| 已训练的检查点| CRUD、预测、下载、克隆、导出  
+[部署](/zh/platform/deploy/endpoints)| 专用推理端点| CRUD、启动/停止、指标、日志、健康状态  
+[导出](/zh/platform/train/models#export-model)| 格式转换任务| 创建、状态、下载  
+[训练](/zh/platform/train/cloud-training)| 云端 GPU 训练任务| 启动、状态、取消  
+[账单](/zh/platform/account/billing)| 额度和订阅| 余额、充值、支付方式  
+[团队](/zh/platform/account/teams)| 工作区协作| 成员、邀请、角色  
+  
+## Link to this section身份验证#
+
+诸如数据集、项目、模型、训练、导出和预测等资源 API 使用 API-key 身份验证。公共端点（列出公开的数据集、项目和模型）支持无需密钥的匿名读取访问。面向账户的路由（包括活动、设置、团队、账单和 GDPR 流程）目前需要经过身份验证的浏览器会话，无法通过 API key 使用。
+
+### Link to this section获取 API Key#
+
+  1. 前往 `Settings` > `API Keys`
+  2. 点击 `Create Key`
+  3. 复制生成的密钥
+
+
+
+参阅 [API Keys](/zh/platform/account/api-keys) 以获取详细说明。
+
+### Link to this section授权请求头#
+
+在所有请求中包含你的 API key：
+    
+    
+    Authorization: Bearer YOUR_API_KEY
+
+API Key 格式
+
+API key 使用 `ul_` 开头，后跟 40 位十六进制字符。请妥善保管你的密钥——切勿将其提交到版本控制系统或公开发布。
+
+### Link to this section示例#
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      https://platform.ultralytics.com/api/datasets
+
+## Link to this sectionBase URL#
+
+所有 API 端点均使用：
+
+`https://platform.ultralytics.com/api `
+
+## Link to this section速率限制#
+
+该 API 对每个 API key 实施速率限制（滑动窗口，由 Upstash Redis 提供支持），以防止滥用，同时确保合法使用的不受限制。匿名流量还会受到 Vercel 平台级滥用控制的额外保护。
+
+当受到限流时，API 会返回 `429` 状态码以及重试元数据：
+    
+    
+    Retry-After: 12
+    X-RateLimit-Reset: 2026-02-21T12:34:56.000Z
+
+### Link to this section每个 API Key 的限制#
+
+速率限制根据所调用的端点自动应用。高负载操作有更严格的限制以防止滥用，而标准 CRUD 操作共享一个慷慨的默认值：
+
+端点| 限制| 适用范围  
+---|---|---  
+**默认**|  100 次请求/分钟| 所有未在下方列出的端点（列表、获取、创建、更新、删除）  
+**训练**|  10 次请求/分钟| 启动云端训练任务 (`POST /api/training/start`)  
+**上传**|  10 次请求/分钟| 文件上传、签名 URL 和数据集注入  
+**预测**|  20 次请求/分钟| 共享模型推理 (`POST /api/models/{id}/predict`)  
+**导出**|  20 次请求/分钟| 模型格式导出 (`POST /api/exports`)、数据集 NDJSON 导出和版本创建  
+**下载**|  30 次请求/分钟| 模型权重文件下载 (`GET /api/models/{id}/files`)  
+**专用**| **无限**| [专用端点](/zh/platform/deploy/endpoints) — 你自己的服务，无 API 限制  
+  
+每个类别在每个 API key 下都有独立的计数器。例如，进行 20 次预测请求不会影响你 100 次/分钟的默认限额。
+
+### Link to this section专用端点（无限）#
+
+[专用端点](/zh/platform/deploy/endpoints) **不受 API key 速率限制的影响** 。当你将模型部署到专用端点时，针对该端点 URL（例如 `https://predict-abc123.run.app/predict`）的请求会直接发送到你的专用服务，而不会受到平台的速率限制。你支付的是计算费用，因此你获得的是基于专用服务配置的吞吐量，而非共享的 API 限制。
+
+处理速率限制
+
+当你收到 `429` 状态码时，请等待 `Retry-After` 指定的时间（或直到 `X-RateLimit-Reset`）后再进行重试。查看 速率限制 FAQ 以获取指数退避实现示例。
+
+## Link to this section响应格式#
+
+### Link to this section成功响应#
+
+响应返回 JSON，其中包含特定于资源的字段：
+    
+    
+    {
+        "datasets": [...],
+        "total": 100
+    }
+
+### Link to this section错误响应#
+    
+    
+    {
+        "error": "Dataset not found"
+    }
+
+HTTP 状态| 含义  
+---|---  
+`200`| 成功  
+`201`| 已创建  
+`400`| 请求无效  
+`401`| 需要身份验证  
+`403`| 权限不足  
+`404`| 资源未找到  
+`409`| 冲突（重复）  
+`429`| 超出速率限制  
+`500`| 服务器错误  
+  
+* * *
+
+## Link to this section数据集 API#
+
+创建、浏览并管理用于训练 YOLO 模型的带标签图像数据集。请参阅 [数据集文档](/zh/platform/data/datasets)。
+
+### Link to this section列出数据集#
+    
+    
+    GET /api/datasets
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`username`| string| 按用户名过滤  
+`slug`| string| 通过 slug 获取单个数据集  
+`limit`| int| 每页项目数（默认：1000，最大：1000）  
+`owner`| string| 工作区所有者用户名  
+      
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=10"
+
+**响应：**
+    
+    
+    {
+        "datasets": [
+            {
+                "_id": "dataset_abc123",
+                "name": "my-dataset",
+                "slug": "my-dataset",
+                "task": "detect",
+                "imageCount": 1000,
+                "classCount": 10,
+                "classNames": ["person", "car"],
+                "visibility": "private",
+                "username": "johndoe",
+                "starCount": 3,
+                "isStarred": false,
+                "sampleImages": [
+                    {
+                        "url": "https://storage.example.com/...",
+                        "width": 1920,
+                        "height": 1080,
+                        "labels": [{ "classId": 0, "bbox": [0.5, 0.4, 0.3, 0.6] }]
+                    }
+                ],
+                "createdAt": "2024-01-15T10:00:00Z",
+                "updatedAt": "2024-01-16T08:30:00Z"
+            }
+        ],
+        "total": 1,
+        "region": "us"
+    }
+
+### Link to this section获取数据集#
+    
+    
+    GET /api/datasets/{datasetId}
+
+返回完整的数据集详细信息，包括元数据、类别名称和拆分计数。
+
+### Link to this section创建数据集#
+    
+    
+    POST /api/datasets
+
+**请求体：**
+    
+    
+    {
+        "slug": "my-dataset",
+        "name": "My Dataset",
+        "task": "detect",
+        "description": "A custom detection dataset",
+        "visibility": "private",
+        "classNames": ["person", "car"]
+    }
+
+支持的任务
+
+有效的 `task` 值：`detect`、`segment`、`semantic`、`classify`、`pose`、`obb`。
+
+### Link to this section更新数据集#
+    
+    
+    PATCH /api/datasets/{datasetId}
+
+**请求体（部分更新）：**
+    
+    
+    {
+        "name": "Updated Name",
+        "description": "New description",
+        "visibility": "public"
+    }
+
+### Link to this section数据集图标#
+
+上传数据集图标（包含图像文件的 multipart 表单）：
+    
+    
+    POST /api/datasets/{datasetId}/icon
+
+移除数据集图标：
+    
+    
+    DELETE /api/datasets/{datasetId}/icon
+
+两者都需要处于活跃状态的平台浏览器会话——无法通过 API 密钥使用。
+
+### Link to this section删除数据集#
+    
+    
+    DELETE /api/datasets/{datasetId}
+
+软删除数据集（移至 [回收站](/zh/platform/account/trash)，30 天内可恢复）。
+
+### Link to this section克隆数据集#
+    
+    
+    POST /api/datasets/{datasetId}/clone
+
+创建一份包含所有图像和标签的数据集副本。仅可克隆公开、归你所有或可编辑的工作区数据集。需要活跃的平台浏览器会话 —— API key 无法使用此功能。
+
+**请求体（所有字段均为可选）：**
+    
+    
+    {
+        "name": "cloned-dataset",
+        "description": "My cloned dataset",
+        "visibility": "private",
+        "owner": "team-username"
+    }
+
+### Link to this section导出数据集#
+    
+    
+    GET /api/datasets/{datasetId}/export
+
+返回一个包含最新数据集导出的带签名下载 URL 的 JSON 响应。
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`v`| integer| 版本号（从 1 开始计数）。如果省略，将返回最新（未缓存）的导出。  
+  
+**响应：**
+    
+    
+    {
+        "downloadUrl": "https://storage.example.com/export.ndjson?signed=...",
+        "cached": true
+    }
+
+### Link to this section创建数据集版本#
+    
+    
+    POST /api/datasets/{datasetId}/export
+
+为数据集创建一个带编号的新版本快照。仅所有者可用。该版本会捕获当前的图像总数、类别总数、标注总数和拆分分布情况，然后生成并存储一个不可变的 NDJSON 导出文件。
+
+**请求体：**
+    
+    
+    {
+        "description": "Added 500 training images"
+    }
+
+所有字段均为可选。`description` 字段是用户为该版本提供的标签。
+
+**响应：**
+    
+    
+    {
+        "version": 3,
+        "downloadUrl": "https://storage.example.com/v3.ndjson?signed=..."
+    }
+
+### Link to this section更新版本描述#
+    
+    
+    PATCH /api/datasets/{datasetId}/export
+
+更新现有版本的描述。仅所有者可用。
+
+**请求体：**
+    
+    
+    {
+        "version": 2,
+        "description": "Fixed mislabeled classes"
+    }
+
+**响应：**
+    
+    
+    {
+        "ok": true
+    }
+
+### Link to this section获取类别统计信息#
+    
+    
+    GET /api/datasets/{datasetId}/class-stats
+
+返回类别分布、位置热力图和维度统计信息。结果最多缓存 5 分钟。
+
+**响应：**
+    
+    
+    {
+        "classes": [{ "classId": 0, "count": 1500, "imageCount": 450 }],
+        "imageStats": {
+            "widthHistogram": [{ "bin": 640, "count": 120 }],
+            "heightHistogram": [{ "bin": 480, "count": 95 }],
+            "pointsHistogram": [{ "bin": 4, "count": 200 }]
+        },
+        "locationHeatmap": {
+            "bins": [
+                [5, 10],
+                [8, 3]
+            ],
+            "maxCount": 50
+        },
+        "dimensionHeatmap": {
+            "bins": [
+                [2, 5],
+                [3, 1]
+            ],
+            "maxCount": 12,
+            "minWidth": 10,
+            "maxWidth": 1920,
+            "minHeight": 10,
+            "maxHeight": 1080
+        },
+        "classNames": ["person", "car", "dog"],
+        "cached": true,
+        "sampled": false,
+        "sampleSize": 1000
+    }
+
+### Link to this section管理类别#
+
+合并类别（将标注从源类别重新分配给目标类别，然后移除源类别）：
+    
+    
+    POST /api/datasets/{datasetId}/classes/merge
+
+删除类别：
+    
+    
+    POST /api/datasets/{datasetId}/classes/delete
+
+### Link to this section重新分配拆分#
+    
+    
+    POST /api/datasets/{datasetId}/splits/redistribute
+
+在 train/val/test 拆分中重新分配图像。这三者都需要活跃的平台浏览器会话 —— API key 无法使用此功能。
+
+### Link to this section数据集嵌入#
+    
+    
+    GET /api/datasets/{datasetId}/embeddings
+    POST /api/datasets/{datasetId}/embeddings
+    DELETE /api/datasets/{datasetId}/embeddings
+
+GET 返回当前的 UMAP 分析摘要和活跃任务状态；POST 将嵌入分析任务加入队列；DELETE 取消活跃任务。
+
+### Link to this section图像聚类#
+    
+    
+    GET /api/datasets/{datasetId}/images/clustering
+
+返回聚类散点图视图的 UMAP 2D 布局及每张图像的元数据（分页且受速率限制）。
+
+### Link to this section获取在该数据集上训练的模型#
+    
+    
+    GET /api/datasets/{datasetId}/models
+
+返回使用此数据集训练过的模型。
+
+**响应：**
+    
+    
+    {
+        "models": [
+            {
+                "_id": "model_abc123",
+                "name": "experiment-1",
+                "slug": "experiment-1",
+                "status": "completed",
+                "task": "detect",
+                "epochs": 100,
+                "bestEpoch": 87,
+                "projectId": "project_xyz",
+                "projectSlug": "my-project",
+                "projectIconColor": "#3b82f6",
+                "projectIconLetter": "M",
+                "username": "johndoe",
+                "startedAt": "2024-01-14T22:00:00Z",
+                "completedAt": "2024-01-15T10:00:00Z",
+                "createdAt": "2024-01-14T21:55:00Z",
+                "metrics": {
+                    "mAP50": 0.85,
+                    "mAP50-95": 0.72,
+                    "precision": 0.88,
+                    "recall": 0.81
+                }
+            }
+        ],
+        "count": 1
+    }
+
+### Link to this section自动标注数据集#
+    
+    
+    POST /api/datasets/{datasetId}/predict
+
+在数据集图像上运行 YOLO 推理以自动生成标注。使用选定的模型为未标注的图像预测标签。
+
+**请求体：**
+
+字段| 类型| 必填| 描述  
+---|---|---|---  
+`imageHash`| string| 是| 要标注图像的哈希值  
+`modelId`| string| 否| 用于推理的模型，格式为 `ul://` URI（例如 `ul://username/project/model`）。如果省略，则使用数据集的任务特定默认模型。  
+`confidence`| float| 否| 置信度阈值（默认：0.25）  
+`iou`| float| 否| IoU 阈值（默认：0.7）  
+  
+### Link to this section数据集摄入#
+    
+    
+    POST /api/datasets/ingest
+
+创建一个数据集摄入任务，以处理上传的 ZIP 或 TAR 文件（包括 `.tar.gz` 和 `.tgz`），其中包含图像和标签。
+
+请求正文必须包含 `sessionId`（已上传归档文件的上传会话）或 `sourceUrl`（远程 ZIP、TAR、TAR.GZ、TGZ 或 NDJSON URL）中的一项，并可选择 `targetSplit`（`train`、`val` 或 `test`）以覆盖归档文件的拆分结构。
+    
+    
+    graph LR
+        A[Upload Archive] --> B[POST /api/datasets/ingest]
+        B --> C[Process Archive]
+        C --> D[Extract images]
+        C --> E[Parse labels]
+        C --> F[Generate thumbnails]
+        D & E & F --> G[Dataset ready]
+
+### Link to this section数据集图像#
+
+#### Link to this section列出图像#
+    
+    
+    GET /api/datasets/{datasetId}/images
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`split`| string| 按拆分过滤：`train`、`val`、`test`  
+`offset`| int| 分页偏移量（默认：0）  
+`limit`| int| 每页项目数（默认：50，最大：5000）  
+`sort`| string| 排序方式：`newest`、`oldest`、`name-asc`、`name-desc`、`height-asc`、`height-desc`、`width-asc`、`width-desc`、`size-asc`、`size-desc`、`labels-asc`、`labels-desc`（对于超过 10 万张图像的数据集，部分排序方式已禁用）  
+`hasLabel`| string| 按标签状态过滤（`true` 或 `false`）  
+`hasError`| string| 按错误状态过滤（`true` 或 `false`）  
+`search`| string| 按文件名或图像哈希搜索  
+`classIds`| string| 逗号分隔的类别 ID；返回包含任何指定类别的图像  
+`includeThumbnails`| string| 包含带签名的缩略图 URL（默认：`true`）  
+`includeImageUrls`| string| 包含带签名的完整图像 URL（默认：`false`）  
+  
+#### Link to this section获取带签名的图像 URL#
+    
+    
+    POST /api/datasets/{datasetId}/images/urls
+
+获取一批图像哈希的带签名 URL（用于在浏览器中显示）。
+
+#### Link to this section删除图像#
+    
+    
+    DELETE /api/datasets/{datasetId}/images/{hash}
+
+#### Link to this section获取图像标签#
+    
+    
+    GET /api/datasets/{datasetId}/images/{hash}/labels
+
+返回特定图像的标注和类别名称。
+
+#### Link to this section更新图像标签#
+    
+    
+    PUT /api/datasets/{datasetId}/images/{hash}/labels
+
+**请求体：**
+    
+    
+    {
+        "labels": [
+            { "classId": 0, "bbox": [0.5, 0.5, 0.2, 0.3] },
+            { "classId": 1, "segments": [0.1, 0.2, 0.3, 0.2, 0.2, 0.4] }
+        ]
+    }
+
+坐标格式
+
+标签坐标使用 YOLO 0 到 1 之间的归一化值。边界框使用 `[x_center, y_center, width, height]`。分割标签使用 `segments`，这是一个多边形顶点的展平列表 `[x1, y1, x2, y2, ...]`。
+
+#### Link to this section批量图像操作#
+
+在数据集内移动拆分（train/val/test）之间的图像：
+    
+    
+    PATCH /api/datasets/{datasetId}/images/bulk
+
+批量删除图像：
+    
+    
+    DELETE /api/datasets/{datasetId}/images/bulk
+
+* * *
+
+## Link to this section项目 API#
+
+将模型组织到项目中。每个模型仅属于一个项目。请参阅 [项目文档](/zh/platform/train/projects)。
+
+### Link to this section列出项目#
+    
+    
+    GET /api/projects
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`username`| string| 按用户名过滤  
+`limit`| int| 每页项目数  
+`owner`| string| 工作区所有者用户名  
+  
+### Link to this section获取项目#
+    
+    
+    GET /api/projects/{projectId}
+
+### Link to this section创建项目#
+    
+    
+    POST /api/projects
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"name": "my-project", "slug": "my-project", "description": "Detection experiments"}' \
+      https://platform.ultralytics.com/api/projects
+
+### Link to this section更新项目#
+    
+    
+    PATCH /api/projects/{projectId}
+
+### Link to this section删除项目#
+    
+    
+    DELETE /api/projects/{projectId}
+
+软删除项目（移至 [回收站](/zh/platform/account/trash)）。
+
+### Link to this section克隆项目#
+    
+    
+    POST /api/projects/{projectId}/clone
+
+将公开项目（及其所有模型）克隆到你的工作区。需要处于活动状态的平台浏览器会话 — 不支持通过 API key 使用。
+
+### Link to this section项目图标#
+
+上传项目图标（带有图像文件的 multipart 表单）：
+    
+    
+    POST /api/projects/{projectId}/icon
+
+移除项目图标：
+    
+    
+    DELETE /api/projects/{projectId}/icon
+
+两者都需要处于活跃状态的平台浏览器会话——无法通过 API 密钥使用。
+
+* * *
+
+## Link to this sectionModels API#
+
+管理已训练的 YOLO 模型——查看指标、下载权重、运行推理并导出为其他格式。请参阅 [Models 文档](/zh/platform/train/models)。
+
+### Link to this section列出模型#
+    
+    
+    GET /api/models
+
+**查询参数：**
+
+参数| 类型| 必填| 描述  
+---|---|---|---  
+`projectId`| string| 是| 项目 ID（必填）  
+`fields`| string| 否| 字段集：`summary`、`charts`  
+`ids`| string| 否| 以逗号分隔的模型 ID  
+`limit`| int| 否| 最大结果数（默认 20，最大 100）  
+  
+### Link to this section列出已完成的模型#
+    
+    
+    GET /api/models/completed
+
+返回已完成训练的模型（用于模型选择器和部署）。
+
+### Link to this section获取模型#
+    
+    
+    GET /api/models/{modelId}
+
+### Link to this section创建模型#
+    
+    
+    POST /api/models
+
+**JSON 正文：**
+
+字段| 类型| 必填| 描述  
+---|---|---|---  
+`projectId`| string| 是| 目标项目 ID  
+`slug`| string| 否| URL 别名（小写字母数字/连字符）  
+`name`| string| 否| 显示名称（最多 100 个字符）  
+`description`| string| 否| 模型描述（最多 1000 个字符）  
+`task`| string| 否| 任务类型（detect、segment、semantic、pose、obb、classify）  
+  
+模型文件上传
+
+模型 `.pt` 文件上传是分开处理的。请使用平台 UI 将模型文件拖放到项目中。
+
+### Link to this section更新模型#
+    
+    
+    PATCH /api/models/{modelId}
+
+### Link to this section删除模型#
+    
+    
+    DELETE /api/models/{modelId}
+
+### Link to this section下载模型文件#
+    
+    
+    GET /api/models/{modelId}/files
+
+返回用于模型文件的签名下载 URL。
+
+### Link to this section克隆模型#
+    
+    
+    POST /api/models/{modelId}/clone
+
+将公共模型克隆到你的项目之一。需要处于活跃状态的平台浏览器会话——无法通过 API 密钥使用。
+
+**请求体：**
+    
+    
+    {
+        "targetProjectSlug": "my-project",
+        "modelName": "cloned-model",
+        "description": "Cloned from public model",
+        "owner": "team-username"
+    }
+
+字段| 类型| 必填| 描述  
+---|---|---|---  
+`targetProjectSlug`| string| 是| 目标项目别名  
+`modelName`| string| 否| 克隆模型的名称  
+`description`| string| 否| 模型描述  
+`owner`| string| 否| 团队用户名（用于工作区克隆）  
+  
+### Link to this section追踪下载#
+    
+    
+    POST /api/models/{modelId}/track-download
+
+追踪模型下载分析。
+
+### Link to this section运行推理#
+    
+    
+    POST /api/models/{modelId}/predict
+
+**多部分表单：**
+
+字段| 类型| 描述  
+---|---|---  
+`file`| 文件| 图像或视频文件（例如 JPG、PNG、WebP、BMP、TIFF；MP4、MOV、AVI）  
+`conf`| float| 置信度阈值（默认：0.25）  
+`iou`| float| IoU 阈值（默认：0.7）  
+`imgsz`| int| 图像尺寸（像素，默认：640）  
+`source`| string| 图像 URL 或 base64 编码的图像（`file` 的替代方案）  
+  
+最大上传大小为 100 MB。
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -F "file=@image.jpg" \
+      -F "conf=0.5" \
+      https://platform.ultralytics.com/api/models/MODEL_ID/predict
+
+**响应：**
+    
+    
+    {
+        "images": [
+            {
+                "shape": [1080, 1920],
+                "results": [
+                    {
+                        "class": 0,
+                        "name": "person",
+                        "confidence": 0.92,
+                        "box": { "x1": 100, "y1": 50, "x2": 300, "y2": 400 }
+                    }
+                ]
+            }
+        ],
+        "metadata": {
+            "imageCount": 1
+        }
+    }
+
+### Link to this section获取预测令牌 (Predict Token)#
+    
+    
+    POST /api/models/{modelId}/predict/token
+
+仅限浏览器会话
+
+此路由由应用内的 Predict 选项卡使用，用于签发短期的推理令牌，以便进行直接的浏览器 → 预测服务调用（延迟更低，无 API 代理）。它需要处于活跃状态的平台浏览器会话，且无法通过 API 密钥使用。如需程序化推理，请使用你的 API 密钥调用 `POST /api/models/{modelId}/predict`。
+
+### Link to this section预热模型#
+    
+    
+    POST /api/models/{modelId}/predict/warmup
+
+仅限浏览器会话
+
+预热路由由 Predict 选项卡使用，用于在用户首次推理之前在预测服务上预加载模型的权重。它需要处于活跃状态的平台浏览器会话，且无法通过 API 密钥使用。
+
+* * *
+
+## Link to this sectionTraining API#
+
+在云端 GPU（从 RTX 2000 Ada 到 B300 等 26 种 GPU 类型）上启动 YOLO 训练，并实时监控进度。请参阅 [Cloud Training 文档](/zh/platform/train/cloud-training)。
+    
+    
+    graph LR
+        A[POST /training/start] --> B[Job Created]
+        B --> C{Training}
+        C -->|progress| D[GET /models/id/training]
+        C -->|cancel| E[DELETE /models/id/training]
+        C -->|complete| F[Model Ready]
+        F --> G[Deploy or Export]
+
+### Link to this section开始训练#
+    
+    
+    POST /api/training/start
+    
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "modelId": "MODEL_ID",
+        "projectId": "PROJECT_ID",
+        "gpuType": "rtx-4090",
+        "trainArgs": {
+          "model": "yolo26n.pt",
+          "data": "ul://username/datasets/my-dataset",
+          "epochs": 100,
+          "imgsz": 640,
+          "batch": 16
+        }
+      }' \
+      https://platform.ultralytics.com/api/training/start
+
+GPU 类型
+
+可用的 GPU 类型包括 `rtx-4090`、`a100-80gb-pcie`、`a100-80gb-sxm`、`h100-sxm`、`rtx-pro-6000`、`b300` 等。有关完整列表及定价，请参阅 [Cloud Training](/zh/platform/train/cloud-training)。
+
+### Link to this section获取 GPU 可用性#
+    
+    
+    GET /api/training/gpu-availability
+
+返回按 GPU 类型 ID 键控的当前 GPU 库存状态（`High`、`Medium`、`Low` 或 `null`）。公开，无需身份验证；缓存时间为 5 分钟。
+
+### Link to this section获取训练状态#
+    
+    
+    GET /api/models/{modelId}/training
+
+返回模型的当前训练任务状态、指标和进度。公共项目可匿名访问；私有项目需要处于活跃状态的平台浏览器会话（此路由不接受 API 密钥验证）。
+
+### Link to this section取消训练#
+    
+    
+    DELETE /api/models/{modelId}/training
+
+终止正在运行的计算实例并将任务标记为已取消。需要处于活跃状态的平台浏览器会话——无法通过 API 密钥使用。
+
+* * *
+
+## Link to this sectionDeployments API#
+
+将模型部署到带有健康检查和监控功能的专用推理端点。新部署默认使用按需缩容 (scale-to-zero)，API 接受一个可选的 `resources` 对象。请参阅 [Endpoints 文档](/zh/platform/deploy/endpoints)。
+
+各路由的 API 密钥支持情况
+
+仅 `GET /api/deployments`、`POST /api/deployments`、`GET /api/deployments/{deploymentId}` 和 `DELETE /api/deployments/{deploymentId}` 支持 API 密钥验证。`predict`、`health`、`logs`、`metrics`、`start` 和 `stop` 子路由需要处于活跃状态的平台浏览器会话——它们是应用内 UI 的便捷代理。如需程序化推理，请直接使用你的 API 密钥调用部署自身的端点 URL（例如 `https://predict-abc123.run.app/predict`）。[专用端点](/zh/platform/deploy/endpoints#using-endpoints) 不受速率限制。
+    
+    
+    graph LR
+        A[Create] --> B[Deploying]
+        B --> C[Ready]
+        C -->|stop| D[Stopped]
+        D -->|start| C
+        C -->|delete| E[Deleted]
+        D -->|delete| E
+        C -->|predict| F[Inference Results]
+
+### Link to this section列出部署#
+    
+    
+    GET /api/deployments
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`modelId`| string| 按模型过滤  
+`status`| string| 按状态过滤  
+`limit`| int| 最大结果数（默认：20，最大：100）  
+`owner`| string| 工作区所有者用户名  
+  
+### Link to this section创建部署#
+    
+    
+    POST /api/deployments
+
+**请求体：**
+    
+    
+    {
+        "modelId": "model_abc123",
+        "name": "my-deployment",
+        "region": "us-central1",
+        "resources": {
+            "cpu": 1,
+            "memoryGi": 2,
+            "minInstances": 0,
+            "maxInstances": 1
+        }
+    }
+
+字段| 类型| 必填| 描述  
+---|---|---|---  
+`modelId`| string| 是| 要部署的模型 ID  
+`name`| string| 是| 部署名称  
+`region`| string| 是| 部署区域  
+`resources`| 对象| 否| 资源配置（`cpu`、`memoryGi`、`minInstances`、`maxInstances`）  
+  
+在指定区域创建一个专用推理端点。该端点可通过唯一的 URL 全局访问。
+
+默认资源
+
+部署对话框目前提交的固定默认值为 `cpu=1`、`memoryGi=2`、`minInstances=0` 和 `maxInstances=1`。API 路由接受 `resources` 对象，但计划限制将 `minInstances` 上限设为 `0`，将 `maxInstances` 上限设为 `1`。
+
+区域选择
+
+为获得最低延迟，请选择靠近用户的区域。平台 UI 会显示所有 43 个可用区域的延迟估算值。
+
+### Link to this section获取部署#
+    
+    
+    GET /api/deployments/{deploymentId}
+
+### Link to this section删除部署#
+    
+    
+    DELETE /api/deployments/{deploymentId}
+
+### Link to this section启动部署#
+    
+    
+    POST /api/deployments/{deploymentId}/start
+
+恢复已停止的部署。
+
+### Link to this section停止部署#
+    
+    
+    POST /api/deployments/{deploymentId}/stop
+
+暂停正在运行的部署（停止计费）。
+
+### Link to this section健康检查#
+    
+    
+    GET /api/deployments/{deploymentId}/health
+
+返回部署端点的健康状态。
+
+### Link to this section在部署上运行推理#
+    
+    
+    POST /api/deployments/{deploymentId}/predict
+
+直接向部署端点发送图像进行推理。功能上等同于模型预测，但通过专用端点路由以实现更低的延迟。
+
+**多部分表单：**
+
+字段| 类型| 描述  
+---|---|---  
+`file`| 文件| 图像文件（JPEG、 PNG、 WebP）  
+`conf`| float| 置信度阈值（默认：0.25）  
+`iou`| float| IoU 阈值（默认：0.7）  
+`imgsz`| int| 图像尺寸（像素，默认：640）  
+  
+### Link to this section获取指标#
+    
+    
+    GET /api/deployments/{deploymentId}/metrics
+
+返回包含迷你图数据的请求计数、延迟和错误率指标。
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`range`| string| 时间范围：`1h`、`6h`、`24h`（默认）、`7d`、`30d`  
+`sparkline`| string| 设置为 `true` 以获取针对仪表板视图优化的迷你图数据  
+  
+### Link to this section获取日志#
+    
+    
+    GET /api/deployments/{deploymentId}/logs
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`severity`| string| 以逗号分隔的过滤器：`DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`  
+`limit`| int| 条目数量（默认：50，最大：200）  
+`pageToken`| string| 来自前一个响应的分页令牌  
+  
+* * *
+
+## Link to this sectionMonitoring API#
+
+仅限浏览器会话
+
+`GET /api/monitoring` 是一个仅限 UI 的路由，需要有效的平台浏览器会话。它不接受 API-key 身份验证。请通过各部署项对应的路由（这些路由也仅限浏览器会话使用）查询个人部署指标，或在已部署的 Cloud Run 服务上使用 [Cloud Monitoring exports](https://cloud.google.com/monitoring) 进行程序化访问。
+
+### Link to this section聚合指标#
+    
+    
+    GET /api/monitoring
+
+返回所有用户部署的聚合指标：总请求数、活跃部署数、错误率和平均延迟。
+
+* * *
+
+## Link to this section导出 API#
+
+将模型转换为 ONNX、TensorRT、CoreML 和 TFLite 等优化格式，以便进行边缘部署。请参阅 [Deploy 文档](/zh/platform/deploy)。
+
+### Link to this section列出导出项#
+    
+    
+    GET /api/exports
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`modelId`| string| 模型 ID（必填）  
+`status`| string| 按状态过滤  
+`limit`| int| 最大结果数（默认：20，最大：100）  
+  
+### Link to this section创建导出#
+    
+    
+    POST /api/exports
+
+**请求体：**
+
+字段| 类型| 必填| 描述  
+---|---|---|---  
+`modelId`| string| 是| 源模型 ID  
+`format`| string| 是| 导出格式（见下表）  
+`gpuType`| string| 条件项| 当 `format` 为 `engine` (TensorRT) 时必填  
+`args`| 对象| 否| 导出参数 (`imgsz`, `half`, `dynamic` 等)  
+      
+    
+    curl -X POST \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{"modelId": "MODEL_ID", "format": "onnx"}' \
+      https://platform.ultralytics.com/api/exports
+
+**支持的格式：**
+
+格式| 值| 用例  
+---|---|---  
+ONNX| `onnx`| 跨平台推理  
+TorchScript| `torchscript`| PyTorch 部署  
+OpenVINO| `openvino`| Intel 硬件  
+TensorRT| `engine`| NVIDIA GPU 优化  
+CoreML| `coreml`| Apple 设备  
+TFLite| `tflite`| 移动端和嵌入式  
+TF SavedModel| `saved_model`| TensorFlow Serving  
+TF GraphDef| `pb`| TensorFlow frozen graph  
+PaddlePaddle| `paddle`| Baidu PaddlePaddle  
+NCNN| `ncnn`| 移动神经网络  
+Edge TPU| `edgetpu`| Google Coral 设备  
+TF.js| `tfjs`| 浏览器推理  
+MNN| `mnn`| 阿里巴巴移动推理  
+RKNN| `rknn`| Rockchip NPU  
+Qualcomm| `qnn`| Qualcomm Snapdragon NPU  
+IMX| `imx`| Sony IMX500 传感器  
+Axelera| `axelera`| Axelera AI 加速器  
+ExecuTorch| `executorch`| Meta ExecuTorch 运行时  
+DeepX| `deepx`| DeepX NPU 加速器  
+  
+### Link to this section获取导出状态#
+    
+    
+    GET /api/exports/{exportId}
+
+### Link to this section取消导出#
+    
+    
+    DELETE /api/exports/{exportId}
+
+### Link to this section跟踪导出下载#
+    
+    
+    POST /api/exports/{exportId}/track-download
+
+* * *
+
+## Link to this section活动 API#
+
+查看你账户近期操作的动态——训练运行、上传等。请参阅 [Activity 文档](/zh/platform/account/activity)。
+
+仅限浏览器会话
+
+Activity 路由由平台 UI 的浏览器认证请求提供支持。它们未作为公共 API 公开，不接受 API-key 身份验证，且下述路由形态仅供参考。请在平台 UI 中使用 Activity 动态来查看、标记或存档事件。
+
+### Link to this section列出活动#
+    
+    
+    GET /api/activity
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`limit`| int| 页面大小（默认：20，最大：100）  
+`page`| int| 页码（默认：1）  
+`archived`| 布尔值| `true` 表示存档选项卡，`false` 表示收件箱  
+`search`| string| 事件字段中的不区分大小写搜索  
+  
+### Link to this section标记事件为已读#
+    
+    
+    POST /api/activity/mark-seen
+
+**请求体：**
+    
+    
+    {
+        "all": true
+    }
+
+或传入特定 ID：
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"]
+    }
+
+### Link to this section存档事件#
+    
+    
+    POST /api/activity/archive
+
+**请求体：**
+    
+    
+    {
+        "all": true,
+        "archive": true
+    }
+
+或传入特定 ID：
+    
+    
+    {
+        "eventIds": ["EVENT_ID_1", "EVENT_ID_2"],
+        "archive": false
+    }
+
+* * *
+
+## Link to this section回收站 API#
+
+查看并恢复已删除的项目。项目将在 30 天后被永久删除。请参阅 [Trash 文档](/zh/platform/account/trash)。
+
+### Link to this section列出回收站项目#
+    
+    
+    GET /api/trash
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`type`| string| 筛选器：`all`，`project`，`dataset`，`model`  
+`page`| int| 页码（默认：1）  
+`limit`| int| 每页项目数（默认：50，最大：200）  
+`owner`| string| 工作区所有者用户名  
+  
+### Link to this section恢复项目#
+    
+    
+    POST /api/trash
+
+**请求体：**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+### Link to this section永久删除项目#
+    
+    
+    DELETE /api/trash
+
+**请求体：**
+    
+    
+    {
+        "id": "item_abc123",
+        "type": "dataset"
+    }
+
+不可逆
+
+永久删除无法撤销。资源及其所有关联数据将被移除。
+
+### Link to this section清空回收站#
+    
+    
+    DELETE /api/trash/empty
+
+永久删除回收站中的所有项目。
+
+身份验证
+
+`DELETE /api/trash/empty` 需要已认证的浏览器会话，不可通过 API key 使用。请改用 UI 中的 **清空回收站** 按钮。
+
+* * *
+
+## Link to this section账单 API#
+
+检查你的信用余额、购买信用、查看交易记录并配置自动充值。请参阅 [Billing 文档](/zh/platform/account/billing)。
+
+货币单位
+
+账单金额使用分（`creditsCents`），其中 `100 = $1.00`。
+
+### Link to this section获取余额#
+    
+    
+    GET /api/billing/balance
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`owner`| string| 工作区所有者用户名  
+  
+**响应：**
+    
+    
+    {
+        "creditsCents": 2500,
+        "plan": "free"
+    }
+
+### Link to this section获取使用情况摘要#
+    
+    
+    GET /api/billing/usage-summary
+
+返回计划详情、限额和使用指标。
+
+### Link to this section获取交易记录#
+    
+    
+    GET /api/billing/transactions
+
+返回交易历史（最近的优先）。
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`owner`| string| 工作区所有者用户名  
+  
+### Link to this section创建结账会话#
+    
+    
+    POST /api/billing/checkout-session
+
+**请求体：**
+    
+    
+    {
+        "amount": 25,
+        "owner": "team-username"
+    }
+
+字段| 类型| 必填| 描述  
+---|---|---|---  
+`amount`| 数字| 是| 金额（美元，$5-$1000）  
+`owner`| string| 否| 用于工作区充值的团队用户名（需要管理员角色）  
+  
+创建信用购买的结账会话。
+
+### Link to this section创建订阅结账#
+    
+    
+    POST /api/billing/subscription-checkout
+
+创建 Pro 订阅升级的结账会话。
+
+**请求体：**
+    
+    
+    {
+        "planId": "pro",
+        "billingCycle": "monthly",
+        "owner": "team-username"
+    }
+
+字段| 类型| 必填| 描述  
+---|---|---|---  
+`planId`| string| 是| 要订阅的计划 (`pro`)  
+`billingCycle`| string| 否| 结算周期：`monthly`（默认）或 `yearly`  
+`owner`| string| 否| 用于工作区升级的团队用户名（需要管理员角色）  
+  
+### Link to this section取消或恢复订阅#
+    
+    
+    DELETE /api/billing/subscription-checkout
+
+默认在周期结束时取消 Pro 订阅。发送 `{"resume": true}` 以在结算周期结束前恢复已安排的取消。
+
+**请求体：**
+    
+    
+    {
+        "resume": true
+    }
+
+### Link to this section自动充值#
+
+当余额低于阈值时自动添加点数。
+
+#### Link to this section获取自动充值配置#
+    
+    
+    GET /api/billing/auto-topup
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`owner`| string| 工作区所有者用户名  
+  
+#### Link to this section更新自动充值配置#
+    
+    
+    PATCH /api/billing/auto-topup
+
+**请求体：**
+    
+    
+    {
+        "enabled": true,
+        "thresholdCents": 500,
+        "amountCents": 2500
+    }
+
+### Link to this section支付方式#
+
+#### Link to this section列出支付方式#
+    
+    
+    GET /api/billing/payment-methods
+
+#### Link to this section创建设置意向#
+    
+    
+    POST /api/billing/payment-methods/setup
+
+返回用于添加新支付方式的客户端密钥。
+
+#### Link to this section设置默认支付方式#
+    
+    
+    POST /api/billing/payment-methods/default
+
+**请求体：**
+    
+    
+    {
+        "paymentMethodId": "pm_123"
+    }
+
+#### Link to this section更新账单信息#
+    
+    
+    PATCH /api/billing/payment-methods
+
+**请求体：**
+    
+    
+    {
+        "name": "Jane Doe",
+        "address": {
+            "line1": "123 Main St",
+            "city": "San Francisco",
+            "state": "CA",
+            "postal_code": "94105",
+            "country": "US"
+        }
+    }
+
+#### Link to this section删除支付方式#
+    
+    
+    DELETE /api/billing/payment-methods/{id}
+
+* * *
+
+## Link to this section存储 API#
+
+按类别（数据集、模型、导出文件）查看你的存储使用明细，并查看你占用空间最大的项目。
+
+仅限浏览器会话
+
+存储路由需要活跃的平台浏览器会话，无法通过 API key 访问。请使用界面中的 [Settings > Profile](/zh/platform/account/settings#storage-usage) 页面进行交互式细分查看。
+
+### Link to this section获取存储信息#
+    
+    
+    GET /api/storage
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`details`| 布尔值| 设为 `true` 以包含 `topItems`（最大的数据集、模型、导出项目）。  
+  
+**响应：**
+    
+    
+    {
+        "tier": "free",
+        "usage": {
+            "storage": {
+                "current": 1073741824,
+                "limit": 107374182400,
+                "percent": 1.0
+            }
+        },
+        "region": "us",
+        "username": "johndoe",
+        "updatedAt": "2024-01-15T10:00:00Z",
+        "breakdown": {
+            "byCategory": {
+                "datasets": { "bytes": 536870912, "count": 2 },
+                "models": { "bytes": 268435456, "count": 4 },
+                "exports": { "bytes": 268435456, "count": 3 }
+            },
+            "topItems": [
+                {
+                    "_id": "dataset_abc123",
+                    "name": "my-dataset",
+                    "slug": "my-dataset",
+                    "sizeBytes": 536870912,
+                    "type": "dataset"
+                },
+                {
+                    "_id": "model_def456",
+                    "name": "experiment-1",
+                    "slug": "experiment-1",
+                    "sizeBytes": 134217728,
+                    "type": "model",
+                    "parentName": "My Project",
+                    "parentSlug": "my-project"
+                }
+            ]
+        }
+    }
+
+* * *
+
+## Link to this section上传 API#
+
+使用预签名 URL 直接将文件上传至云存储，实现快速、可靠的传输。采用两步流程：获取预签名 URL，然后上传文件。详见 [Data documentation](/zh/platform/data)。
+
+### Link to this section获取预签名上传 URL#
+    
+    
+    POST /api/upload/signed-url
+
+请求一个预签名 URL 以直接上传文件至云存储。该预签名 URL 会绕过 API 服务器进行大文件传输。
+
+**请求体：**
+    
+    
+    {
+        "assetType": "images",
+        "assetId": "abc123",
+        "filename": "my-image.jpg",
+        "contentType": "image/jpeg",
+        "totalBytes": 5242880
+    }
+
+字段| 类型| 描述  
+---|---|---  
+`assetType`| string| 资产类型：`models`、`datasets`、`images`、`videos`  
+`assetId`| string| 目标资产的 ID  
+`filename`| string| 原始文件名  
+`contentType`| string| MIME 类型  
+`totalBytes`| int| 文件大小（字节）  
+  
+**响应：**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "uploadUrl": "https://storage.example.com/...",
+        "gcsPath": "gs://bucket/users/user123/images/abc123/my-image.jpg",
+        "downloadUrl": "https://cdn.example.com/...",
+        "expiresAt": "2026-02-22T12:00:00Z"
+    }
+
+### Link to this section完成上传#
+    
+    
+    POST /api/upload/complete
+
+通知平台文件上传已完成，以便开始处理。
+
+**请求体：**
+    
+    
+    {
+        "sessionId": "session_abc123",
+        "checksum": "<optional sha-256 hex>"
+    }
+
+* * *
+
+## Link to this section集成 API#
+
+从第三方服务导入数据集。请参阅 [集成文档](/zh/platform/integrations)。
+
+### Link to this section预览 Roboflow 导入#
+    
+    
+    POST /api/integrations/roboflow/preview
+
+将 Roboflow API key 解析为批量导入计划：工作区信息、将要新导入的项目、已导入版本的计数（已跳过）以及不支持的项目类型。Roboflow API key 在正文中传递且不会被持久化。
+
+### Link to this section从 Roboflow 导入#
+    
+    
+    POST /api/integrations/roboflow/import
+
+将数据集提取任务加入队列，以将选定的 Roboflow 项目导入到你的工作区。需要存储空间，且每个数据集必须符合你计划的单次导入大小限制。
+
+* * *
+
+## Link to this sectionAPI Keys API#
+
+管理用于程序化访问的 API key。详见 [API Keys documentation](/zh/platform/account/api-keys)。
+
+### Link to this section列出 API keys#
+    
+    
+    GET /api/api-keys
+
+### Link to this section创建 API key#
+    
+    
+    POST /api/api-keys
+
+**请求体：**
+    
+    
+    {
+        "name": "training-server"
+    }
+
+### Link to this section删除 API key#
+    
+    
+    DELETE /api/api-keys
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`keyId`| string| 要撤销的 API key ID  
+  
+**示例：**
+    
+    
+    curl -X DELETE \
+      -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/api-keys?keyId=KEY_ID"
+
+* * *
+
+## Link to this section团队与成员 API#
+
+创建团队工作区、邀请成员并管理协作角色。详见 [Teams documentation](/zh/platform/account/teams)。
+
+### Link to this section列出团队#
+    
+    
+    GET /api/teams
+
+### Link to this section创建团队#
+    
+    
+    POST /api/teams/create
+
+**请求体：**
+    
+    
+    {
+        "username": "my-team",
+        "fullName": "My Team"
+    }
+
+### Link to this section列出成员#
+    
+    
+    GET /api/members
+
+返回当前工作区的成员。
+
+### Link to this section邀请成员#
+    
+    
+    POST /api/members
+
+**请求体：**
+    
+    
+    {
+        "email": "user@example.com",
+        "role": "editor"
+    }
+
+成员角色
+
+角色| 权限  
+---|---  
+`viewer`| 对工作区资源的只读访问权限  
+`editor`| 创建、编辑和删除资源  
+`admin`| 管理成员、账单和所有资源（仅限团队所有者分配）  
+  
+团队 `owner` 是创建者，不能被邀请。所有者权限需通过 `POST /api/members/transfer-ownership` 单独转移。完整角色详情请查看 [Teams](/zh/platform/account/teams)。
+
+### Link to this section更新成员角色#
+    
+    
+    PATCH /api/members/{userId}
+
+### Link to this section移除成员#
+    
+    
+    DELETE /api/members/{userId}
+
+### Link to this section转移所有权#
+    
+    
+    POST /api/members/transfer-ownership
+
+### Link to this section邀请#
+
+#### Link to this section接受邀请#
+    
+    
+    POST /api/invites/accept
+
+#### Link to this section获取邀请信息#
+    
+    
+    GET /api/invites/info
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`token`| string| 邀请令牌  
+  
+#### Link to this section撤销邀请#
+    
+    
+    DELETE /api/invites/{inviteId}
+
+#### Link to this section重新发送邀请#
+    
+    
+    POST /api/invites/{inviteId}/resend
+
+* * *
+
+## Link to this section探索 API#
+
+搜索并浏览社区共享的公共数据集和项目。详见 [Explore documentation](/zh/platform/explore)。
+
+### Link to this section搜索公共内容#
+    
+    
+    GET /api/explore/search
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`q`| string| 搜索查询  
+`type`| string| 资源类型：`all`（默认）、`projects`、`datasets`  
+`sort`| string| 排序顺序：`newest`（默认）、`stars`、`oldest`、`name-asc`、`name-desc`、`count-desc`、`count-asc`  
+`offset`| int| 分页偏移量（默认：0）。每页返回 20 条结果。  
+`task`| string| 可选：用于过滤数据集的逗号分隔 YOLO 任务类型（`detect`、`segment`、`semantic`、`classify`、`pose`、`obb`）  
+  
+### Link to this section侧边栏数据#
+    
+    
+    GET /api/explore/sidebar
+
+返回用于“探索”侧边栏的精选内容。
+
+* * *
+
+## Link to this section用户与设置 API#
+
+管理你的个人资料、API keys、存储使用情况和数据隐私设置。详见 [Settings documentation](/zh/platform/account/settings)。
+
+### Link to this section通过用户名获取用户#
+    
+    
+    GET /api/users
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`username`| string| 要查找的用户名  
+  
+### Link to this section关注或取消关注用户#
+    
+    
+    PATCH /api/users
+
+**请求体：**
+    
+    
+    {
+        "username": "target-user",
+        "followed": true
+    }
+
+### Link to this section检查用户名可用性#
+    
+    
+    GET /api/username/check
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`username`| string| 要检查的用户名  
+`suggest`| 布尔值| 可选：如果用户名已被占用，设为 `true` 以包含建议  
+  
+### Link to this section设置#
+    
+    
+    GET /api/settings
+    POST /api/settings
+
+获取或更新用户个人资料设置（显示名称、个人简介、社交链接等）。
+
+### Link to this section个人资料图标#
+    
+    
+    POST /api/settings/icon
+    DELETE /api/settings/icon
+
+上传或移除个人资料头像。
+
+### Link to this section新手引导#
+    
+    
+    POST /api/onboarding
+
+完成新手引导流程（设置数据区域、用户名）。
+
+* * *
+
+## Link to this sectionGDPR API#
+
+请求导出你的所有数据或永久删除你的账户。详见 [Settings documentation](/zh/platform/account/settings)。
+
+### Link to this section获取 GDPR 任务状态#
+    
+    
+    GET /api/gdpr
+
+**查询参数：**
+
+参数| 类型| 描述  
+---|---|---  
+`jobId`| string| 要检查的 GDPR 任务 ID  
+  
+返回任务状态。对于已完成的导出任务，响应中包含 `downloadUrl`。
+
+### Link to this section启动导出或删除流程#
+    
+    
+    POST /api/gdpr
+
+**请求体：**
+    
+    
+    {
+        "action": "export"
+    }
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE"
+    }
+
+团队工作区可选：
+    
+    
+    {
+        "action": "delete",
+        "confirmationWord": "DELETE",
+        "teamUsername": "my-team"
+    }
+
+不可逆操作
+
+账户删除是永久性的，无法撤销。所有数据、模型和部署都将被删除。
+
+* * *
+
+## Link to this section错误代码#
+
+代码| HTTP 状态| 描述  
+---|---|---  
+`UNAUTHORIZED`| 401| API 密钥无效或缺失  
+`FORBIDDEN`| 403| 权限不足  
+`NOT_FOUND`| 404| 资源未找到  
+`VALIDATION_ERROR`| 400| 请求数据无效  
+`RATE_LIMITED`| 429| 请求过于频繁  
+`INTERNAL_ERROR`| 500| 服务器错误  
+  
+* * *
+
+## Link to this sectionPython 集成#
+
+为了更轻松地进行集成，请使用 Ultralytics Python 软件包，它能自动处理身份验证、上传和实时指标流传输。
+
+### Link to this section安装与设置#
+    
+    
+    pip install ultralytics
+
+验证安装：
+    
+    
+    yolo check
+
+软件包版本要求
+
+平台集成需要 **ultralytics >=8.4.60**。更低版本无法与平台配合使用。
+
+### Link to this section身份验证#
+    
+    
+    yolo settings api_key=YOUR_API_KEY
+
+### Link to this section使用平台数据集#
+
+使用 `ul://` URI 引用数据集：
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Train on your Platform dataset
+    model.train(
+        data="ul://your-username/datasets/your-dataset",
+        epochs=100,
+        imgsz=640,
+    )
+
+**URI 格式：**
+
+模式| 描述  
+---|---  
+`ul://username/datasets/slug`| 数据集  
+`ul://username/project-name`| 项目  
+`ul://username/project/model-name`| 特定模型  
+`ul://ultralytics/yolo26/yolo26n`| 官方模型  
+  
+### Link to this section推送到平台#
+
+将结果发送到平台项目：
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Results automatically sync to Platform
+    model.train(
+        data="coco8.yaml",
+        epochs=100,
+        project="your-username/my-project",
+        name="experiment-1",
+    )
+
+**同步内容：**
+
+  * 训练指标（实时）
+  * 最终模型权重
+  * 验证绘图
+  * 控制台输出
+  * 系统指标
+
+
+
+### Link to this sectionAPI 示例#
+
+**从平台加载模型：**
+    
+    
+    # Your own model
+    model = YOLO("ul://username/project/model-name")
+    
+    # Official model
+    model = YOLO("ul://ultralytics/yolo26/yolo26n")
+
+**运行推理：**
+    
+    
+    results = model("image.jpg")
+    
+    # Access results
+    for r in results:
+        boxes = r.boxes  # Detection boxes
+        masks = r.masks  # Segmentation masks
+        keypoints = r.keypoints  # Pose keypoints
+        probs = r.probs  # Classification probabilities
+
+**导出模型：**
+    
+    
+    # Export to ONNX
+    model.export(format="onnx", imgsz=640, half=True)
+    
+    # Export to TensorRT
+    model.export(format="engine", imgsz=640, half=True)
+    
+    # Export to CoreML
+    model.export(format="coreml", imgsz=640)
+
+**验证：**
+    
+    
+    metrics = model.val(data="ul://username/datasets/my-dataset")
+    
+    print(f"mAP50: {metrics.box.map50}")
+    print(f"mAP50-95: {metrics.box.map}")
+
+* * *
+
+## Link to this sectionWebhooks#
+
+平台使用内部 webhooks 将实时训练指标从 `ultralytics` Python SDK（运行在云端 GPU 或远程/本地机器上）流传输回平台，包括逐个 epoch 的损失、mAP、系统统计数据和完成状态。这些 webhooks 通过为每个训练作业配置的 HMAC `webhookSecret` 进行身份验证，不供用户应用程序使用。
+
+在你这边的工作方式
+
+**所有套餐** ：通过 `ultralytics` SDK 获取训练进度（实时指标、完成通知）在所有套餐中均可自动实现，只需在训练时设置 `project=username/my-project name=my-run`，SDK 就会将事件流传输回平台。无需进行用户端的 webhook 注册。
+
+**面向用户的 webhook 订阅** （向你控制的 URL 发送 POST 回调）在企业版路线图中，目前尚不可用。在此期间，请轮询 `GET /api/models/{modelId}/training` 以获取状态，或使用 UI 中的 活动源。
+
+* * *
+
+## Link to this section常见问题解答#
+
+### Link to this section如何对大量结果进行分页？#
+
+大多数端点使用 `limit` 参数来控制每个请求返回的结果数量：
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/datasets?limit=50"
+
+Activity 和 Trash 端点也支持用于基于页码分页的 `page` 参数：
+    
+    
+    curl -H "Authorization: Bearer YOUR_API_KEY" \
+      "https://platform.ultralytics.com/api/activity?page=2&limit=20"
+
+Explore Search 端点使用 `offset` 而不是 `page`，固定页面大小为 20：
+    
+    
+    curl "https://platform.ultralytics.com/api/explore/search?type=datasets&offset=20&sort=stars"
+
+### Link to this section我可以不使用 SDK 调用 API 吗？#
+
+可以，所有功能均可通过 REST 提供。Python SDK 是一个便利包装器，增加了实时指标流传输和自动模型上传等功能。你还可以在 [platform.ultralytics.com/api/docs](https://platform.ultralytics.com/api/docs) 交互式浏览所有端点。
+
+### Link to this section有 API 客户端库吗？#
+
+目前，请使用 Ultralytics Python 软件包或直接发起 HTTP 请求。计划后续提供其他语言的官方客户端库。
+
+### Link to this section如何处理速率限制？#
+
+使用来自 429 响应的 `Retry-After` 标头，等待相应的时间：
+    
+    
+    import time
+    
+    import requests
+    
+    def api_request_with_retry(url, headers, max_retries=3):
+        for attempt in range(max_retries):
+            response = requests.get(url, headers=headers)
+            if response.status_code != 429:
+                return response
+            wait = int(response.headers.get("Retry-After", 2**attempt))
+            time.sleep(wait)
+        raise Exception("Rate limit exceeded")
+
+### Link to this section如何查找我的模型或数据集 ID？#
+
+当你通过 API 创建资源时，系统会返回资源 ID。你也可以在平台 URL 中找到它们：
+    
+    
+    https://platform.ultralytics.com/username/project/model-name
+                                      ^^^^^^^^ ^^^^^^^ ^^^^^^^^^^
+                                      username project   model
+
+使用列表端点按名称搜索或按项目进行过滤。
+
+贡献者
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/platform/api/index.md)
+
+[GLglenn-jocher20](https://github.com/glenn-jocher)[MYmykolaxboiko2](https://github.com/mykolaxboiko)[LAlaodouya1](https://github.com/laodouya)[RAraimbekovm1](https://github.com/raimbekovm)[SEsergiuwaxmann1](https://github.com/sergiuwaxmann)[LALaughing-q1](https://github.com/Laughing-q)
+
+已创建 5个月前已更新 4小时前
+
+## 评论
+
+本页内容
+
+使用 AI 探索

@@ -1,0 +1,190 @@
+---
+source_url: https://docs.ultralytics.com/es/yolov5/tutorials/model-ensembling
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-ensembling.md)
+
+# Link to this sectionEnsamble de modelos YOLOv5#
+
+📚 Esta guía explica cómo utilizar el **ensamble de modelos** de Ultralytics YOLOv5 🚀 durante las pruebas y la inferencia para mejorar el mAP y el [Recall](https://www.ultralytics.com/glossary/recall).
+
+Del [aprendizaje por ensambles](https://en.wikipedia.org/wiki/Ensemble_learning):
+
+> El modelado por ensambles es un proceso en el que se crean múltiples modelos diversos para predecir un resultado, ya sea utilizando muchos algoritmos de modelado diferentes o usando distintos conjuntos de [datos de entrenamiento](https://www.ultralytics.com/glossary/training-data). El modelo de ensamble agrega entonces la predicción de cada modelo base y resulta en una predicción final para los datos no vistos. La motivación para usar modelos de ensamble es reducir el error de generalización de la predicción. Siempre que los modelos base sean diversos e independientes, el error de predicción del modelo disminuye cuando se utiliza el enfoque de ensamble. El enfoque busca la sabiduría de la multitud al realizar una predicción. Aunque el modelo de ensamble tiene múltiples modelos base dentro de sí, actúa y funciona como un único modelo.
+
+## Link to this sectionAntes de empezar#
+
+Clona el repositorio e instala [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) en un entorno [**Python >=3.8.0**](https://www.python.org/), incluido [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). Los [modelos](https://github.com/ultralytics/yolov5/tree/master/models) y los [conjuntos de datos](https://github.com/ultralytics/yolov5/tree/master/data) se descargan automáticamente desde la última [versión](https://github.com/ultralytics/yolov5/releases) de YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+## Link to this sectionPrueba normal#
+
+Antes de realizar el ensamble, establece el rendimiento base de un modelo individual. Este comando prueba YOLOv5x en COCO val2017 a un tamaño de imagen de 640 píxeles. `yolov5x.pt` es el modelo más grande y preciso disponible. Otras opciones son `yolov5s.pt`, `yolov5m.pt` y `yolov5l.pt`, o tu propio checkpoint tras entrenar con un conjunto de datos personalizado `./weights/best.pt`. Para obtener detalles sobre todos los modelos disponibles, consulta la [tabla de checkpoints preentrenados](https://docs.ultralytics.com/models/yolov5).
+    
+    
+    python val.py --weights yolov5x.pt --data coco.yaml --img 640 --half
+
+Salida:
+    
+    
+    val: data=./data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients
+    
+    val: Scanning '../datasets/coco/val2017' images and labels...4952 found, 48 missing, 0 empty, 0 corrupted: 100% 5000/5000 [00:01<00:00, 2846.03it/s]
+    val: New cache created: ../datasets/coco/val2017.cache
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [02:30<00:00,  1.05it/s]
+                     all       5000      36335      0.746      0.626       0.68       0.49
+    Speed: 0.1ms pre-process, 22.4ms inference, 1.4ms NMS per image at shape (32, 3, 640, 640)  # <--- baseline speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.504  # <--- baseline mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.688
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.546
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.351
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.551
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.644
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.382
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.628
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.681  # <--- baseline mAR
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.524
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.735
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.826
+
+## Link to this sectionPrueba de ensamble#
+
+Se pueden ensamblar varios modelos preentrenados juntos durante el tiempo de prueba e inferencia simplemente añadiendo modelos adicionales al argumento `--weights` en cualquier comando existente de val.py o detect.py. Este ejemplo prueba un ensamble de 2 modelos juntos:
+
+  * YOLOv5x
+  * YOLOv5l6
+
+
+    
+    
+    python val.py --weights yolov5x.pt yolov5l6.pt --data coco.yaml --img 640 --half
+
+Puedes listar tantos checkpoints como desees, incluyendo pesos personalizados como `runs/train/exp-5/weights/best.pt`. YOLOv5 ejecutará automáticamente cada modelo, alineará las predicciones por imagen y promediará las salidas antes de realizar el NMS.
+
+Salida:
+    
+    
+    val: data=./data/coco.yaml, weights=['yolov5x.pt', 'yolov5l6.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.6, task=val, device=, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients  # Model 1
+    Fusing layers...
+    Model Summary: 501 layers, 77218620 parameters, 0 gradients  # Model 2
+    Ensemble created with ['yolov5x.pt', 'yolov5l6.pt']  # Ensemble notice
+    
+    val: Scanning '../datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupted: 100% 5000/5000 [00:00<00:00, 49695545.02it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [03:58<00:00,  1.52s/it]
+                     all       5000      36335      0.747      0.637      0.692      0.502
+    Speed: 0.1ms pre-process, 39.5ms inference, 2.0ms NMS per image at shape (32, 3, 640, 640)  # <--- ensemble speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-3/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.515  # <--- ensemble mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.699
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.557
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.356
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.563
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.668
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.387
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.638
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.689  # <--- ensemble mAR
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.526
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.743
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.844
+
+## Link to this sectionInferencia de ensamble#
+
+Añade modelos extra al argumento `--weights` para ejecutar la inferencia de ensamble:
+    
+    
+    python detect.py --weights yolov5x.pt yolov5l6.pt --img 640 --source data/images
+
+Salida:
+    
+    
+    YOLOv5 🚀 v5.0-267-g6a3ee7c torch 1.9.0+cu102 CUDA:0 (Tesla P100-PCIE-16GB, 16280.875MB)
+    
+    Fusing layers...
+    Model Summary: 476 layers, 87730285 parameters, 0 gradients
+    Fusing layers...
+    Model Summary: 501 layers, 77218620 parameters, 0 gradients
+    Ensemble created with ['yolov5x.pt', 'yolov5l6.pt']
+    
+    image 1/2 /content/yolov5/data/images/bus.jpg: 640x512 4 persons, 1 bus, 1 tie, Done. (0.063s)
+    image 2/2 /content/yolov5/data/images/zidane.jpg: 384x640 3 persons, 2 ties, Done. (0.056s)
+    Results saved to runs/detect/exp-2
+    Done. (0.223s)
+
+![YOLO inference result](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolo-inference-result.avif)
+
+## Link to this sectionBeneficios del ensamble de modelos#
+
+El ensamble de modelos con YOLOv5 ofrece varias ventajas:
+
+  1. **Precisión mejorada** : Como se demuestra en los ejemplos anteriores, el ensamble de varios modelos aumenta el mAP de 0.504 a 0.515 y el mAR de 0.681 a 0.689.
+  2. **Mejor generalización** : Combinar modelos diversos ayuda a reducir el sobreajuste (overfitting) y mejora el rendimiento en datos variados.
+  3. **Robustez mejorada** : Los ensambles suelen ser más robustos frente al ruido y a los valores atípicos en los datos.
+  4. **Fortalezas complementarias** : Diferentes modelos pueden destacar en la detección de distintos tipos de objetos o en diversas condiciones ambientales.
+
+
+
+El principal inconveniente es el aumento del tiempo de inferencia, como se muestra en las métricas de velocidad (22.4ms para un solo modelo frente a 39.5ms para el ensamble).
+
+## Link to this sectionCuándo utilizar el ensamble de modelos#
+
+Considera usar el ensamble de modelos en estos escenarios:
+
+  * Cuando la precisión es más importante que la velocidad de inferencia
+  * Para aplicaciones críticas donde los falsos negativos deben minimizarse
+  * Al procesar imágenes desafiantes con iluminación variada, oclusiones o escalas diferentes
+  * Durante competiciones o evaluaciones comparativas donde se requiere el máximo rendimiento
+
+
+
+Para aplicaciones en tiempo real con requisitos estrictos de latencia, la inferencia con un solo modelo puede ser más apropiada.
+
+## Link to this sectionEntornos admitidos#
+
+Ultralytics ofrece una gama de entornos listos para usar, cada uno preinstalado con dependencias esenciales como [CUDA](https://developer.nvidia.com/cuda), [CUDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/) y [PyTorch](https://pytorch.org/), para poner en marcha tus proyectos.
+
+  * **Notebooks con GPU gratuita** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [Guía de inicio rápido de GCP](/es/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [Guía de inicio rápido de AWS](/es/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [Guía de inicio rápido de AzureML](/es/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Guía de inicio rápido de Docker](/es/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionEstado del proyecto#
+
+[![CI de YOLOv5](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+Esta insignia indica que todas las pruebas de Integración Continua (CI) de [GitHub Actions de YOLOv5](https://github.com/ultralytics/yolov5/actions) se están superando correctamente. Estas pruebas de CI verifican rigurosamente la funcionalidad y el rendimiento de YOLOv5 en varios aspectos clave: [entrenamiento](https://github.com/ultralytics/yolov5/blob/master/train.py), [validación](https://github.com/ultralytics/yolov5/blob/master/val.py), [inferencia](https://github.com/ultralytics/yolov5/blob/master/detect.py), [exportación](https://github.com/ultralytics/yolov5/blob/master/export.py) y [benchmarks](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). Garantizan un funcionamiento consistente y fiable en macOS, Windows y Ubuntu, con pruebas realizadas cada 24 horas y tras cada nueva confirmación (commit).
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-ensembling.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Creado hace 3 díasActualizado hace 3 días
+
+## Comentarios
+
+En esta página
+
+Explora con IA

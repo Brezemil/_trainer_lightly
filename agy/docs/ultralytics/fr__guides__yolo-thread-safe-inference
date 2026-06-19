@@ -1,0 +1,218 @@
+---
+source_url: https://docs.ultralytics.com/fr/guides/yolo-thread-safe-inference
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+# Link to this sectionInférence thread-safe avec les modèles YOLO#
+
+L'exécution des modèles YOLO dans un environnement multi-thread nécessite une attention particulière pour garantir la sécurité des threads. Le module `threading` de Python te permet d'exécuter plusieurs threads simultanément, mais il existe des problèmes de sécurité importants à prendre en compte lors de l'utilisation des modèles YOLO dans ces threads. Cette page te guidera dans la création d'une inférence de modèle YOLO thread-safe.
+
+  
+
+
+  
+**Watch:** How to Perform Thread Safe Inference with Ultralytics YOLO Models in Python | Multi-Threading 🚀 
+
+## Link to this sectionComprendre le threading Python#
+
+Les threads Python sont une forme de parallélisme qui permet à ton programme d'exécuter plusieurs opérations à la fois. Cependant, le Global Interpreter Lock (GIL) de Python signifie qu'un seul thread peut exécuter du bytecode Python à la fois.
+
+![Single-thread vs multi-thread inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/single-vs-multi-thread-examples.avif)
+
+Bien que cela puisse sembler être une limitation, les threads peuvent tout de même offrir de la concurrence, notamment pour les opérations liées aux E/S ou lors de l'utilisation d'opérations qui libèrent le GIL, comme celles effectuées par les bibliothèques C sous-jacentes de YOLO.
+
+## Link to this sectionLe danger des instances de modèle partagées#
+
+Instancier un modèle YOLO en dehors de tes threads et partager cette instance entre plusieurs threads peut entraîner des conditions de concurrence (race conditions), où l'état interne du modèle est modifié de manière incohérente en raison d'accès simultanés. C'est particulièrement problématique lorsque le modèle ou ses composants conservent un état qui n'est pas conçu pour être thread-safe.
+
+### Link to this sectionExemple non thread-safe : instance de modèle unique#
+
+Lors de l'utilisation de threads en Python, il est important de reconnaître les modèles qui peuvent entraîner des problèmes de concurrence. Voici ce que tu dois éviter : partager une instance unique de modèle YOLO entre plusieurs threads.
+    
+    
+    # Unsafe: Sharing a single model instance across threads
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate the model outside the thread
+    shared_model = YOLO("yolo26n.pt")
+    
+    def predict(image_path):
+        """Predicts objects in an image using a preloaded YOLO model, take path string to image as argument."""
+        results = shared_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that share the same model instance
+    Thread(target=predict, args=("image1.jpg",)).start()
+    Thread(target=predict, args=("image2.jpg",)).start()
+
+Dans l'exemple ci-dessus, le `shared_model` est utilisé par plusieurs threads, ce qui peut conduire à des résultats imprévisibles car `predict` pourrait être exécuté simultanément par plusieurs threads.
+
+### Link to this sectionExemple non thread-safe : instances de modèle multiples#
+
+De même, voici un modèle dangereux avec plusieurs instances de modèle YOLO :
+    
+    
+    # Unsafe: Sharing multiple model instances across threads can still lead to issues
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    # Instantiate multiple models outside the thread
+    shared_model_1 = YOLO("yolo26n_1.pt")
+    shared_model_2 = YOLO("yolo26n_2.pt")
+    
+    def predict(model, image_path):
+        """Runs prediction on an image using a specified YOLO model, returning the results."""
+        results = model.predict(image_path)
+        # Process results
+    
+    # Starting threads with individual model instances
+    Thread(target=predict, args=(shared_model_1, "image1.jpg")).start()
+    Thread(target=predict, args=(shared_model_2, "image2.jpg")).start()
+
+Même s'il y a deux instances de modèle distinctes, le risque de problèmes de concurrence subsiste. Si l'implémentation interne de `YOLO` n'est pas thread-safe, l'utilisation d'instances séparées peut ne pas empêcher les conditions de concurrence, surtout si ces instances partagent des ressources ou des états sous-jacents qui ne sont pas locaux au thread.
+
+## Link to this sectionInférence thread-safe#
+
+Pour effectuer une inférence thread-safe, tu dois instancier un modèle YOLO distinct au sein de chaque thread. Cela garantit que chaque thread possède sa propre instance de modèle isolée, éliminant ainsi le risque de conditions de concurrence.
+
+### Link to this sectionExemple thread-safe#
+
+Voici comment instancier un modèle YOLO à l'intérieur de chaque thread pour une inférence parallèle sécurisée :
+    
+    
+    # Safe: Instantiating a single model inside each thread
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image using a new YOLO model instance in a thread-safe manner; takes image path as input."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    # Starting threads that each have their own model instance
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Dans cet exemple, chaque thread crée sa propre instance `YOLO`. Cela empêche tout thread d'interférer avec l'état du modèle d'un autre, garantissant ainsi que chaque thread effectue l'inférence en toute sécurité et sans interactions inattendues avec les autres threads.
+
+## Link to this sectionUtilisation du décorateur ThreadingLocked#
+
+Ultralytics fournit un décorateur `ThreadingLocked` qui peut être utilisé pour garantir l'exécution thread-safe de fonctions. Ce décorateur utilise un verrou pour s'assurer qu'un seul thread à la fois peut exécuter la fonction décorée.
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.utils import ThreadingLocked
+    
+    # Create a model instance
+    model = YOLO("yolo26n.pt")
+    
+    # Decorate the predict method to make it thread-safe
+    @ThreadingLocked()
+    def thread_safe_predict(image_path):
+        """Thread-safe prediction using a shared model instance."""
+        results = model.predict(image_path)
+        return results
+    
+    # Now you can safely call this function from multiple threads
+
+Le décorateur `ThreadingLocked` est particulièrement utile lorsque tu dois partager une instance de modèle entre des threads mais que tu veux t'assurer qu'un seul thread peut y accéder à la fois. Cette approche peut économiser de la mémoire par rapport à la création d'une nouvelle instance de modèle pour chaque thread, mais elle peut réduire la concurrence car les threads devront attendre que le verrou soit libéré.
+
+## Link to this sectionConclusion#
+
+Lorsque tu utilises des modèles YOLO avec le `threading` de Python, instancie toujours tes modèles dans le thread qui les utilisera pour garantir la sécurité des threads. Cette pratique évite les conditions de concurrence et assure que tes tâches d'inférence s'exécutent de manière fiable.
+
+Pour des scénarios plus avancés et pour optimiser davantage tes performances d'inférence multi-thread, envisage d'utiliser le parallélisme basé sur les processus avec [multiprocessing](https://docs.python.org/3/library/multiprocessing.html) ou d'utiliser une file d'attente de tâches avec des processus de travail dédiés.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionComment puis-je éviter les conditions de concurrence lors de l'utilisation de modèles YOLO dans un environnement Python multi-thread ?#
+
+Pour éviter les conditions de concurrence lors de l'utilisation des modèles Ultralytics YOLO dans un environnement Python multi-thread, instancie un modèle YOLO distinct dans chaque thread. Cela garantit que chaque thread dispose de sa propre instance de modèle isolée, évitant ainsi la modification simultanée de l'état du modèle.
+
+Exemple :
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Predict on an image in a thread-safe manner."""
+        local_model = YOLO("yolo26n.pt")
+        results = local_model.predict(image_path)
+        # Process results
+    
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Pour plus d'informations sur la garantie de la sécurité des threads, consulte Inférence thread-safe avec les modèles YOLO.
+
+### Link to this sectionQuelles sont les meilleures pratiques pour exécuter une inférence de modèle YOLO multi-thread en Python ?#
+
+Pour exécuter une inférence de modèle YOLO multi-thread en toute sécurité en Python, suis ces meilleures pratiques :
+
+  1. Instancie les modèles YOLO au sein de chaque thread plutôt que de partager une instance unique entre les threads.
+  2. Utilise le module `multiprocessing` de Python pour le traitement parallèle afin d'éviter les problèmes liés au Global Interpreter Lock (GIL).
+  3. Libère le GIL en utilisant des opérations effectuées par les bibliothèques C sous-jacentes de YOLO.
+  4. Envisage d'utiliser le décorateur `ThreadingLocked` pour les instances de modèle partagées lorsque la mémoire est un problème.
+
+
+
+Exemple pour une instanciation de modèle thread-safe :
+    
+    
+    from threading import Thread
+    
+    from ultralytics import YOLO
+    
+    def thread_safe_predict(image_path):
+        """Runs inference in a thread-safe manner with a new YOLO model instance."""
+        model = YOLO("yolo26n.pt")
+        results = model.predict(image_path)
+        # Process results
+    
+    # Initiate multiple threads
+    Thread(target=thread_safe_predict, args=("image1.jpg",)).start()
+    Thread(target=thread_safe_predict, args=("image2.jpg",)).start()
+
+Pour plus de contexte, réfère-toi à la section sur l'Inférence thread-safe.
+
+### Link to this sectionPourquoi chaque thread devrait-il avoir sa propre instance de modèle YOLO ?#
+
+Chaque thread devrait avoir sa propre instance de modèle YOLO pour éviter les conditions de concurrence. Lorsqu'une instance unique de modèle est partagée entre plusieurs threads, les accès simultanés peuvent conduire à un comportement imprévisible et à des modifications de l'état interne du modèle. En utilisant des instances séparées, tu garantis l'isolation des threads, rendant tes tâches multi-thread fiables et sécurisées.
+
+Pour des conseils détaillés, consulte les sections Exemple non thread-safe : instance de modèle unique et Exemple thread-safe.
+
+### Link to this sectionComment le Global Interpreter Lock (GIL) de Python affecte-t-il l'inférence des modèles YOLO ?#
+
+Le Global Interpreter Lock (GIL) de Python permet à un seul thread d'exécuter du bytecode Python à la fois, ce qui peut limiter les performances des tâches multi-thread intensives pour le CPU. Cependant, pour les opérations liées aux E/S ou les processus qui utilisent des bibliothèques libérant le GIL, comme les bibliothèques C sous-jacentes de YOLO, tu peux toujours obtenir de la concurrence. Pour des performances améliorées, envisage d'utiliser le parallélisme basé sur les processus avec le module `multiprocessing` de Python.
+
+Pour en savoir plus sur le threading en Python, consulte la section Comprendre le threading Python.
+
+### Link to this sectionEst-il plus sûr d'utiliser le parallélisme basé sur les processus au lieu du threading pour l'inférence des modèles YOLO ?#
+
+Oui, l'utilisation du module `multiprocessing` de Python est plus sûre et souvent plus efficace pour exécuter l'inférence des modèles YOLO en parallèle. Le parallélisme basé sur les processus crée des espaces mémoire séparés, évitant le Global Interpreter Lock (GIL) et réduisant le risque de problèmes de concurrence. Chaque processus opérera indépendamment avec sa propre instance de modèle YOLO.
+
+Pour plus de détails sur le parallélisme basé sur les processus avec les modèles YOLO, réfère-toi à la page sur Inférence thread-safe.
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo-thread-safe-inference.md)
+
+[GLglenn-jocher10](https://github.com/glenn-jocher)[RIRizwanMunawar2](https://github.com/RizwanMunawar)
+
+Créé 12 nov. 2023Mis à jour il y a 2 semaines
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

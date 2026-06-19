@@ -1,0 +1,349 @@
+---
+source_url: https://docs.ultralytics.com/ja/guides/isolating-segmentation-objects
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/isolating-segmentation-objects.md)
+
+# Link to this sectionセグメンテーションオブジェクトの分離#
+
+[セグメントタスク](/ja/tasks/segment)を実行した後、推論結果から分離されたオブジェクトを抽出したい場合があります。このガイドでは、Ultralytics [予測モード](/ja/modes/predict)を使用してこれを実現するための汎用的なレシピを提供します。
+
+  
+
+
+  
+**Watch:** How to Remove Background and Isolate Objects with Ultralytics YOLO Segmentation & OpenCV in Python 🚀 
+
+## Link to this sectionレシピのウォークスルー#
+
+  1. 必要なライブラリのインストールに関する簡単な手順については、[Ultralytics クイックスタートインストールセクション](/ja/quickstart)を参照してください。
+
+* * *
+
+  2. モデルをロードし、ソースに対して `predict()` メソッドを実行します。
+         
+         from ultralytics import YOLO
+         
+         # Load a model
+         model = YOLO("yolo26n-seg.pt")
+         
+         # Run inference
+         results = model.predict()
+
+
+
+
+予測引数がない場合
+
+ソースを指定しない場合、ライブラリのサンプル画像が使用されます：
+    
+    
+    'ultralytics/assets/bus.jpg'
+    'ultralytics/assets/zidane.jpg'
+
+これは `predict()` メソッドを用いた迅速なテストに役立ちます。
+
+セグメンテーションモデルの詳細については、[セグメントタスク](/ja/tasks/segment#models)ページをご覧ください。`predict()` メソッドの詳細については、ドキュメントの [予測モード](/ja/modes/predict)セクションを参照してください。
+
+`*** `
+
+次に、結果と輪郭を反復処理します。画像をファイルに保存するワークフローの場合、後で使用するためにソース画像の `base-name` と検出された `class-label` を取得します（オプション）。
+    
+    
+    ```{ .py .annotate }
+    from pathlib import Path
+    
+    import numpy as np
+    
+    # (2) Iterate detection results (helpful for multiple images)
+    for r in results:
+        img = np.copy(r.orig_img)
+        img_name = Path(r.path).stem  # source image base-name
+    
+        # Iterate each object contour (multiple detections)
+        for ci, c in enumerate(r):
+            # (1) Get detection class name
+            label = c.names[c.boxes.cls.tolist().pop()]
+    ```
+    
+    1. To learn more about working with detection results, see [Boxes Section for Predict Mode](../modes/predict.md#boxes).
+    2. To learn more about `predict()` results see [Working with Results for Predict Mode](../modes/predict.md#working-with-results)
+
+Forループ
+
+単一の画像の場合、最初のループは1回だけ反復されます。検出が1つしかない単一画像の場合、各ループは _1回だけ_ 反復されます。
+
+* * *
+
+  4. ソース画像からバイナリマスクを生成し、そのマスク上に塗りつぶされた輪郭を描画することから始めます。これにより、画像内の他の部分からオブジェクトを分離できます。`bus.jpg` で検出された `person` クラスオブジェクトの1つの例を右側に示します。
+
+![Binary Mask Image](https://github.com/ultralytics/ultralytics/assets/62214284/59bce684-fdda-4b17-8104-0b4b51149aca){ width="240", align="right" }
+         
+         import cv2
+         
+         # Create binary mask
+         b_mask = np.zeros(img.shape[:2], np.uint8)
+         
+         # (1) Extract contour result
+         contour = c.masks.xy.pop()
+         # (2) Changing the type
+         contour = contour.astype(np.int32)
+         # (3) Reshaping
+         contour = contour.reshape(-1, 1, 2)
+         
+         # Draw contour onto mask
+         _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+
+     1. `c.masks.xy` の詳細については、[予測モードのマスクセクション](/ja/modes/predict#masks)を参照してください。
+
+     2. Here the values are cast into `np.int32` for compatibility with `drawContours()` function from [OpenCV](https://www.ultralytics.com/glossary/opencv).
+
+     3. OpenCV の `drawContours()` 関数は、輪郭の形状が `[N, 1, 2]` であることを期待します。詳細については、以下のセクションを展開してください。
+
+Expand to understand what is happening when defining the `contour` variable.
+
+\- `c.masks.xy` :: Provides the coordinates of the mask contour points in the format `(x, y)`. For more details, refer to the [Masks Section from Predict Mode](../modes/predict.md#masks). \- `.pop()` :: As `masks.xy` is a list containing a single element, this element is extracted using the `pop()` method. \- `.astype(np.int32)` :: Using `masks.xy` will return with a data type of `float32`, but this won't be compatible with the OpenCV `drawContours()` function, so this will change the data type to `int32` for compatibility. \- `.reshape(-1, 1, 2)` :: Reformats the data into the required shape of `[N, 1, 2]` where `N` is the number of contour points, with each point represented by a single entry `1`, and the entry is composed of `2` values. The `-1` denotes that the number of values along this dimension is flexible. 
+
+Expand for an explanation of the `drawContours()` configuration.
+
+\- Encapsulating the `contour` variable within square brackets, `[contour]`, was found to effectively generate the desired contour mask during testing. \- The value `-1` specified for the `drawContours()` parameter instructs the function to draw all contours present in the image. \- The `tuple` `(255, 255, 255)` represents the color white, which is the desired color for drawing the contour in this binary mask. \- The addition of `cv2.FILLED` will color all pixels enclosed by the contour boundary the same, in this case, all enclosed pixels will be white. \- See [OpenCV Documentation on `drawContours()`](https://docs.opencv.org/4.8.0/d6/d6e/group__imgproc__draw.html#ga746c0625f1781f1ffc9056259103edbc) for more information. 
+
+* * *
+
+  5. 次に、この時点から画像をどのように扱うかについて2つの選択肢があり、それぞれにその後のオプションがあります。
+
+### Link to this sectionオブジェクト分離オプション#
+
+
+
+
+例
+    
+    
+    # Create 3-channel mask
+    mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+    
+    # Isolate object with binary mask
+    isolated = cv2.bitwise_and(mask3ch, img)
+
+これはどのように機能しますか？
+
+  * まず、バイナリマスクをシングルチャネル画像から3チャネル画像に変換します。この変換は、その後のステップでマスクと元の画像を結合するために必要です。ブレンド操作と互換性を持たせるには、両方の画像のチャネル数が同じである必要があります。
+
+  * The original image and the three-channel binary mask are merged using the OpenCV function `bitwise_and()`. This operation retains _only_ pixel values that are greater than zero `(> 0)` from both images. Since the mask pixels are greater than zero `(> 0)` _only_ within the contour region, the pixels remaining from the original image are those that overlap with the contour.
+
+
+
+
+### Link to this section黒いピクセルによる分離：サブオプション#
+
+フルサイズの画像
+
+フルサイズの画像を保持する場合、追加のステップは不要です。
+
+![Example Full size Isolated Object Image Black Background](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/full-size-isolated-object-black-background.avif){ width=240 } Example full-size output
+
+クロップされたオブジェクト画像
+
+オブジェクト領域のみを含むように画像をクロップするには、追加のステップが必要です。
+
+![Example Crop Isolated Object Image Black Background](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/example-crop-isolated-object-image-black-background.avif){ align="right" }
+    
+    
+    # (1) Bounding box coordinates
+    x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+    # Crop image to object region
+    iso_crop = isolated[y1:y2, x1:x2]
+
+  1. [バウンディングボックス](https://www.ultralytics.com/glossary/bounding-box)の結果に関する詳細については、[予測モードのボックスセクション](/ja/modes/predict#boxes)を参照してください。
+
+このコードは何をしますか？
+
+  * `c.boxes.xyxy.cpu().numpy()` の呼び出しにより、バウンディングボックスが `xyxy` 形式の NumPy 配列として取得されます。ここで `xmin`、`ymin`、`xmax`、`ymax` はバウンディングボックス矩形の座標を表します。詳細については、[予測モードのボックスセクション](/ja/modes/predict#boxes)を参照してください。
+
+  * `squeeze()` 操作は、NumPy 配列から不要な次元を削除し、期待される形状であることを保証します。
+
+  * `.astype(np.int32)` を使用して座標値を変換すると、ボックス座標のデータ型が `float32` から `int32` に変更され、インデックススライスを使用した画像クロップとの互換性が確保されます。
+
+  * 最後に、インデックススライスを使用してバウンディングボックス領域を画像からクロップします。境界は検出バウンディングボックスの `[ymin:ymax, xmin:xmax]` 座標によって定義されます。
+
+
+
+
+背景を**含めた**状態でクロップしたオブジェクトが必要な場合はどうすればよいですか？
+
+This is a built-in feature for the Ultralytics library. See the `save_crop` argument for [Predict Mode Inference Arguments](/ja/modes/predict#inference-arguments) for details.
+
+* * *
+
+  6. _次に何をするかは、完全に開発者であるあなたに委ねられています。_ 可能な次のステップ（将来の使用のために画像をファイルに保存する）の基本的な例を示します。 
+     * **注意:** このステップはオプションであり、特定のユースケースで不要な場合はスキップできます。
+
+最終ステップの例
+    
+    
+    # Save isolated object to file
+    _ = cv2.imwrite(f"{img_name}_{label}-{ci}.png", iso_crop)
+
+  * この例では、`img_name` はソース画像ファイルのベース名、`label` は検出されたクラス名、`ci` は [オブジェクト検出](https://www.ultralytics.com/glossary/object-detection)のインデックス（同じクラス名のインスタンスが複数ある場合）です。
+
+
+
+## Link to this section完全なサンプルコード#
+
+ここでは、前述のセクションのすべての手順が1つのコードブロックにまとめられています。繰り返し使用する場合は、`for` ループに含まれるコマンドの一部またはすべてを実行する関数を定義するのが最適ですが、それは読者の練習に委ねられています。
+    
+    
+    from pathlib import Path
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    m = YOLO("yolo26n-seg.pt")  # (4)!
+    res = m.predict(source="path/to/image.jpg")  # (3)!
+    
+    # Iterate detection results (5)
+    for r in res:
+        img = np.copy(r.orig_img)
+        img_name = Path(r.path).stem
+    
+        # Iterate each object contour (6)
+        for ci, c in enumerate(r):
+            label = c.names[c.boxes.cls.tolist().pop()]
+    
+            b_mask = np.zeros(img.shape[:2], np.uint8)
+    
+            # Create contour mask (1)
+            contour = c.masks.xy.pop().astype(np.int32).reshape(-1, 1, 2)
+            _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+    
+            # Choose one:
+    
+            # OPTION-1: Isolate object with black background
+            mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+            isolated = cv2.bitwise_and(mask3ch, img)
+    
+            # OPTION-2: Isolate object with transparent background (when saved as PNG)
+            isolated = np.dstack([img, b_mask])
+    
+            # OPTIONAL: detection crop (from either OPT1 or OPT2)
+            x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+            iso_crop = isolated[y1:y2, x1:x2]
+    
+            # Add your custom post-processing here (2)
+
+  1. `contour` を設定する行は、ここでは単一の行にまとめられています。前述の説明では複数の行に分割されていました。
+  2. {==ここに入れる内容はあなた次第です!==}
+  3. 詳細については、[予測モード](/ja/modes/predict)を参照してください。
+  4. 詳細については、[セグメントタスク](/ja/tasks/segment#models)を参照してください。
+  5. [結果の操作](/ja/modes/predict#working-with-results)について詳しく学びましょう
+  6. [セグメンテーションマスクの結果](/ja/modes/predict#masks)について詳しく学びましょう
+
+
+
+## Link to this sectionFAQ#
+
+### Link to this sectionセグメンテーションタスクのために Ultralytics YOLO26 を使用してオブジェクトを分離するにはどうすればよいですか？#
+
+Ultralytics YOLO26 を使用してオブジェクトを分離するには、以下の手順に従ってください：
+
+  1. **モデルをロードして推論を実行する：**
+         
+         from ultralytics import YOLO
+         
+         model = YOLO("yolo26n-seg.pt")
+         results = model.predict(source="path/to/your/image.jpg")
+
+  2. **バイナリマスクを生成し、輪郭を描画する：**
+         
+         import cv2
+         import numpy as np
+         
+         img = np.copy(results[0].orig_img)
+         b_mask = np.zeros(img.shape[:2], np.uint8)
+         contour = results[0].masks.xy[0].astype(np.int32).reshape(-1, 1, 2)
+         cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+
+  3. **バイナリマスクを使用してオブジェクトを分離する：**
+         
+         mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+         isolated = cv2.bitwise_and(mask3ch, img)
+
+
+
+
+詳細については、[予測モード](/ja/modes/predict)および [セグメントタスク](/ja/tasks/segment)のガイドを参照してください。
+
+### Link to this sectionセグメンテーション後に分離されたオブジェクトを保存するために利用可能なオプションは何ですか？#
+
+Ultralytics YOLO26 は、分離されたオブジェクトを保存するために主に2つのオプションを提供します：
+
+  1. **黒い背景を使用する場合：**
+         
+         mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+         isolated = cv2.bitwise_and(mask3ch, img)
+
+  2. **透明な背景を使用する場合：**
+         
+         isolated = np.dstack([img, b_mask])
+
+
+
+
+詳細については、[予測モード](/ja/modes/predict)セクションを参照してください。
+
+### Link to this sectionUltralytics YOLO26 を使用して、分離されたオブジェクトをバウンディングボックスに合わせてクロップするにはどうすればよいですか？#
+
+分離されたオブジェクトをバウンディングボックスに合わせてクロップするには：
+
+  1. **バウンディングボックスの座標を取得する：**
+         
+         x1, y1, x2, y2 = results[0].boxes.xyxy[0].cpu().numpy().astype(np.int32)
+
+  2. **分離された画像をクロップする：**
+         
+         iso_crop = isolated[y1:y2, x1:x2]
+
+
+
+
+バウンディングボックスの結果に関する詳細は、[予測モード](/ja/modes/predict#boxes)のドキュメントを参照してください。
+
+### Link to this sectionセグメンテーションタスクにおけるオブジェクト分離に Ultralytics YOLO26 を使用すべき理由は何ですか？#
+
+Ultralytics YOLO26 は以下を提供します：
+
+  * **高速** なリアルタイムオブジェクト検出およびセグメンテーション。
+  * 正確なオブジェクト分離のための**高精度なバウンディングボックスおよびマスク生成** 。
+  * 効率的な開発のための**包括的なドキュメント** と使いやすい API。
+
+
+
+[セグメントタスクのドキュメント](/ja/tasks/segment)で、YOLO を使用するメリットを探ってください。
+
+### Link to this sectionUltralytics YOLO26 を使用して、背景を含めた状態で分離されたオブジェクトを保存することはできますか？#
+
+Yes, this is a built-in feature in Ultralytics YOLO26. Use the `save_crop` argument in the `predict()` method. For example:
+    
+    
+    results = model.predict(source="path/to/your/image.jpg", save_crop=True)
+
+`save_crop` 引数の詳細については、[予測モードの推論引数](/ja/modes/predict#inference-arguments)セクションを参照してください。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/isolating-segmentation-objects.md)
+
+[GLglenn-jocher16](https://github.com/glenn-jocher)[RIRizwanMunawar6](https://github.com/RizwanMunawar)[JKjk4e2](https://github.com/jk4e)[PDpderrenger1](https://github.com/pderrenger)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[IVIvorZhu3311](https://github.com/IvorZhu331)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+作成日 2023年11月27日更新日 4 か月前
+
+## コメント
+
+このページの内容
+
+AIで探索

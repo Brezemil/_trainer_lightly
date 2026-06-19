@@ -1,0 +1,745 @@
+---
+source_url: https://docs.ultralytics.com/ja/modes/track
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/track.md)
+
+# Link to this sectionUltralytics YOLOによるマルチオブジェクトトラッキング#
+
+![YOLO multi-object tracking with trajectory paths](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/multi-object-tracking-examples.avif)
+
+ビデオ解析におけるオブジェクトトラッキングは、フレーム内のオブジェクトの位置とクラスを識別するだけでなく、ビデオの進行に合わせて検出された各オブジェクトの固有IDを維持する重要なタスクです。その応用範囲は、監視やセキュリティからリアルタイムのスポーツ解析まで無限に広がっています。
+
+## Link to this sectionなぜオブジェクトトラッキングにUltralytics YOLOを選ぶのか？#
+
+Ultralyticsのトラッカーによる出力は、標準的な[オブジェクト検出](https://www.ultralytics.com/glossary/object-detection)と一貫していますが、オブジェクトIDという付加価値があります。これにより、ビデオストリーム内のオブジェクトを簡単に追跡し、その後の解析を行うことができます。Ultralytics YOLOをオブジェクトトラッキングのニーズに検討すべき理由は以下の通りです。
+
+  * **効率性:** [精度](https://www.ultralytics.com/glossary/accuracy)を損なうことなく、リアルタイムでビデオストリームを処理します。
+  * **柔軟性:** 複数のトラッキングアルゴリズムと構成をサポートしています。
+  * **使いやすさ:** シンプルなPython APIとCLIオプションにより、迅速な統合とデプロイが可能です。
+  * **カスタマイズ性:** カスタム学習させたYOLOモデルで簡単に使用でき、ドメイン固有のアプリケーションへの統合が可能です。
+
+
+
+  
+
+
+  
+**Watch:** How to Run Multi-Object Tracking with Ultralytics YOLO26 | BoT-SORT & ByteTrack | VisionAI 🚀 
+
+## Link to this section実世界での応用#
+
+交通| 小売| 水産養殖  
+---|---|---  
+![車両トラッキング](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/vehicle-tracking.avif)| ![人物トラッキング](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/people-tracking.avif)| ![魚類トラッキング](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/fish-tracking.avif)  
+車両トラッキング| 人物トラッキング| 魚類トラッキング  
+  
+## Link to this sectionクイックスタート#
+
+デフォルトのBoT-SORTトラッカーを使用してビデオでトラッキングを実行します。`tracker`引数を変更することで、別のトラッカーに切り替えることができます。
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Default tracker (BoT-SORT)
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", show=True)
+    
+    # Switch to ByteTrack
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", show=True, tracker="bytetrack.yaml")
+
+ビデオストリームでトラッカーを実行するには、学習済みのDetect、Segment、Pose、またはOBBモデル（YOLO26n、YOLO26n-seg、YOLO26n-pose、YOLO26n-obbなど）を使用します。カスタムモデルは、ローカル環境または[Ultralytics Platform](https://platform.ultralytics.com)を介したクラウドGPU上で学習できます。
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load an official or custom model
+    model = YOLO("yolo26n.pt")  # Load an official Detect model
+    model = YOLO("yolo26n-seg.pt")  # Load an official Segment model
+    model = YOLO("yolo26n-pose.pt")  # Load an official Pose model
+    model = YOLO("path/to/best.pt")  # Load a custom-trained model
+    
+    # Perform tracking with the model
+    results = model.track("https://youtu.be/LNwODJXcvt4", show=True)  # Tracking with default tracker
+    results = model.track("https://youtu.be/LNwODJXcvt4", show=True, tracker="bytetrack.yaml")  # with ByteTrack
+
+上記の使用例からわかるように、トラッキングはビデオやストリーミングソースで実行されるすべてのDetect、Segment、およびPoseモデルで利用可能です。
+
+## Link to this sectionサポートされているトラッカー#
+
+Ultralytics YOLOには6つの組み込みトラッカーが付属しています。`tracker`引数にそのYAML設定ファイルを渡すことで、いずれかを有効にできます。
+
+トラッカー| 設定ファイル| モーションモデル| 外観 / ReID| カメラモーション補正| オクルージョン処理  
+---|---|---|---|---|---  
+**BoT-SORT**| `botsort.yaml`| 線形カルマン| オプション (`with_reid`)| あり (sparseOptFlow / ECC)| トラックバッファ + ReID再バインド  
+**ByteTrack**| `bytetrack.yaml`| 線形カルマン| なし| いいえ| 2段階の低信頼度救済  
+**OC-SORT**| `ocsort.yaml`| 観測中心カルマン| なし| いいえ| ORU、OCM、OCRの最終観測からの再更新  
+**Deep OC-SORT**| `deepocsort.yaml`| 観測中心カルマン| オプション (`with_reid`)| オプション (`gmc_method`)| OC-SORT + 適応的外観EMA  
+**FastTracker**| `fasttrack.yaml`| 線形カルマン + ロールバック| なし| いいえ| カルマンロールバック + オクルージョン時のbbox拡大  
+**TrackTrack**| `tracktrack.yaml`| 線形カルマン (NSA)| オプション (HMIoUフォールバック)| あり (sparseOptFlow / ECC)| 反復的なマルチキュー関連付け + TAI  
+  
+### Link to this sectionどのトラッカーを使うべきか？#
+
+このフローを使用して出発点を選択してください：
+
+  1. **最速かつ最もシンプルなベースラインが必要ですか？** → **ByteTrack** (ReIDなし、カメラモーション補正なし、最小限のオーバーヘッド)。
+  2. **ハンドヘルド、ドローン、またはカメラが動く映像ですか？** → **BoT-SORT** (デフォルト。カメラモーション補正とオプションのReIDを追加)。
+  3. **非線形運動 (スポーツ、ダンス、急な方向転換) で、ReIDが不要ですか？** → **OC-SORT** (外観コストなしの観測中心の補正)。
+  4. **ID交換が主な問題となる混雑した移動カメラのシーンですか？** → **Deep OC-SORT** または **TrackTrack** (両者とも適応的外観融合を追加。TrackTrackはさらにマルチキュー関連付けと重複ID抑制を追加)。
+  5. **リアルタイムで頻繁に部分的な重なりが発生し、ReIDの予算がありませんか？** → **FastTracker** (カルマンロールバックを備えたオクルージョン対応のByteTrackバリアント)。
+
+
+
+## Link to this sectionトラッカーの切り替え#
+
+トラッカー設定ファイル名を `tracker=` に渡します。他のすべてのコードはそのままです。
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    results = model.track(source="path/to/video.mp4", tracker="bytetrack.yaml")
+    results = model.track(source="path/to/video.mp4", tracker="ocsort.yaml")
+    results = model.track(source="path/to/video.mp4", tracker="tracktrack.yaml")
+
+## Link to this section設定#
+
+### Link to this sectionトラッキングの引数#
+
+トラッキングの設定は、`conf`、`iou`、`show` などのPredictモードとプロパティを共有します。詳細な設定については、[Predict](/ja/modes/predict#inference-arguments)モデルページを参照してください。
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    # Configure the tracking parameters and run the tracker
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", conf=0.1, iou=0.7, show=True)
+
+### Link to this sectionカスタムトラッカー設定#
+
+Ultralytics also allows you to use a modified tracker configuration file. To do this, simply make a copy of a tracker config file (for example, `custom_tracker.yaml`) from [ultralytics/cfg/trackers](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers) and modify any configurations (except the `tracker_type`) as per your needs.
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the model and run the tracker with a custom configuration file
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", tracker="custom_tracker.yaml")
+
+### Link to this section共有トラッカー引数#
+
+以下のパラメータはほとんどのトラッカーYAMLファイルで共通です。すべての設定にすべてのパラメータが存在するわけではありません。
+
+トラッカーの閾値情報
+
+検出の信頼度スコアが `track_high_thresh` を下回った場合、トラッカーはそのオブジェクトを更新せず、アクティブなトラックは存在しません。
+
+パラメータ| 有効な値または範囲| 説明  
+---|---|---  
+`tracker_type`| `botsort`, `bytetrack`, `ocsort`, `deepocsort`, `fasttrack`, `tracktrack`| トラッカーのタイプを指定します。  
+`track_high_thresh`| `0.0-1.0`| 最初の関連付けのための閾値。検出が既存のトラックにどれだけ自信を持って一致するかを決定します。  
+`track_low_thresh`| `0.0-1.0`| 低信頼度検出に対する2回目の関連付けのための閾値。OC-SORTおよびDeep OC-SORTでは、`use_byte: True` の場合にのみ適用されます。  
+`new_track_thresh`| `0.0-1.0`| 検出が既存のトラックと一致しない場合に新しいトラックを初期化するための閾値。  
+`track_buffer`| `>=0`| 失われたトラックが削除される前に維持されるフレーム数。高い値はオクルージョンに対する許容度が高いことを意味します。  
+`match_thresh`| `0.0-1.0`| トラックを一致させるための閾値。高い値ほど、一致の条件が緩くなります。  
+`fuse_score`| `True`, `False`| 一致させる前に信頼度スコアとIoU距離を融合させるかどうか。  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| グローバルモーション補正メソッド。カメラの動きを考慮するのに役立ちます。  
+`proximity_thresh`| `0.0-1.0`| 有効なReID一致に必要な最小IoU。外観の手がかりを使用する前に空間的な近接性を確保します。  
+`appearance_thresh`| `0.0-1.0`| ReIDに必要な最小の外観類似度。  
+`with_reid`| `True`, `False`| オクルージョン全体でのトラッキングを向上させるため、外観ベースの照合を有効にします。BoT-SORT、Deep OC-SORT、およびTrackTrackでサポートされています。  
+`model`| `auto` またはエクスポートされたファイルへのパス| ReIDモデル。`auto`は利用可能な場合ネイティブのYOLOバックボーン機能を使用し、そうでない場合は `yolo26n-cls.pt` にフォールバックします。カスタムエンコーダーの場合は `.torchscript`、`.onnx`、`.engine`、`.openvino` などのファイルを渡してください。  
+  
+#### Link to this sectionトラッカー固有の引数#
+
+各アルゴリズムは、共有パラメータに加えて追加の調整項目を提供します。説明や調整のアドバイスについては、以下の各トラッカーのセクション、または直接コンフィグファイルを参照してください。
+
+  * [`botsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/botsort.yaml)
+  * [`bytetrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/bytetrack.yaml)
+  * [`ocsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/ocsort.yaml)
+  * [`deepocsort.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/deepocsort.yaml)
+  * [`fasttrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/fasttrack.yaml)
+  * [`tracktrack.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/trackers/tracktrack.yaml)
+
+
+
+### Link to this section再識別（ReID）の有効化#
+
+オーバーヘッドを最小限に抑えるため、ReIDはデフォルトで無効になっています。トラッカーのコンフィグファイルで `with_reid: True` を設定することで有効化できます。
+
+**ReIDモデルのオプション：**
+
+  * **`model: auto`** — ネイティブなYOLO検出器の機能をそのまま利用し、オーバーヘッドを最小限に抑えます。パフォーマンスを大幅に低下させずに一定のReIDが必要な場合に最適です。検出器が互換性のある機能を提供しない場合は、`yolo26n-cls.pt` にフォールバックします。
+  * **エクスポート済みReIDモデル** — より識別精度の高い埋め込み表現を得るには、`model:` にエクスポート済みファイル（`.torchscript`, `.onnx`, `.engine`, `.openvino` など）を指定します。これにはクロップごとに1回の追加推論パスが必要となります。エンコーダーは `AutoBackend` を介して読み込まれるため、Ultralyticsがサポートするエクスポート形式であれば、コードを変更することなくそのまま動作します。
+
+
+
+すぐに使用可能なONNXエンコーダーが、すべてのモデルサイズ向けに公開されています。`model:`にこれらの名前のいずれかを設定すると、トラッカーの初回実行時にファイルが自動的にダウンロードされます（YOLOの重みが取得されるのと同じ仕組みです）。手動でのエクスポートやダウンロード手順は不要です。
+    
+    
+    # In your tracker config (e.g. tracktrack.yaml)
+    with_reid: True
+    model: yolo26n-reid.onnx # downloaded on first use; swap n→s/m/l/x for a larger encoder
+
+モデル| サイズ  
+(ピクセル)| パラメータ  
+(M)| FLOPs  
+(B)  
+---|---|---|---  
+[YOLO26n-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-reid.onnx)| 448| 2.8| 2.0  
+[YOLO26s-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-reid.onnx)| 448| 7.5| 6.6  
+[YOLO26m-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m-reid.onnx)| 448| 12.4| 20.1  
+[YOLO26l-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l-reid.onnx)| 448| 15.3| 25.2  
+[YOLO26x-reid.onnx](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-reid.onnx)| 448| 32.7| 55.9  
+  
+ReIDはトラッキング専用です
+
+現在、トラッカーのアピアランスブランチ用のONNX ReIDエンコーダーのみが利用可能です。ReIDの`train`、`val`、`predict`モード、および専用のReIDエクスポートレシピは現在開発中です。
+
+別の分類モデルを使用してパフォーマンスを向上させるには、TensorRTなどのより高速なバックエンドにエクスポートしてください：
+
+ReIDモデルのTensorRTへのエクスポート
+    
+    
+    from torch import nn
+    
+    from ultralytics import YOLO
+    
+    # Load the classification model
+    model = YOLO("yolo26n-cls.pt")
+    
+    # Add average pooling layer
+    head = model.model.model[-1]
+    pool = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(start_dim=1))
+    pool.f, pool.i = head.f, head.i
+    model.model.model[-1] = pool
+    
+    # Export to TensorRT
+    model.export(format="engine", half=True, dynamic=True, batch=32)
+
+エクスポートが完了したら、トラッカーのコンフィグ内でTensorRTモデルのパスを指定します。
+
+## Link to this sectionトラッカーの詳細#
+
+各トラッカーの設計、固有のパラメータ、チューニングのヒントについては、以下のセクションを展開してください。
+
+#### Link to this sectionBoT-SORT#
+
+[BoT-SORT](https://github.com/NirAharon/BoT-SORT) (Aharon et al., 2022) は標準のトラッカーです。ByteTrackをベースに、カメラの動き補正とオプションのReIDを追加しています：
+
+  * **カメラ動き補正 (CMC):** フレームごとに推定されたアフィン変換（デフォルトはスパースオプティカルフロー。ORB / ECCも利用可能）が、IoUマッチングの前にKalman状態に適用されます。
+  * **オプションのReID:** 外観の埋め込み情報をコスト行列に融合させることができます。デフォルトは無効です。`with_reid: True` で有効にしてください。
+
+
+
+**推奨用途:** 汎用的なトラッキング。特にカメラが移動する場合。見た目が似ている群衆によってIDの入れ替わりが発生する場合にのみ、ReIDを追加してください。
+
+**BoT-SORT固有の引数：**
+
+パラメータ| 有効な値または範囲| 説明  
+---|---|---  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| カメラ動き補正のバックエンド。デフォルトは `sparseOptFlow` です。`none` でCMCを無効にします。  
+`with_reid`| `True`, `False`| 外観ベースのマッチングを有効にします。デフォルトはオフです。  
+`model`| `auto` またはReIDモデルへのパス| ReIDモデル。`auto` は利用可能な場合にネイティブなYOLOの機能を使用します。それ以外の場合は `.torchscript` / `.onnx` / `.engine` へのパスを渡してください。  
+`proximity_thresh`| `0.0-1.0`| 外観特徴量を考慮する前の最小IoUしきい値。  
+`appearance_thresh`| `0.0-1.0`| ReIDマッチングに必要な最小のコサイン類似度。IDの入れ替わりを減らすには値を上げてください。  
+  
+**チューニングのヒント：**
+
+  * **静止カメラ:** `gmc_method: none` に設定すると、フレームあたり数msの節約になります。
+  * **激しいカメラの動き:** `sparseOptFlow` を維持してください。`ecc` はより高精度ですが、速度は低下します。
+  * **見た目が似ている群衆:** `with_reid: True` をオンにし、`appearance_thresh` を上げてください（例: `0.85+`）。
+
+
+
+#### Link to this sectionByteTrack#
+
+[ByteTrack](https://github.com/FoundationVision/ByteTrack) (Zhang et al., ECCV 2022) は軽量なベースラインです。線形Kalman + IoUを使用し、2段階のアソシエーションを行います：
+
+  * **ステージ1:** 高スコアの検出結果とアクティブなトラックをマッチングします。
+  * **ステージ2:** マッチしなかったトラックに対し、低スコアの検出結果で再試行し、一時的な部分オクルージョンからの回復を図ります。
+
+
+
+外観モデルやカメラ動き補正はありません。
+
+**推奨用途:** 静止カメラまたはほぼ静止しているカメラ。検出器の負荷が支配的で、トラッカーのオーバーヘッドを最小限に抑えたい場合。
+
+**ByteTrack固有の引数:** 共有トラッカー引数以外に特にありません。
+
+**チューニングのヒント：**
+
+  * **ノイズの多い検出器:** `track_low_thresh` を下げると、第2ステージの候補が増えます。
+  * **高リコール検出器:** `track_high_thresh` を上げると、IDの断片化が減少します。
+  * **頻繁なIDフリッカー:** `track_buffer` を上げると、短時間見失ったトラックが維持されやすくなります。
+
+
+
+#### Link to this sectionOC-SORT#
+
+[OC-SORT](https://arxiv.org/abs/2203.14360) (Cao et al., CVPR 2023) は、SORTを「観測中心（Observation-Centric）」に拡張したものです。SORTの軽量な設計（外観特徴量なし）を維持しつつ、3つの補正機能を加えています：
+
+  * **観測中心型再更新 (ORU):** 前回の観測と現在の検出結果の間に仮想的な軌跡を再計算し、Kalman更新をやり直すことで、ドリフトした速度を修正します。
+  * **観測中心型モメンタム (OCM):** 速度の一貫性項を用いて、誤った方向に移動する検出結果をペナルティ化します。
+  * **観測中心型回復 (OCR):** マッチしなかった検出結果に対し、予測状態ではなく前回の観測値を使用して、最近失われたトラックとの再照合を行います。
+
+
+
+**推奨用途:** ReIDモデルの計算コストをかけずに非線形な動きを追跡したい場合。
+
+**OC-SORT固有の引数：**
+
+パラメータ| 有効な値または範囲| 説明  
+---|---|---  
+`delta_t`| `>=1`| OCMにおける速度方向計算の時間窓（フレーム数）。値を大きくすると平滑化されます。  
+`inertia`| `0.0-1.0`| 速度の一貫性コストの重み。値を大きくすると、急激な方向転換がより強くペナルティ化されます。  
+`use_byte`| `True`, `False`| 低信頼度の検出結果に対し、ByteTrack形式の第2アソシエーションパスを有効にします。  
+  
+**チューニングのヒント：**
+
+  * **非線形な動き:** `inertia` を上げてください（例: `0.3-0.4`）。
+  * **スパースな検出結果:** `use_byte: True` を有効にしてください。
+  * **長いオクルージョン:** `track_buffer` を上げると、OCRが再結合のために保持する失われたトラックの数が増えます。
+
+
+
+#### Link to this sectionDeep OC-SORT#
+
+[Deep OC-SORT](https://arxiv.org/abs/2302.11813) はOC-SORTに外観情報とカメラ動き補正を追加したものです：
+
+  * **適応型外観融合:** 検出結果の埋め込みが、検出の信頼度と重複度によって重みが変調されたコスト行列に融合されます。
+  * **動的外観EMA:** トラックの埋め込みがEMAで更新され、その平滑化係数は検出信頼度に応じて適応的に変化します。
+  * **カメラ動き補正:** Kalman状態がスパースオプティカルフロー、ORB、またはECCを介してフレーム間でワープされます。
+
+
+
+**推奨用途:** 群衆や移動カメラのシーンなど、視覚的には異なるが空間的に近い物体間でIDの入れ替わりが頻発する場合。
+
+**Deep OC-SORT固有の引数：**
+
+パラメータ| 有効な値または範囲| 説明  
+---|---|---  
+`with_reid`| `True`, `False`| 外観ベースのマッチングを有効にします。デフォルトはオフです。  
+`model`| `auto`、エクスポート済みReIDモデルファイル| ReIDモデル。`auto` はネイティブなYOLOの機能を再利用します。それ以外の場合はエクスポート済みファイル（`.torchscript`, `.onnx`, `.engine`, …）を渡してください。  
+`proximity_thresh`| `0.0-1.0`| 外観特徴量を考慮する前の最小IoUしきい値。  
+`appearance_thresh`| `0.0-1.0`| ReIDマッチングに必要な最小のコサイン類似度。  
+`alpha_fixed_emb`| `0.0-1.0`| トラック埋め込み更新のための基本EMA係数。値を大きくすると、古い埋め込みがより長く保持されます。  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| グローバルな動き補正手法。  
+`delta_t`| `>=1`| OCMにおける速度方向計算の時間窓（フレーム数）（OC-SORTから継承）。  
+`inertia`| `0.0-1.0`| 速度一貫性コストの重み（OC-SORTから継承）。  
+`use_byte`| `True`, `False`| 低信頼度検出結果に対するByteTrack形式の第2アソシエーションパスを有効にします（OC-SORTから継承）。  
+  
+**チューニングのヒント：**
+
+  * **群衆でのID入れ替わり:** `appearance_thresh` を上げ（例: `0.92-0.95`）、`alpha_fixed_emb` を下げると、埋め込みがよりゆっくりと適応するようになります。
+  * **移動カメラ:** `gmc_method: sparseOptFlow` に設定してください（Deep OC-SORTのデフォルトは `none` です）。
+  * **低遅延化:** 動きとCMCのみを行う場合は `with_reid: False` (デフォルト) を維持してください。IDの入れ替わりがエラーの主因となる場合にのみReIDを有効にします。
+
+
+
+#### Link to this sectionFastTracker#
+
+[FastTracker](https://arxiv.org/abs/2508.14370) は、外観モデルを持たないByteTrackのオクルージョン対応版です：
+
+  * **オクルージョン検出:** 他のアクティブなトラックによる被覆率が `occ_cover_thresh` を超えた場合、トラックをオクルージョン状態としてフラグを立てます。
+  * **オクルージョン時のKalmanロールバック:** リングバッファされた履歴を使用して、Kalman状態をオクルージョン発生前のフレームに戻します。
+  * **動きの減衰と探索範囲の拡大:** オクルージョン中は速度が減衰し、予測されたbboxが拡大されます。
+  * **Init-IoU抑制:** 新しいトラックがアクティブなトラックの上に発生することを防ぎます。
+
+
+
+**推奨用途:** リアルタイムの検出専用パイプラインで、ターゲット同士の重複が頻発する場合（群衆、行列、スポーツ）。
+
+**FastTracker固有の引数：**
+
+パラメータ| 有効な値または範囲| 説明  
+---|---|---  
+`reset_velocity_offset_occ`| `>=0`| オクルージョン発生時にKalman速度を復元するための履歴フレーム数。  
+`reset_pos_offset_occ`| `>=0`| オクルージョン発生時にKalman位置を復元するための履歴フレーム数。  
+`enlarge_bbox_occ`| `>=1.0`| オクルージョン中に予測bboxに適用される高さの倍率（幅はXYAHアスペクト比に従ってスケーリングされます）。  
+`dampen_motion_occ`| `0.0-1.0`| オクルージョン中の速度の倍率。値を小さくすると、オクルージョン中にトラックが「減速」するように見えます。  
+`active_occ_to_lost_thresh`| `>=1`| アクティブなトラックが失われた状態に移動されるまでの、連続するオクルージョンフレームの最大値。  
+`occ_cover_thresh`| `0.0-1.0`| オクルージョン（遮蔽）を判定するために、あるトラックの面積が他のアクティブなトラックによって覆われる割合。  
+`occ_reappear_window`| `>=0`| 最近オクルージョンが発生して見失ったトラックが、優先的に再検出可能となるフレーム数。  
+`init_iou_suppress`| `0.0-1.0`| アクティブなトラックとのIoUがこの値を超える場合、新しいトラックの初期化を抑制します。無効にするには `1.0` に設定してください。  
+  
+**チューニングのヒント：**
+
+  * **頻繁な部分的オクルージョン:** `occ_cover_thresh` を低くします（例: `0.5-0.6`）。
+  * **重複エリア周辺での重複ID:** `init_iou_suppress` を低くします（例: `0.5`）。
+  * **長時間にわたるオクルージョン:** `occ_reappear_window` と `track_buffer` を両方とも引き上げます。
+  * **高速移動ターゲット:** `dampen_motion_occ` を引き上げ（`1.0` に近づける） `enlarge_bbox_occ` を下げます。
+
+
+
+#### Link to this sectionTrackTrack#
+
+[TrackTrack](https://openaccess.thecvf.com/content/CVPR2025/papers/Shim_Focusing_on_Tracks_for_Online_Multi-Object_Tracking_CVPR_2025_paper.pdf) (Shim et al., CVPR 2025) は、マルチキュー反復アソシエーションを用いて、各トラックの視点から推論を行います。
+
+  * **トラック視点ベースのアソシエーション (TPA):** HMIoU、コサインReID距離、信頼度投影距離、コーナー角度距離を組み合わせます。割り当ては緩和閾値を用いて反復的に解決されます。
+  * **トラック認識初期化 (TAI):** 新しいIDが作成される前に、重複する生成を抑制します。
+
+
+
+**用途:** 重複IDが問題となる、頻繁にオクルージョンが発生する混雑したシーンに最適です。
+
+**TrackTrack固有の引数:**
+
+パラメータ| 有効な値または範囲| 説明  
+---|---|---  
+`iou_weight`| `0.0-1.0`| マルチキューコスト行列におけるHMIoU距離の重み。  
+`reid_weight`| `0.0-1.0`| コサインReID距離の重み。ReIDが無効な場合はHMIoUにフォールバックします。  
+`conf_weight`| `0.0-1.0`| 信頼度投影距離の重み。  
+`angle_weight`| `0.0-1.0`| コーナー角度距離の重み。  
+`penalty_p`| `0.0-1.0`| 低信頼度検出に対するコストペナルティ。  
+`penalty_q`| `0.0-1.0`| 二次的なNMSによって回復された検出に対するコストペナルティ。  
+`reduce_step`| `0.0-1.0`| 反復ごとのマッチング閾値の緩和幅。  
+`tai_thr`| `0.0-1.0`| トラック認識初期化（TAI）NMSのIoU閾値。  
+`min_track_len`| `>=0`| 新しいトラックが確定されるまでに必要な最小の連続更新回数。  
+`lost_match_thr`| `0.0-1.0`| 緩和されたロストリバインドパスのためのより緩いコストゲート。`0` で無効化されます。  
+`with_reid`| `True`, `False`| コサインReIDの外観マッチングを有効にします（ネイティブのYOLO特徴を使用）。デフォルトではオフです。  
+`model`| `auto`、ReIDファイル| ReIDモデル。`auto` はネイティブのYOLO特徴を使用し、それ以外の場合はエクスポートされたReIDファイルを使用します。  
+`gmc_method`| `sparseOptFlow`, `orb`, `sift`, `ecc`, `none`| グローバルな動き補正手法。  
+  
+**チューニングのヒント：**
+
+  * **混雑した歩行者:** `tai_thr` を低くして（例: `0.45`）重複する生成をより多く抑制し、長時間のオクルージョンのために `track_buffer` を引き上げます。
+  * **カメラの高速移動:** `gmc_method: sparseOptFlow` を有効のままにします。
+  * **小型・高速オブジェクト:** `angle_weight` をわずかに上げ、`min_track_len` を下げます。
+  * **必要な時のみReIDを有効にする:** ReIDは推論コストを増加させます。短いオクルージョンの場合、デフォルトのマルチキューコストで通常は十分です。
+
+
+
+## Link to this sectionPythonの例#
+
+  
+
+
+  
+**Watch:** How to Build Interactive Object Tracking with Ultralytics YOLO | Click to Crop & Display ⚡ 
+
+### Link to this sectionトラックの永続化ループ#
+
+以下は、[OpenCV](https://www.ultralytics.com/glossary/opencv) (`cv2`) とYOLO26を使用してビデオフレーム上でオブジェクトトラッキングを実行するPythonスクリプトです。このスクリプトは、必要なパッケージ（`opencv-python` および `ultralytics`）がすでにインストールされていることを前提としています。`persist=True` 引数は、現在の画像またはフレームがシーケンスの次のものであり、前の画像のトラックが現在の画像にも存在することをトラッカーに伝えます。
+
+トラッキングを行うストリーミングforループ
+    
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Open the video file
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    
+    # Loop through the video frames
+    while cap.isOpened():
+        # Read a frame from the video
+        success, frame = cap.read()
+    
+        if success:
+            # Run YOLO26 tracking on the frame, persisting tracks between frames
+            results = model.track(frame, persist=True)
+    
+            # Visualize the results on the frame
+            annotated_frame = results[0].plot()
+    
+            # Display the annotated frame
+            cv2.imshow("YOLO26 Tracking", annotated_frame)
+    
+            # Break the loop if 'q' is pressed
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            # Break the loop if the end of the video is reached
+            break
+    
+    # Release the video capture object and close the display window
+    cap.release()
+    cv2.destroyAllWindows()
+
+`model(frame)` から `model.track(frame)` への変更に注意してください。これにより、単純な検出ではなくオブジェクトトラッキングが有効になります。この修正されたスクリプトは、ビデオの各フレームでトラッカーを実行し、結果を可視化してウィンドウに表示します。'q' を押すとループを終了できます。
+
+### Link to this section時間の経過に伴うトラックのプロット#
+
+連続するフレーム間でオブジェクトトラックを可視化することは、ビデオ内で検出されたオブジェクトの移動パターンや行動に関する貴重な洞察をもたらします。Ultralytics YOLO26を使用すれば、これらのトラックのプロットはシームレスかつ効率的なプロセスとなります。
+
+以下の例では、YOLO26のトラッキング機能を利用して、複数のビデオフレームにわたって検出されたオブジェクトの動きをプロットする方法を説明します。このスクリプトは、ビデオファイルを開き、フレームごとに読み取り、YOLOモデルを利用して様々なオブジェクトを識別・追跡するものです。検出されたバウンディングボックスの中心点を保持し、それらを接続することで、追跡対象のオブジェクトが辿った経路を示す線を引くことができます。
+
+複数のビデオフレームにわたるトラックのプロット
+    
+    
+    from collections import defaultdict
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    # Load the YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Open the video file
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    
+    # Store the track history
+    track_history = defaultdict(lambda: [])
+    
+    # Loop through the video frames
+    while cap.isOpened():
+        # Read a frame from the video
+        success, frame = cap.read()
+    
+        if success:
+            # Run YOLO26 tracking on the frame, persisting tracks between frames
+            result = model.track(frame, persist=True)[0]
+    
+            # Get the boxes and track IDs
+            if result.boxes and result.boxes.is_track:
+                boxes = result.boxes.xywh.cpu()
+                track_ids = result.boxes.id.int().cpu().tolist()
+    
+                # Visualize the result on the frame
+                frame = result.plot()
+    
+                # Plot the tracks
+                for box, track_id in zip(boxes, track_ids):
+                    x, y, w, h = box
+                    track = track_history[track_id]
+                    track.append((float(x), float(y)))  # x, y center point
+                    if len(track) > 30:  # retain 30 tracks for 30 frames
+                        track.pop(0)
+    
+                    # Draw the tracking lines
+                    points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                    cv2.polylines(frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+    
+            # Display the annotated frame
+            cv2.imshow("YOLO26 Tracking", frame)
+    
+            # Break the loop if 'q' is pressed
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            # Break the loop if the end of the video is reached
+            break
+    
+    # Release the video capture object and close the display window
+    cap.release()
+    cv2.destroyAllWindows()
+
+### Link to this sectionマルチスレッドトラッキング#
+
+マルチスレッドトラッキングは、複数のビデオストリーム上で同時にオブジェクトトラッキングを実行する機能を提供します。これは、複数の監視カメラからの入力など、複数のビデオ入力を扱う際に特に便利であり、並列処理によって効率とパフォーマンスを大幅に向上させることができます。
+
+提供されたPythonスクリプトでは、Pythonの `threading` モジュールを使用して、トラッカーの複数のインスタンスを同時に実行しています。各スレッドは1つのビデオファイルに対するトラッカーの実行を担当し、すべてのスレッドがバックグラウンドで同時に実行されます。
+
+各スレッドが正しいパラメータ（ビデオファイル、使用するモデル、ファイルインデックス）を確実に受け取れるように、これらのパラメータを受け取り、メインのトラッキングループを含む `run_tracker_in_thread` 関数を定義します。この関数はビデオをフレーム単位で読み取り、トラッカーを実行し、結果を表示します。
+
+この例では2つの異なるモデル（`yolo26n.pt` と `yolo26n-seg.pt`）を使用しており、それぞれが異なるビデオファイル内のオブジェクトを追跡します。ビデオファイルは `SOURCES` で指定されます。
+
+The `daemon=True` parameter in `threading.Thread` means that these threads will be closed as soon as the main program finishes. We then start the threads with `start()` and use `join()` to make the main thread wait until both tracker threads have finished.
+
+最後に、すべてのスレッドのタスクが完了したら、`cv2.destroyAllWindows()` を使用して結果を表示していたウィンドウを閉じます。
+
+マルチスレッドトラッキングの実装
+    
+    
+    import threading
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Define model names and video sources
+    MODEL_NAMES = ["yolo26n.pt", "yolo26n-seg.pt"]
+    SOURCES = ["path/to/video.mp4", "0"]  # local video, 0 for webcam
+    
+    def run_tracker_in_thread(model_name, filename):
+        """Run YOLO tracker in its own thread for concurrent processing.
+    
+        Args:
+            model_name (str): The YOLO26 model object.
+            filename (str): The path to the video file or the identifier for the webcam/external camera source.
+        """
+        model = YOLO(model_name)
+        results = model.track(filename, save=True, stream=True)
+        for r in results:
+            pass
+    
+    # Create and start tracker threads using a for loop
+    tracker_threads = []
+    for video_file, model_name in zip(SOURCES, MODEL_NAMES):
+        thread = threading.Thread(target=run_tracker_in_thread, args=(model_name, video_file), daemon=True)
+        tracker_threads.append(thread)
+        thread.start()
+    
+    # Wait for all tracker threads to finish
+    for thread in tracker_threads:
+        thread.join()
+    
+    # Clean up and close windows
+    cv2.destroyAllWindows()
+
+この例は、スレッドを増やし、同じ手法を適用することで、より多くのビデオファイルやモデルを扱うように簡単に拡張できます。
+
+## Link to this section新しいトラッカーの貢献#
+
+あなたはマルチオブジェクトトラッキングに精通しており、Ultralytics YOLOでトラッキングアルゴリズムの実装や適合に成功しましたか？[ultralytics/cfg/trackers](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers) のTrackersセクションに貢献していただくことを歓迎します！あなたの実際のアプリケーションやソリューションは、トラッキングタスクに取り組むユーザーにとって非常に価値のあるものとなるでしょう。
+
+このセクションに貢献することで、Ultralytics YOLOフレームワーク内で利用可能なトラッキングソリューションの範囲が拡大され、コミュニティにとって機能性と有用性がさらに向上します。
+
+貢献を開始するには、Pull Request (PR) を提出するための包括的な手順が記載された [Contributing Guide](/ja/help/contributing) を参照してください 🛠️。あなたが何をもたらしてくれるのか楽しみにしています！
+
+皆で協力して、Ultralytics YOLOエコシステムのトラッキング機能を強化しましょう 🙏!
+
+## Link to this sectionよくある質問 (FAQ)#
+
+### Link to this sectionマルチオブジェクトトラッキングとは何か、またUltralytics YOLOはそれをどのようにサポートしていますか？#
+
+ビデオ分析におけるマルチオブジェクトトラッキングには、オブジェクトの識別と、ビデオフレーム全体を通じて各検出オブジェクトの固有IDを維持することの両方が含まれます。Ultralytics YOLOは、オブジェクトIDとともにリアルタイムトラッキングを提供することでこれをサポートし、セキュリティ監視やスポーツ分析などのタスクを容易にします。システムは、YAMLファイル経由で設定可能な [BoT-SORT](https://github.com/NirAharon/BoT-SORT)、[ByteTrack](https://github.com/FoundationVision/ByteTrack)、OC-SORT、Deep OC-SORT、FastTracker、TrackTrackなどのトラッカーを使用します。
+
+### Link to this sectionUltralytics YOLO用のカスタムトラッカーを設定するにはどうすればよいですか？#
+
+既存のトラッカー設定ファイル（例: `custom_tracker.yaml`）を [Ultralytics トラッカー設定ディレクトリ](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/trackers) からコピーし、`tracker_type` 以外のパラメータを必要に応じて変更することで、カスタムトラッカーを設定できます。このファイルを次のようにトラッキングモデルで使用してください。
+
+例
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    results = model.track(source="https://youtu.be/LNwODJXcvt4", tracker="custom_tracker.yaml")
+
+### Link to this section複数のビデオストリームで同時にオブジェクトトラッキングを実行するにはどうすればよいですか？#
+
+複数のビデオストリームで同時にオブジェクトトラッキングを実行するには、Pythonの `threading` モジュールを使用できます。各スレッドが別々のビデオストリームを処理します。設定方法の例を以下に示します。
+
+マルチスレッドトラッキング
+    
+    
+    import threading
+    
+    import cv2
+    
+    from ultralytics import YOLO
+    
+    # Define model names and video sources
+    MODEL_NAMES = ["yolo26n.pt", "yolo26n-seg.pt"]
+    SOURCES = ["path/to/video.mp4", "0"]  # local video, 0 for webcam
+    
+    def run_tracker_in_thread(model_name, filename):
+        """Run YOLO tracker in its own thread for concurrent processing.
+    
+        Args:
+            model_name (str): The YOLO26 model object.
+            filename (str): The path to the video file or the identifier for the webcam/external camera source.
+        """
+        model = YOLO(model_name)
+        results = model.track(filename, save=True, stream=True)
+        for r in results:
+            pass
+    
+    # Create and start tracker threads using a for loop
+    tracker_threads = []
+    for video_file, model_name in zip(SOURCES, MODEL_NAMES):
+        thread = threading.Thread(target=run_tracker_in_thread, args=(model_name, video_file), daemon=True)
+        tracker_threads.append(thread)
+        thread.start()
+    
+    # Wait for all tracker threads to finish
+    for thread in tracker_threads:
+        thread.join()
+    
+    # Clean up and close windows
+    cv2.destroyAllWindows()
+
+### Link to this sectionUltralytics YOLOを用いたマルチオブジェクトトラッキングの現実世界での応用例は何ですか？#
+
+Ultralytics YOLOを用いたマルチオブジェクトトラッキングには、以下のような多数の応用例があります。
+
+  * **交通:** 交通管理および [自動運転](https://www.ultralytics.com/blog/ai-in-self-driving-cars) のための車両トラッキング。
+  * **小売:** 店内分析およびセキュリティのための人物トラッキング。
+  * **養殖:** 水環境を監視するための魚のトラッキング。
+  * **スポーツ分析:** パフォーマンス分析のための選手や器具のトラッキング。
+  * **セキュリティシステム:** [不審な活動の監視](https://www.ultralytics.com/blog/security-alarm-system-projects-with-ultralytics-yolov8) および [セキュリティアラーム](https://docs.ultralytics.com/guides/security-alarm-system) の作成。
+
+
+
+これらのアプリケーションは、高フレームレートのビデオをリアルタイムかつ卓越した精度で処理できるUltralytics YOLOの能力を活用しています。
+
+### Link to this sectionUltralytics YOLOを使用して、複数のビデオフレームにわたってオブジェクトトラックを可視化するにはどうすればよいですか？#
+
+複数のビデオフレームにわたってオブジェクトトラックを可視化するには、YOLOモデルのトラッキング機能とOpenCVを使用して、検出されたオブジェクトの経路を描画できます。これをデモするサンプルスクリプトを以下に示します。
+
+複数のビデオフレームにわたるトラックのプロット
+    
+    
+    from collections import defaultdict
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    video_path = "path/to/video.mp4"
+    cap = cv2.VideoCapture(video_path)
+    track_history = defaultdict(lambda: [])
+    
+    while cap.isOpened():
+        success, frame = cap.read()
+        if success:
+            results = model.track(frame, persist=True)
+            boxes = results[0].boxes.xywh.cpu()
+            track_ids = results[0].boxes.id.int().cpu().tolist()
+            annotated_frame = results[0].plot()
+            for box, track_id in zip(boxes, track_ids):
+                x, y, w, h = box
+                track = track_history[track_id]
+                track.append((float(x), float(y)))
+                if len(track) > 30:
+                    track.pop(0)
+                points = np.hstack(track).astype(np.int32).reshape((-1, 1, 2))
+                cv2.polylines(annotated_frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+            cv2.imshow("YOLO26 Tracking", annotated_frame)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+        else:
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+
+このスクリプトは、時間の経過に伴う追跡対象オブジェクトの移動経路を示すトラッキングラインをプロットし、オブジェクトの行動やパターンに関する貴重な洞察を提供します。
+
+コントリビューター
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/modes/track.md)
+
+[GLglenn-jocher30](https://github.com/glenn-jocher)[RIRizwanMunawar4](https://github.com/RizwanMunawar)[ONonuralpszr2](https://github.com/onuralpszr)[RAraimbekovm2](https://github.com/raimbekovm)[Y-Y-T-G2](https://github.com/Y-T-G)RORonald Eddy Jr1[PDpderrenger1](https://github.com/pderrenger)[LALaughing-q1](https://github.com/Laughing-q)[ANankanpy1](https://github.com/ankanpy)[MAMatthewNoyce1](https://github.com/MatthewNoyce)[IVIvorZhu3311](https://github.com/IvorZhu331)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+作成日 2023年11月12日更新日 先週
+
+## コメント
+
+このページの内容
+
+AIで探索

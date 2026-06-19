@@ -1,0 +1,546 @@
+---
+source_url: https://docs.ultralytics.com/ko/guides/custom-trainer
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/custom-trainer.md)
+
+# Link to this section트레이너 사용자 정의하기#
+
+Ultralytics 학습 파이프라인은 `BaseTrainer`와 `DetectionTrainer`와 같은 작업별 트레이너를 기반으로 구축되었습니다. 이러한 클래스들은 학습 루프, 검증, 체크포인트 저장 및 로깅 기능을 기본적으로 처리합니다. 사용자 지정 메트릭 추적, 손실 가중치 조정 또는 학습률 스케줄 구현과 같이 더 많은 제어가 필요할 때, 트레이너를 상속받아 특정 메서드를 재정의할 수 있습니다.
+
+이 가이드에서는 7가지 일반적인 사용자 정의 방법을 다룹니다:
+
+  1. Logging custom metrics (F1 score) at the end of each [epoch](https://www.ultralytics.com/glossary/epoch)
+  2. 클래스 불균형 처리를 위한 클래스 가중치 추가
+  3. 다른 메트릭을 기준으로 최적의 모델 저장
+  4. 처음 N 에포크 동안 백본 동결(freezing) 및 이후 해제
+  5. 레이어별 학습률 지정
+  6. 멀티 GPU 학습을 위한 GPU 간 BatchNorm 동기화
+  7. 안정성 튜닝을 위한 그래디언트 클리핑 설정
+
+
+
+사전 요구 사항
+
+Before reading this guide, make sure you're familiar with the basics of [training YOLO models](/ko/modes/train) and the [Advanced Customization](/ko/usage/engine) page, which covers the `BaseTrainer` architecture.
+
+## Link to this section사용자 지정 트레이너 작동 방식#
+
+The `YOLO` model class accepts a `trainer` parameter in the `train()` method. This allows you to pass your own trainer class that extends the default behavior:
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    
+    class CustomTrainer(DetectionTrainer):
+        """A custom trainer that extends DetectionTrainer with additional functionality."""
+    
+        pass  # Add your customizations here
+    
+    model = YOLO("yolo26n.pt")
+    model.train(data="coco8.yaml", epochs=10, trainer=CustomTrainer)
+
+사용자 지정 트레이너는 `DetectionTrainer`의 모든 기능을 상속받으므로, 사용자 정의하려는 특정 메서드만 재정의하면 됩니다.
+
+## Link to this section사용자 지정 메트릭 로깅#
+
+[검증](/ko/modes/val) 단계에서는 [정밀도(precision)](https://www.ultralytics.com/glossary/precision), [재현율(recall)](https://www.ultralytics.com/glossary/recall), 및 [mAP](https://www.ultralytics.com/glossary/mean-average-precision-map)를 계산합니다. 클래스별 [F1 점수](https://www.ultralytics.com/glossary/f1-score)와 같은 추가 메트릭이 필요한 경우 `validate()`를 재정의하십시오:
+    
+    
+    import numpy as np
+    
+    from ultralytics import YOLO
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    from ultralytics.utils import LOGGER
+    
+    class MetricsTrainer(DetectionTrainer):
+        """Custom trainer that computes and logs F1 score at the end of each epoch."""
+    
+        def validate(self):
+            """Run validation and compute per-class F1 scores."""
+            metrics, fitness = super().validate()
+            if metrics is None:
+                return metrics, fitness
+    
+            if hasattr(self.validator, "metrics") and hasattr(self.validator.metrics, "box"):
+                box = self.validator.metrics.box
+                f1_per_class = box.f1
+                class_indices = box.ap_class_index
+                names = self.validator.names
+    
+                valid_f1 = f1_per_class[f1_per_class > 0]
+                mean_f1 = np.mean(valid_f1) if len(valid_f1) > 0 else 0.0
+    
+                LOGGER.info(f"Mean F1 Score: {mean_f1:.4f}")
+                per_class_str = [
+                    f"{names[i]}: {f1_per_class[j]:.3f}" for j, i in enumerate(class_indices) if f1_per_class[j] > 0
+                ]
+                LOGGER.info(f"Per-class F1: {per_class_str}")
+    
+            return metrics, fitness
+    
+    model = YOLO("yolo26n.pt")
+    model.train(data="coco8.yaml", epochs=5, trainer=MetricsTrainer)
+
+이 코드는 모든 클래스에 걸친 평균 F1 점수와 각 검증 실행 후의 클래스별 분석 결과를 기록합니다.
+
+사용 가능한 메트릭
+
+검증기는 `self.validator.metrics.box`를 통해 여러 메트릭에 대한 액세스를 제공합니다:
+
+속성| 설명  
+---|---  
+`f1`| 클래스별 F1 점수  
+`image_metrics`| 정밀도, 재현율, F1, TP, FP, FN을 포함하는 이미지별 메트릭 딕셔너리  
+`p`| 클래스별 정밀도  
+`r`| 클래스별 재현율  
+`ap50`| 클래스별 IoU 0.5에서의 AP  
+`ap`| 클래스별 IoU 0.5:0.95에서의 AP  
+`mp`, `mr`| 평균 정밀도 및 재현율  
+`map50`, `map`| 평균 AP 메트릭  
+  
+## Link to this section클래스 가중치 추가#
+
+데이터셋의 클래스가 불균형한 경우(예: 제조 검사 중 드문 결함), [손실 함수(loss function)](https://www.ultralytics.com/glossary/loss-function)에서 저표현 클래스에 가중치를 높일 수 있습니다. 이렇게 하면 모델이 희귀 클래스에 대한 오분류에 더 큰 페널티를 부여하게 됩니다.
+
+손실을 사용자 정의하려면 손실 클래스, 모델 및 트레이너를 상속받아야 합니다:
+    
+    
+    import torch
+    from torch import nn
+    
+    from ultralytics import YOLO
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    from ultralytics.nn.tasks import DetectionModel
+    from ultralytics.utils import RANK
+    from ultralytics.utils.loss import E2ELoss, v8DetectionLoss
+    
+    class WeightedDetectionLoss(v8DetectionLoss):
+        """Detection loss with class weights applied to BCE classification loss."""
+    
+        def __init__(self, model, class_weights=None, tal_topk=10, tal_topk2=None):
+            """Initialize loss with optional per-class weights for BCE."""
+            super().__init__(model, tal_topk=tal_topk, tal_topk2=tal_topk2)
+            if class_weights is not None:
+                self.bce = nn.BCEWithLogitsLoss(
+                    pos_weight=class_weights.to(self.device),
+                    reduction="none",
+                )
+    
+    class WeightedE2ELoss(E2ELoss):
+        """E2E Loss with class weights for YOLO26."""
+    
+        def __init__(self, model, class_weights=None):
+            """Initialize E2E loss with weighted detection loss."""
+    
+            def weighted_loss_fn(model, tal_topk=10, tal_topk2=None):
+                return WeightedDetectionLoss(model, class_weights=class_weights, tal_topk=tal_topk, tal_topk2=tal_topk2)
+    
+            super().__init__(model, loss_fn=weighted_loss_fn)
+    
+    class WeightedDetectionModel(DetectionModel):
+        """Detection model that uses class-weighted loss."""
+    
+        def init_criterion(self):
+            """Initialize weighted loss criterion with per-class weights."""
+            class_weights = torch.ones(self.nc)
+            class_weights[0] = 2.0  # upweight class 0
+            class_weights[1] = 3.0  # upweight rare class 1
+            return WeightedE2ELoss(self, class_weights=class_weights)
+    
+    class WeightedTrainer(DetectionTrainer):
+        """Trainer that returns a WeightedDetectionModel."""
+    
+        def get_model(self, cfg=None, weights=None, verbose=True):
+            """Return a WeightedDetectionModel."""
+            model = WeightedDetectionModel(cfg, nc=self.data["nc"], verbose=verbose and RANK == -1)
+            if weights:
+                model.load(weights)
+            return model
+    
+    model = YOLO("yolo26n.pt")
+    model.train(data="coco8.yaml", epochs=10, trainer=WeightedTrainer)
+
+데이터셋으로부터 가중치 계산
+
+데이터셋의 레이블 분포를 기반으로 클래스 가중치를 자동으로 계산할 수 있습니다. 일반적인 접근 방식은 역빈도 가중치 부여입니다:
+    
+    
+    import numpy as np
+    
+    # class_counts: number of instances per class
+    class_counts = np.array([5000, 200, 3000])
+    # Inverse frequency: rarer classes get higher weight
+    class_weights = max(class_counts) / class_counts
+    # Result: [1.0, 25.0, 1.67]
+
+사용자 지정 클래스로 모델 로드하기
+
+`WeightedDetectionModel`과 같은 사용자 지정 클래스는 참조 형태로 체크포인트에 저장됩니다. 학습 스크립트 내에 정의된 경우 해당 클래스는 `__main__` 모듈에 속하게 되므로, 다른 스크립트에서 `best.pt`를 로드하면 `AttributeError: Can't get attribute 'WeightedDetectionModel' on <module '__main__'>` 오류가 발생합니다.
+
+사용자 지정 클래스는 별도의 전용 모듈에 정의하여 항상 임포트 가능하도록 유지하고, 로드 시점에 해당 모듈이 `PYTHONPATH`에 포함되어 있는지 확인하십시오.
+    
+    
+    # weighted_model.py
+    from ultralytics.nn.tasks import DetectionModel
+    
+    class WeightedDetectionModel(DetectionModel):
+        """Detection model that uses class-weighted loss."""
+    
+        ...
+    
+    
+    # inference script
+    from weighted_model import WeightedDetectionModel  # noqa: F401 - must be importable at checkpoint load time
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("runs/detect/train/weights/best.pt")
+    metrics = model.val()
+
+## Link to this section사용자 지정 메트릭으로 최적의 모델 저장#
+
+트레이너는 적합도(fitness)를 기준으로 `best.pt`를 저장하며, 탐지의 경우 기본값은 `mAP@0.5:0.95`입니다 ( [P, R, mAP@0.5, mAP@0.5:0.95]에 대한 가중치는 `[0.0, 0.0, 0.0, 1.0]`). 다른 메트릭(예: `mAP@0.5` 또는 재현율)을 사용하려면 `validate()`를 재정의하고 선택한 메트릭을 적합도 값으로 반환하십시오. 내장된 `save_model()`이 이를 자동으로 사용하게 됩니다:
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    
+    class CustomSaveTrainer(DetectionTrainer):
+        """Trainer that saves the best model based on mAP@0.5 instead of default fitness."""
+    
+        def validate(self):
+            """Override fitness to use mAP@0.5 for best model selection."""
+            metrics, fitness = super().validate()
+            if metrics:
+                fitness = metrics.get("metrics/mAP50(B)", fitness)
+                if self.best_fitness is None or fitness > self.best_fitness:
+                    self.best_fitness = fitness
+            return metrics, fitness
+    
+    model = YOLO("yolo26n.pt")
+    model.train(data="coco8.yaml", epochs=20, trainer=CustomSaveTrainer)
+
+사용 가능한 메트릭
+
+검증 후 `self.metrics`에서 사용할 수 있는 일반적인 메트릭은 다음과 같습니다:
+
+키| 설명  
+---|---  
+`metrics/precision(B)`| 정밀도  
+`metrics/recall(B)`| 재현율  
+`metrics/mAP50(B)`| IoU 0.5에서의 mAP  
+`metrics/mAP50-95(B)`| IoU 0.5:0.95에서의 mAP  
+  
+## Link to this section백본 동결 및 해제#
+
+[전이 학습(transfer learning)](https://www.ultralytics.com/glossary/transfer-learning) 워크플로우는 종종 처음 N 에포크 동안 사전 훈련된 백본을 동결하여 탐지 헤드가 먼저 적응하도록 한 뒤, 전체 네트워크를 [파인튜닝(fine-tuning)](https://www.ultralytics.com/glossary/fine-tuning)하는 방식이 효과적입니다. Ultralytics는 학습 시작 시 레이어를 동결하기 위한 `freeze` 매개변수를 제공하며, [콜백(callback)](/ko/usage/callbacks)을 사용하여 N 에포크 후에 동결을 해제할 수 있습니다:
+    
+    
+    from ultralytics import YOLO
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    from ultralytics.utils import LOGGER
+    
+    FREEZE_EPOCHS = 5
+    
+    def unfreeze_backbone(trainer):
+        """Callback to unfreeze all layers after FREEZE_EPOCHS."""
+        if trainer.epoch == FREEZE_EPOCHS:
+            LOGGER.info(f"Epoch {trainer.epoch}: Unfreezing all layers for fine-tuning")
+            for name, param in trainer.model.named_parameters():
+                if not param.requires_grad:
+                    param.requires_grad = True
+                    LOGGER.info(f"  Unfroze: {name}")
+            trainer.freeze_layer_names = [".dfl"]
+    
+    class FreezingTrainer(DetectionTrainer):
+        """Trainer with backbone freezing for first N epochs."""
+    
+        def __init__(self, *args, **kwargs):
+            """Initialize and register the unfreeze callback."""
+            super().__init__(*args, **kwargs)
+            self.add_callback("on_train_epoch_start", unfreeze_backbone)
+    
+    model = YOLO("yolo26n.pt")
+    model.train(data="coco8.yaml", epochs=20, freeze=10, trainer=FreezingTrainer)
+
+`freeze=10` 매개변수는 학습 시작 시 처음 10개 레이어(백본)를 동결합니다. `on_train_epoch_start` 콜백은 각 에포크 시작 시 실행되며, 동결 기간이 완료되면 모든 매개변수의 동결을 해제합니다.
+
+동결 대상 선택
+
+  * `freeze=10`은 처음 10개 레이어를 동결합니다(일반적으로 YOLO 아키텍처의 백본).
+  * `freeze=[0, 1, 2, 3]`은 인덱스별로 특정 레이어를 동결합니다.
+  * `FREEZE_EPOCHS` 값이 높을수록 백본이 변경되기 전에 헤드가 적응할 시간이 더 많아집니다.
+
+
+
+## Link to this section레이어별 학습률#
+
+네트워크의 각 부분은 서로 다른 [학습률(learning rate)](https://www.ultralytics.com/glossary/learning-rate)을 적용할 때 더 효과적일 수 있습니다. 일반적인 전략은 사전 훈련된 백본에는 낮은 학습률을 사용하여 학습된 특징을 보존하고, 탐지 헤드에는 더 높은 학습률을 사용하여 빠르게 적응하도록 하는 것입니다:
+    
+    
+    import torch
+    
+    from ultralytics import YOLO
+    from ultralytics.models.yolo.detect import DetectionTrainer
+    from ultralytics.utils import LOGGER
+    from ultralytics.utils.torch_utils import unwrap_model
+    
+    class PerLayerLRTrainer(DetectionTrainer):
+        """Trainer with different learning rates for backbone and head."""
+    
+        def build_optimizer(self, model, name="auto", lr=0.001, momentum=0.9, decay=1e-5, iterations=1e5):
+            """Build optimizer with separate learning rates for backbone and head."""
+            backbone_params = []
+            head_params = []
+    
+            for k, v in unwrap_model(model).named_parameters():
+                if not v.requires_grad:
+                    continue
+                is_backbone = any(k.startswith(f"model.{i}.") for i in range(10))
+                if is_backbone:
+                    backbone_params.append(v)
+                else:
+                    head_params.append(v)
+    
+            backbone_lr = lr * 0.1
+    
+            optimizer = torch.optim.AdamW(
+                [
+                    {"params": backbone_params, "lr": backbone_lr, "weight_decay": decay},
+                    {"params": head_params, "lr": lr, "weight_decay": decay},
+                ],
+            )
+    
+            LOGGER.info(
+                f"PerLayerLR optimizer: backbone ({len(backbone_params)} params, lr={backbone_lr}) "
+                f"| head ({len(head_params)} params, lr={lr})"
+            )
+            return optimizer
+    
+    model = YOLO("yolo26n.pt")
+    model.train(data="coco8.yaml", epochs=20, trainer=PerLayerLRTrainer)
+
+### Link to this sectionRT-DETR 변형#
+
+RT-DETR의 경우 패턴은 동일하며 두 가지 개선 사항이 추가됩니다. 백본 길이는 `model.yaml["backbone"]`에서 읽어오므로, 레이어 개수를 하드코딩하지 않고도 동일한 트레이너가 모든 RT-DETR 변형(RT-DETR-L, RT-DETR-X, ResNet-50/101 백본)에서 작동합니다. 또한 매개변수는 각 섹션 내에서 가중치, BatchNorm 및 편향 그룹으로 분할되어 BatchNorm 매개변수와 편향에서 가중치 감쇠(weight decay)가 제외되도록 하여 기본 트레이너 정책과 일치시킵니다. 이는 디코더 헤드가 일반적으로 무작위로 초기화되는 반면 백본은 더 낮은 학습률로부터 이점을 얻는 사전 훈련된 특징을 포함하는 RT-DETR 파인튜닝에 특히 유용합니다:
+    
+    
+    import torch
+    from torch import nn
+    
+    from ultralytics import RTDETR
+    from ultralytics.models.rtdetr.train import RTDETRTrainer
+    from ultralytics.utils import LOGGER, colorstr
+    from ultralytics.utils.torch_utils import unwrap_model
+    
+    class RTDETRBackboneLRTrainer(RTDETRTrainer):
+        """RT-DETR trainer with a lower learning rate for backbone parameters."""
+    
+        backbone_lr_ratio = 0.1  # backbone learning rate as a fraction of head learning rate
+    
+        def build_optimizer(self, model, name="auto", lr=0.001, momentum=0.9, decay=1e-5, iterations=1e5):
+            """Build an AdamW optimizer with six param groups: head and backbone x {weight, bn, bias}."""
+            # Resolve optimizer name; "auto" maps to AdamW with RT-DETR-style defaults
+            canonical = {"Adam", "Adamax", "AdamW", "NAdam", "RAdam", "auto"}
+            name = {x.lower(): x for x in canonical}.get(name.lower(), name)
+            if name == "auto":
+                name, lr, momentum = "AdamW", 1e-4, 0.9
+            self.args.warmup_bias_lr = 0.0  # RT-DETR warms biases from 0, unlike YOLO's 0.1
+            if name not in {"Adam", "Adamax", "AdamW", "NAdam", "RAdam"}:
+                raise NotImplementedError(f"This trainer only supports AdamW-family optimizers; got {name}")
+    
+            # Identify backbone parameters from model.yaml and route each param into a (section, kind) group
+            unwrapped = unwrap_model(model)
+            backbone_len = len(unwrapped.yaml["backbone"])
+            norm_types = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)
+            groups = {f"{s}_{k}": [] for s in ("head", "backbone") for k in ("weight", "bn", "bias")}
+    
+            for module_name, module in unwrapped.named_modules():
+                for param_name, param in module.named_parameters(recurse=False):
+                    if not param.requires_grad:
+                        continue
+                    fullname = f"{module_name}.{param_name}" if module_name else param_name
+                    parts = fullname.split(".")
+                    section = (
+                        "backbone"
+                        if len(parts) > 1 and parts[0] == "model" and parts[1].isdigit() and int(parts[1]) < backbone_len
+                        else "head"
+                    )
+                    if "bias" in param_name:
+                        kind = "bias"
+                    elif isinstance(module, norm_types) or "logit_scale" in fullname:
+                        kind = "bn"
+                    else:
+                        kind = "weight"
+                    groups[f"{section}_{kind}"].append(param)
+    
+            # Build the optimizer with per-group lr and weight decay; backbone groups use lr * backbone_lr_ratio
+            backbone_lr = lr * self.backbone_lr_ratio
+            param_groups = [
+                {"params": groups["head_weight"], "lr": lr, "weight_decay": decay, "param_group": "weight"},
+                {"params": groups["head_bn"], "lr": lr, "weight_decay": 0.0, "param_group": "bn"},
+                {"params": groups["head_bias"], "lr": lr, "weight_decay": 0.0, "param_group": "bias"},
+                {"params": groups["backbone_weight"], "lr": backbone_lr, "weight_decay": decay, "param_group": "weight"},
+                {"params": groups["backbone_bn"], "lr": backbone_lr, "weight_decay": 0.0, "param_group": "bn"},
+                {"params": groups["backbone_bias"], "lr": backbone_lr, "weight_decay": 0.0, "param_group": "bias"},
+            ]
+            param_groups = [pg for pg in param_groups if pg["params"]]  # drop empty groups
+            optimizer = getattr(torch.optim, name)(param_groups, betas=(momentum, 0.999))
+    
+            LOGGER.info(
+                f"{colorstr('optimizer:')} {name}(lr={lr}, backbone_lr={backbone_lr}) with parameter groups\n"
+                f"  Head:     {len(groups['head_bn'])} bn, {len(groups['head_weight'])} weight(decay={decay}), "
+                f"{len(groups['head_bias'])} bias (lr={lr})\n"
+                f"  Backbone: {len(groups['backbone_bn'])} bn, {len(groups['backbone_weight'])} weight(decay={decay}), "
+                f"{len(groups['backbone_bias'])} bias (lr={backbone_lr})"
+            )
+            return optimizer
+    
+    model = RTDETR("rtdetr-l.pt")
+    model.train(data="coco8.yaml", epochs=20, trainer=RTDETRBackboneLRTrainer)
+
+`backbone_lr_ratio` 선택
+
+일반적으로 `backbone_lr_ratio = 0.1`부터 시작하며, 이는 HGNetV2 백본을 가진 원래의 RT-DETR 설정과 일치합니다. 관련 연구에 따르면 백본 크기와 사전 훈련 데이터 규모에 반비례하여 비율을 조정하는 것이 좋습니다. 매우 큰 데이터셋에서 사전 훈련된 대형 백본(예: 수억 개의 이미지로 DINO, CLIP 또는 MAE를 사용하여 훈련된 ViT-L/H)은 일반적으로 잘 학습된 특징을 보존하기 위해 `0.01` 이하의 작은 비율을 사용하는 반면, 더 가벼운 사전 훈련을 거친 작은 백본은 `0.5` 이상의 더 큰 비율도 허용합니다.
+
+학습률 스케줄러
+
+내장된 학습률 스케줄러(`cosine` 또는 `linear`)는 그룹별 기본 학습률 위에서 여전히 적용됩니다. 백본과 헤드 학습률 모두 동일한 감쇠 스케줄을 따르며, 학습 전체 기간 동안 둘 사이의 비율을 유지합니다.
+
+기술 결합
+
+이러한 사용자 정의들은 여러 메서드를 재정의하고 필요에 따라 콜백을 추가함으로써 단일 트레이너 클래스로 결합할 수 있습니다.
+
+## Link to this section멀티 GPU 학습을 위한 동기화된 BatchNorm#
+
+DistributedDataParallel을 사용하여 여러 GPU에서 학습할 때, 기본 `BatchNorm2d` 레이어는 각 GPU에서 독립적으로 통계를 계산합니다. RT-DETR 파인튜닝 및 GPU당 배치 크기가 작은 기타 레시피의 경우, GPU별 배치 통계가 불안정할 수 있습니다. PyTorch의 `SyncBatchNorm`은 단일 글로벌 배치 통계를 위해 모든 랭크 간의 평균과 분산을 동기화하며, 이는 종종 GPU 간 통신 오버헤드를 대가로 수렴 성능을 향상시킵니다.
+
+The conversion has to happen after the model is on the GPU but before DDP wraps it. The cleanest hook for this is `set_model_attributes()`, which `BaseTrainer` calls in exactly that window:
+    
+    
+    from torch import nn
+    
+    from ultralytics import RTDETR
+    from ultralytics.models.rtdetr.train import RTDETRTrainer
+    
+    class SyncBNTrainer(RTDETRTrainer):
+        """RT-DETR trainer that converts BatchNorm to SyncBatchNorm for multi-GPU training."""
+    
+        def set_model_attributes(self):
+            """Run the parent setup, then convert BN to SyncBatchNorm when training on multiple GPUs."""
+            super().set_model_attributes()
+            if self.world_size > 1:
+                self.model = nn.SyncBatchNorm.convert_sync_batchnorm(self.model)
+    
+    model = RTDETR("rtdetr-l.pt")
+    model.train(data="coco8.yaml", epochs=20, device=[0, 1], trainer=SyncBNTrainer)
+
+`world_size > 1` 검사는 트레이너가 단일 GPU 실행에서도 안전하게 사용될 수 있도록 보장합니다. 단일 GPU에서는 변환이 건너뛰어지고 일반 `BatchNorm2d`로 학습이 진행됩니다. 동일한 패턴을 부모 클래스를 `DetectionTrainer`로 전환함으로써 YOLO에도 적용할 수 있습니다.
+
+SyncBatchNorm 사용 시기
+
+시나리오| 권장 사항  
+---|---  
+멀티 GPU 학습, 작은 GPU당 배치 (≤ 16)| 활성화  
+멀티 GPU 학습, 큰 GPU당 배치 (≥ 32)| 선택 사항; 경미한 이점  
+단일 GPU 학습| 해당 없음 (건너뜀)  
+  
+## Link to this section구성 가능한 그래디언트 클리핑#
+
+The default trainer clips gradients to `max_norm=10.0` in `optimizer_step()`, a loose value tuned for YOLO models where gradients rarely exceed it. DETR-family detectors (RT-DETR, DEIM, DINO) typically use much tighter values such as `0.1` to stabilize the decoder's cross-attention layers, where gradient magnitudes can spike. To override the clip value, subclass the trainer and override `optimizer_step()`:
+    
+    
+    import torch
+    
+    from ultralytics import RTDETR
+    from ultralytics.models.rtdetr.train import RTDETRTrainer
+    
+    class CustomClipTrainer(RTDETRTrainer):
+        """RT-DETR trainer with configurable gradient clipping."""
+    
+        clip_grad_norm = 0.1  # max gradient norm; set to 0 to disable clipping
+    
+        def optimizer_step(self):
+            """Run an optimizer step with a configurable gradient-norm clip."""
+            self.scaler.unscale_(self.optimizer)
+            if self.clip_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_grad_norm)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad()
+            if self.ema:
+                self.ema.update(self.model)
+    
+    model = RTDETR("rtdetr-l.pt")
+    model.train(data="coco8.yaml", epochs=20, trainer=CustomClipTrainer)
+
+동일한 트레이너를 부모 클래스로 `DetectionTrainer`를 사용하고(`from ultralytics.models.yolo.detect import DetectionTrainer`), `YOLO("yolo26n.pt")`로 YOLO 체크포인트를 로드하면 YOLO에서도 작동합니다. `optimizer_step` 본문은 변경되지 않습니다.
+
+일반적인 `clip_grad_norm` 값
+
+아키텍처 제품군| 일반적인 `max_norm`  
+---|---  
+RT-DETR / DEIM / DETR 제품군| `0.1`  
+YOLO (Ultralytics 기본값)| `10.0`  
+클리핑 비활성화| `0`  
+  
+## Link to this sectionFAQ#
+
+### Link to this sectionYOLO에 사용자 지정 트레이너를 어떻게 전달하나요?#
+
+Pass your custom trainer class (not an instance) to the `trainer` parameter in `model.train()`:
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    model.train(data="coco8.yaml", trainer=MyCustomTrainer)
+
+`YOLO` 클래스는 내부적으로 트레이너 인스턴스화를 처리합니다. 트레이너 아키텍처에 대한 자세한 내용은 [고급 사용자 정의(Advanced Customization)](/ko/usage/engine) 페이지를 참조하십시오.
+
+### Link to this section어떤 BaseTrainer 메서드를 재정의할 수 있나요?#
+
+사용자 정의를 위해 제공되는 주요 메서드:
+
+메서드| 목적  
+---|---  
+`validate()`| 검증을 실행하고 메트릭을 반환합니다  
+`build_optimizer()`| 옵티마이저를 구성합니다  
+`save_model()`| 학습 체크포인트를 저장합니다  
+`get_model()`| 모델 인스턴스를 반환합니다  
+`get_validator()`| 검증기 인스턴스를 반환합니다  
+`get_dataloader()`| 데이터로더를 빌드합니다  
+`preprocess_batch()`| 입력 배치를 전처리합니다  
+`label_loss_items()`| 로깅을 위해 손실 항목의 형식을 지정합니다  
+  
+전체 API 참조는 [`BaseTrainer` 문서](/reference/engine/trainer)를 참조하십시오.
+
+### Link to this section트레이너를 서브클래싱하는 대신 콜백을 사용할 수 있습니까?#
+
+네, 더 간단한 사용자 정의를 위해서는 [콜백](/ko/usage/callbacks)으로 충분한 경우가 많습니다. 사용 가능한 콜백 이벤트로는 `on_train_start`, `on_train_epoch_start`, `on_train_epoch_end`, `on_fit_epoch_end`, `on_model_save`가 있습니다. 이를 통해 트레이너를 서브클래싱하지 않고도 학습 루프에 후킹할 수 있습니다. 위에서 설명한 백본 고정 예제가 이 접근 방식을 보여줍니다.
+
+### Link to this section모델을 서브클래싱하지 않고 손실 함수를 사용자 정의하려면 어떻게 해야 합니까?#
+
+변경 사항이 더 간단하다면(예: 손실 게인 조정), [하이퍼파라미터](https://www.ultralytics.com/glossary/hyperparameter-tuning)를 직접 수정할 수 있습니다:
+    
+    
+    model.train(data="coco8.yaml", box=10.0, cls=1.5, dfl=2.0)
+
+손실 구조 변경(예: 클래스 가중치 추가)이 필요한 경우, 클래스 가중치 섹션에 표시된 대로 손실 및 모델을 서브클래싱해야 합니다.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/custom-trainer.md)
+
+[RAraimbekovm3](https://github.com/raimbekovm)[GLglenn-jocher3](https://github.com/glenn-jocher)[ARartest083](https://github.com/artest08)[HAHarshxth1](https://github.com/Harshxth)[LALaughing-q1](https://github.com/Laughing-q)[ONonuralpszr1](https://github.com/onuralpszr)
+
+생성됨 4개월 전업데이트됨 지난주
+
+## 댓글
+
+이 페이지
+
+AI로 탐색

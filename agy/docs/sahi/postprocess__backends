@@ -1,0 +1,1633 @@
+---
+source_url: https://obss.github.io/sahi/postprocess/backends/
+---
+
+[ ](https://github.com/obss/sahi/tree/main/docs/postprocess/backends.md "Edit this page")
+
+# Postprocessing Backends¶
+
+SAHI's postprocessing (NMS, NMM) can run on three interchangeable backends. The right backend depends on your hardware and installed packages.
+
+## Backend overview¶
+
+Backend | Best for | Extra dependency  
+---|---|---  
+**numpy** | CPU-only environments, small/medium prediction counts | None (always available)  
+**numba** | CPU with large prediction counts; ~1 s JIT warmup on first call, then fast | `pip install numba`  
+**torchvision** | CUDA GPU available; fastest for large batches | `pip install torch torchvision` \+ CUDA  
+  
+## Auto-detection (default)¶
+
+By default SAHI automatically picks the best available backend at runtime:
+
+  1. **torchvision** — if `torchvision` is installed _and_ a CUDA GPU is present.
+  2. **numba** — if the `numba` package is installed.
+  3. **numpy** — always available as the final fallback.
+
+
+    
+    
+    from sahi.postprocess.backends import get_postprocess_backend
+    
+    # Check which backend was resolved (triggers auto-detection)
+    print(get_postprocess_backend())  # "auto" until first postprocessing call
+    
+
+## Forcing a specific backend¶
+
+Use `set_postprocess_backend` before running inference to pin a backend:
+    
+    
+    from sahi.postprocess.backends import set_postprocess_backend
+    
+    # Force pure-numpy (no extra deps, works everywhere)
+    set_postprocess_backend("numpy")
+    
+    # Force numba JIT (install with: pip install numba)
+    set_postprocess_backend("numba")
+    
+    # Force torchvision GPU (install with: pip install torch torchvision)
+    set_postprocess_backend("torchvision")
+    
+    # Restore auto-detection
+    set_postprocess_backend("auto")
+    
+
+This call affects all subsequent NMS/NMM operations in the current process, including those triggered internally by `get_sliced_prediction`.
+
+### Example: pinning the backend for a full inference run¶
+    
+    
+    from sahi import AutoDetectionModel
+    from sahi.predict import get_sliced_prediction
+    from sahi.postprocess.backends import set_postprocess_backend
+    
+    # Use GPU-accelerated postprocessing when running on a CUDA machine
+    set_postprocess_backend("torchvision")
+    
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type="ultralytics",
+        model_path="yolo11n.pt",
+        confidence_threshold=0.25,
+        device="cuda:0",
+    )
+    
+    result = get_sliced_prediction(
+        "image.jpg",
+        detection_model,
+        slice_height=512,
+        slice_width=512,
+        overlap_height_ratio=0.2,
+        overlap_width_ratio=0.2,
+    )
+    
+
+## Using postprocessing functions directly¶
+
+All three backends share the same array convention: an `(N, 6)` numpy array with columns `[x1, y1, x2, y2, score, category_id]`.
+
+### NMS (suppression)¶
+    
+    
+    import numpy as np
+    from sahi.postprocess.combine import nms, batched_nms
+    
+    predictions = np.array([
+        [100, 100, 200, 200, 0.95, 0],
+        [105, 105, 205, 205, 0.80, 0],
+        [300, 300, 400, 400, 0.90, 1],
+    ])
+    
+    # Global NMS — all categories compete together
+    keep = nms(predictions, match_metric="IOU", match_threshold=0.5)
+    print(predictions[keep])
+    
+    # Per-category NMS — class 0 and class 1 are treated independently
+    keep = batched_nms(predictions, match_metric="IOU", match_threshold=0.5)
+    print(predictions[keep])
+    
+
+### NMM (merging)¶
+
+Instead of discarding overlapping boxes, NMM merges them:
+    
+    
+    from sahi.postprocess.combine import greedy_nmm, nmm, batched_greedy_nmm
+    
+    # Greedy NMM: each kept box merges only its direct neighbours (fast, tight boxes)
+    keep_to_merge = greedy_nmm(predictions, match_metric="IOU", match_threshold=0.5)
+    # {kept_index: [merged_index, ...], ...}
+    
+    # Full NMM: transitive merging (A merges B, B merges C → A gets all three)
+    keep_to_merge = nmm(predictions, match_metric="IOU", match_threshold=0.5)
+    
+    # Per-category greedy NMM
+    keep_to_merge = batched_greedy_nmm(predictions, match_threshold=0.5)
+    
+
+### IoS metric¶
+
+Both NMS and NMM support `match_metric="IOS"` (Intersection over Smaller area), which is useful when one box is much smaller than another:
+    
+    
+    keep = nms(predictions, match_metric="IOS", match_threshold=0.5)
+    
+
+## Postprocess classes¶
+
+High-level classes integrate with SAHI's `ObjectPrediction` lists and are used by `get_sliced_prediction` via the `postprocess_type` argument:
+    
+    
+    from sahi.postprocess.combine import NMSPostprocess, NMMPostprocess, GreedyNMMPostprocess
+    
+    # NMS — keep the best box, discard the rest
+    postprocessor = NMSPostprocess(
+        match_threshold=0.5,
+        match_metric="IOU",
+        class_agnostic=True,   # False → per-category
+    )
+    filtered = postprocessor(object_prediction_list)
+    
+    # Greedy NMM — merge overlapping boxes (fast)
+    postprocessor = GreedyNMMPostprocess(match_threshold=0.5)
+    merged = postprocessor(object_prediction_list)
+    
+    # Full NMM — transitive merging
+    postprocessor = NMMPostprocess(match_threshold=0.5)
+    merged = postprocessor(object_prediction_list)
+    
+
+Passing `class_agnostic=False` makes each postprocessor run independently per category, so a "car" prediction will never suppress a "person" prediction.
+
+## API reference¶
+
+##  `` `sahi.postprocess.backends` ¶
+
+Postprocessing backend selection and auto-detection.
+
+Usage
+
+from sahi.postprocess.backends import set_postprocess_backend, get_postprocess_backend
+
+set_postprocess_backend("numba") # force numba set_postprocess_backend("auto") # auto-detect best available
+
+### Functions:¶
+
+####  `` `get_postprocess_backend()` ¶
+
+Return the currently configured backend name (may be "auto").
+
+Source code in `sahi/postprocess/backends.py`
+    
+    
+    43
+    44
+    45
+
+| 
+    
+    
+    def get_postprocess_backend() -> str:
+        """Return the currently configured backend name (may be "auto")."""
+        return _backend
+      
+  
+---|---  
+  
+####  `` `resolve_backend()` ¶
+
+Resolve "auto" to a concrete backend, caching the result.
+
+When the backend is set to "auto", detection follows this priority:
+
+  1. **torchvision** \-- selected if both torchvision and a CUDA GPU are available (GPU-accelerated NMS).
+  2. **numba** \-- selected if the numba package is installed (JIT-compiled loops, faster than pure numpy for large prediction counts).
+  3. **numpy** \-- always available as the fallback (pure numpy, no extra dependencies).
+
+
+
+If the backend was explicitly set via `set_postprocess_backend`, that value is returned directly without auto-detection.
+
+Returns:
+
+Type | Description  
+---|---  
+`str` |  One of "numpy", "numba", or "torchvision".  
+Source code in `sahi/postprocess/backends.py`
+    
+    
+    48
+    49
+    50
+    51
+    52
+    53
+    54
+    55
+    56
+    57
+    58
+    59
+    60
+    61
+    62
+    63
+    64
+    65
+    66
+    67
+    68
+    69
+    70
+    71
+    72
+    73
+    74
+    75
+    76
+    77
+    78
+    79
+    80
+    81
+    82
+    83
+    84
+    85
+    86
+    87
+    88
+    89
+    90
+
+| 
+    
+    
+    def resolve_backend() -> str:
+        """Resolve "auto" to a concrete backend, caching the result.
+    
+        When the backend is set to "auto", detection follows this priority:
+    
+        1. **torchvision** -- selected if both torchvision and a CUDA GPU are
+           available (GPU-accelerated NMS).
+        2. **numba** -- selected if the numba package is installed (JIT-compiled
+           loops, faster than pure numpy for large prediction counts).
+        3. **numpy** -- always available as the fallback (pure numpy,
+           no extra dependencies).
+    
+        If the backend was explicitly set via ``set_postprocess_backend``, that
+        value is returned directly without auto-detection.
+    
+        Returns:
+            One of "numpy", "numba", or "torchvision".
+        """
+        global _resolved_cache
+        if _resolved_cache is not None:
+            return _resolved_cache
+    
+        if _backend != "auto":
+            _resolved_cache = _backend
+            return _backend
+    
+        # Auto-detect: prefer torchvision on GPU, then numba, then numpy
+        if is_available("torchvision"):
+            try:
+                import torch
+    
+                if torch.cuda.is_available():
+                    _resolved_cache = "torchvision"
+                    return _resolved_cache
+            except ImportError:
+                pass
+    
+        if is_available("numba"):
+            _resolved_cache = "numba"
+            return _resolved_cache
+    
+        _resolved_cache = "numpy"
+        return _resolved_cache
+      
+  
+---|---  
+  
+####  `` `set_postprocess_backend(name)` ¶
+
+Set the postprocessing backend.
+
+Call once at startup before running any inference. This function is **not** thread-safe.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#####  `name` ¶
+
+|  `str` |  One of "auto", "numpy", "numba", "torchvision". |  _required_  
+Source code in `sahi/postprocess/backends.py`
+    
+    
+    20
+    21
+    22
+    23
+    24
+    25
+    26
+    27
+    28
+    29
+    30
+    31
+    32
+    33
+    34
+    35
+    36
+    37
+    38
+    39
+    40
+
+| 
+    
+    
+    def set_postprocess_backend(name: str) -> None:
+        """Set the postprocessing backend.
+    
+        Call once at startup before running any inference.  This function is
+        **not** thread-safe.
+    
+        Args:
+            name: One of "auto", "numpy", "numba", "torchvision".
+        """
+        global _backend, _resolved_cache
+        if name not in VALID_BACKENDS:
+            raise ValueError(f"Unknown backend {name!r}. Choose from {VALID_BACKENDS}")
+        _backend = name
+        _resolved_cache = None  # force re-resolve
+        # Invalidate the dispatch function cache in combine module
+        try:
+            from sahi.postprocess.combine import _dispatch_cache
+    
+            _dispatch_cache.clear()
+        except ImportError:
+            pass
+      
+  
+---|---  
+  
+##  `` `sahi.postprocess.combine` ¶
+
+Postprocessing strategies for combining predictions from sliced inference.
+
+### Classes¶
+
+####  `` `GreedyNMMPostprocess` ¶
+
+Bases: `[NMMPostprocess](./#sahi.postprocess.combine.NMMPostprocess "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>NMMPostprocess</code>")`
+
+Postprocessor using Greedy Non-Maximum Merging (NMM).
+
+Similar to NMM but uses a greedy strategy: each kept prediction only merges boxes that directly overlap with it (no transitive merging). This is faster than full NMM and produces tighter merged boxes.
+
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    413
+    414
+    415
+    416
+    417
+    418
+    419
+    420
+    421
+    422
+
+| 
+    
+    
+    class GreedyNMMPostprocess(NMMPostprocess):
+        """Postprocessor using Greedy Non-Maximum Merging (NMM).
+    
+        Similar to NMM but uses a greedy strategy: each kept prediction only
+        merges boxes that directly overlap with it (no transitive merging).
+        This is faster than full NMM and produces tighter merged boxes.
+        """
+    
+        _agnostic_func = staticmethod(greedy_nmm)
+        _batched_func = staticmethod(batched_greedy_nmm)
+      
+  
+---|---  
+  
+####  `` `LSNMSPostprocess` ¶
+
+Bases: `[PostprocessPredictions](./#sahi.postprocess.combine.PostprocessPredictions "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>PostprocessPredictions</code>")`
+
+Postprocessor using Locality-Sensitive NMS from the `lsnms` package.
+
+Uses a spatial index for fast neighbor lookup, making it efficient for large numbers of predictions. Only supports IoU metric (not IoS). Requires the `lsnms` package (`pip install lsnms>0.3.1`).
+
+Note
+
+This postprocessor is experimental and not recommended for production use.
+
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    425
+    426
+    427
+    428
+    429
+    430
+    431
+    432
+    433
+    434
+    435
+    436
+    437
+    438
+    439
+    440
+    441
+    442
+    443
+    444
+    445
+    446
+    447
+    448
+    449
+    450
+    451
+    452
+    453
+    454
+    455
+    456
+    457
+    458
+    459
+    460
+    461
+    462
+    463
+    464
+    465
+    466
+    467
+    468
+    469
+    470
+    471
+    472
+    473
+    474
+    475
+    476
+
+| 
+    
+    
+    class LSNMSPostprocess(PostprocessPredictions):
+        """Postprocessor using Locality-Sensitive NMS from the ``lsnms`` package.
+    
+        Uses a spatial index for fast neighbor lookup, making it efficient for
+        large numbers of predictions. Only supports IoU metric (not IoS).
+        Requires the ``lsnms`` package (``pip install lsnms>0.3.1``).
+    
+        Note:
+            This postprocessor is experimental and not recommended for
+            production use.
+        """
+    
+        def __call__(self, object_predictions: list[ObjectPrediction]) -> list[ObjectPrediction]:
+            """Apply Locality-Sensitive NMS to suppress overlapping predictions.
+    
+            Args:
+                object_predictions: List of ObjectPrediction instances to suppress.
+    
+            Returns:
+                List of suppressed ObjectPrediction instances.
+    
+            Raises:
+                ModuleNotFoundError: If the lsnms package is not installed.
+                NotImplementedError: If match_metric is not "IOU".
+            """
+            try:
+                from lsnms import nms
+            except ModuleNotFoundError:
+                raise ModuleNotFoundError(
+                    'Please run "pip install lsnms>0.3.1" to install lsnms first for lsnms utilities.'
+                )
+    
+            if self.match_metric == "IOS":
+                raise NotImplementedError(f"match_metric={self.match_metric} is not supported for LSNMSPostprocess")
+    
+            logger.warning("LSNMSPostprocess is experimental and not recommended to use.")
+    
+            object_prediction_list = ObjectPredictionList(object_predictions)
+            preds_np = object_prediction_list.tonumpy()
+    
+            boxes = preds_np[:, :4]
+            scores = preds_np[:, 4]
+            class_ids = preds_np[:, 5].astype("uint8")
+    
+            keep = nms(
+                boxes, scores, iou_threshold=self.match_threshold, class_ids=None if self.class_agnostic else class_ids
+            )
+    
+            selected = object_prediction_list[keep].tolist()
+            if not isinstance(selected, list):
+                selected = [selected]
+            return selected
+      
+  
+---|---  
+  
+##### Methods:¶
+
+######  `` `__call__(object_predictions)` ¶
+
+Apply Locality-Sensitive NMS to suppress overlapping predictions.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#######  `object_predictions` ¶
+
+|  `list[[ObjectPrediction](../../api/#sahi.prediction.ObjectPrediction "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>ObjectPrediction</code>")]` |  List of ObjectPrediction instances to suppress. |  _required_  
+  
+Returns:
+
+Type | Description  
+---|---  
+`list[[ObjectPrediction](../../api/#sahi.prediction.ObjectPrediction "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>ObjectPrediction</code>")]` |  List of suppressed ObjectPrediction instances.  
+  
+Raises:
+
+Type | Description  
+---|---  
+`ModuleNotFoundError` |  If the lsnms package is not installed.  
+`NotImplementedError` |  If match_metric is not "IOU".  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    437
+    438
+    439
+    440
+    441
+    442
+    443
+    444
+    445
+    446
+    447
+    448
+    449
+    450
+    451
+    452
+    453
+    454
+    455
+    456
+    457
+    458
+    459
+    460
+    461
+    462
+    463
+    464
+    465
+    466
+    467
+    468
+    469
+    470
+    471
+    472
+    473
+    474
+    475
+    476
+
+| 
+    
+    
+    def __call__(self, object_predictions: list[ObjectPrediction]) -> list[ObjectPrediction]:
+        """Apply Locality-Sensitive NMS to suppress overlapping predictions.
+    
+        Args:
+            object_predictions: List of ObjectPrediction instances to suppress.
+    
+        Returns:
+            List of suppressed ObjectPrediction instances.
+    
+        Raises:
+            ModuleNotFoundError: If the lsnms package is not installed.
+            NotImplementedError: If match_metric is not "IOU".
+        """
+        try:
+            from lsnms import nms
+        except ModuleNotFoundError:
+            raise ModuleNotFoundError(
+                'Please run "pip install lsnms>0.3.1" to install lsnms first for lsnms utilities.'
+            )
+    
+        if self.match_metric == "IOS":
+            raise NotImplementedError(f"match_metric={self.match_metric} is not supported for LSNMSPostprocess")
+    
+        logger.warning("LSNMSPostprocess is experimental and not recommended to use.")
+    
+        object_prediction_list = ObjectPredictionList(object_predictions)
+        preds_np = object_prediction_list.tonumpy()
+    
+        boxes = preds_np[:, :4]
+        scores = preds_np[:, 4]
+        class_ids = preds_np[:, 5].astype("uint8")
+    
+        keep = nms(
+            boxes, scores, iou_threshold=self.match_threshold, class_ids=None if self.class_agnostic else class_ids
+        )
+    
+        selected = object_prediction_list[keep].tolist()
+        if not isinstance(selected, list):
+            selected = [selected]
+        return selected
+      
+  
+---|---  
+  
+####  `` `NMMPostprocess` ¶
+
+Bases: `[PostprocessPredictions](./#sahi.postprocess.combine.PostprocessPredictions "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>PostprocessPredictions</code>")`
+
+Postprocessor using Non-Maximum Merging (NMM) with transitive merging.
+
+Instead of discarding overlapping detections, merges their bounding boxes, masks, and scores. Uses non-greedy transitive merging: if A overlaps B and B overlaps C, all three are merged even if A does not directly overlap C.
+
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    385
+    386
+    387
+    388
+    389
+    390
+    391
+    392
+    393
+    394
+    395
+    396
+    397
+    398
+    399
+    400
+    401
+    402
+    403
+    404
+    405
+    406
+    407
+    408
+    409
+    410
+
+| 
+    
+    
+    class NMMPostprocess(PostprocessPredictions):
+        """Postprocessor using Non-Maximum Merging (NMM) with transitive merging.
+    
+        Instead of discarding overlapping detections, merges their bounding
+        boxes, masks, and scores. Uses non-greedy transitive merging: if A
+        overlaps B and B overlaps C, all three are merged even if A does not
+        directly overlap C.
+        """
+    
+        _agnostic_func = staticmethod(nmm)
+        _batched_func = staticmethod(batched_nmm)
+    
+        def __call__(self, object_predictions: list[ObjectPrediction]) -> list[ObjectPrediction]:
+            """Apply Non-Maximum Merging to merge overlapping predictions.
+    
+            Args:
+                object_predictions: List of ObjectPrediction instances to merge.
+    
+            Returns:
+                List of merged ObjectPrediction instances.
+            """
+            object_prediction_list = ObjectPredictionList(object_predictions)
+            preds_np = object_prediction_list.tonumpy()
+            func = self._agnostic_func if self.class_agnostic else self._batched_func
+            keep_to_merge = func(preds_np, match_threshold=self.match_threshold, match_metric=self.match_metric)
+            return _apply_merge(object_prediction_list, keep_to_merge, self.match_metric, self.match_threshold)
+      
+  
+---|---  
+  
+##### Methods:¶
+
+######  `` `__call__(object_predictions)` ¶
+
+Apply Non-Maximum Merging to merge overlapping predictions.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#######  `object_predictions` ¶
+
+|  `list[[ObjectPrediction](../../api/#sahi.prediction.ObjectPrediction "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>ObjectPrediction</code>")]` |  List of ObjectPrediction instances to merge. |  _required_  
+  
+Returns:
+
+Type | Description  
+---|---  
+`list[[ObjectPrediction](../../api/#sahi.prediction.ObjectPrediction "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>ObjectPrediction</code>")]` |  List of merged ObjectPrediction instances.  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    397
+    398
+    399
+    400
+    401
+    402
+    403
+    404
+    405
+    406
+    407
+    408
+    409
+    410
+
+| 
+    
+    
+    def __call__(self, object_predictions: list[ObjectPrediction]) -> list[ObjectPrediction]:
+        """Apply Non-Maximum Merging to merge overlapping predictions.
+    
+        Args:
+            object_predictions: List of ObjectPrediction instances to merge.
+    
+        Returns:
+            List of merged ObjectPrediction instances.
+        """
+        object_prediction_list = ObjectPredictionList(object_predictions)
+        preds_np = object_prediction_list.tonumpy()
+        func = self._agnostic_func if self.class_agnostic else self._batched_func
+        keep_to_merge = func(preds_np, match_threshold=self.match_threshold, match_metric=self.match_metric)
+        return _apply_merge(object_prediction_list, keep_to_merge, self.match_metric, self.match_threshold)
+      
+  
+---|---  
+  
+####  `` `NMSPostprocess` ¶
+
+Bases: `[PostprocessPredictions](./#sahi.postprocess.combine.PostprocessPredictions "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>PostprocessPredictions</code>")`
+
+Postprocessor using Non-Maximum Suppression (NMS).
+
+Keeps the highest-scored prediction among overlapping boxes and discards the rest. Does not merge bounding boxes or masks.
+
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    358
+    359
+    360
+    361
+    362
+    363
+    364
+    365
+    366
+    367
+    368
+    369
+    370
+    371
+    372
+    373
+    374
+    375
+    376
+    377
+    378
+    379
+    380
+    381
+    382
+
+| 
+    
+    
+    class NMSPostprocess(PostprocessPredictions):
+        """Postprocessor using Non-Maximum Suppression (NMS).
+    
+        Keeps the highest-scored prediction among overlapping boxes and
+        discards the rest. Does not merge bounding boxes or masks.
+        """
+    
+        def __call__(self, object_predictions: list[ObjectPrediction]) -> list[ObjectPrediction]:
+            """Apply Non-Maximum Suppression to suppress overlapping predictions.
+    
+            Args:
+                object_predictions: List of ObjectPrediction instances to suppress.
+    
+            Returns:
+                List of suppressed ObjectPrediction instances.
+            """
+            object_prediction_list = ObjectPredictionList(object_predictions)
+            preds_np = object_prediction_list.tonumpy()
+            func = nms if self.class_agnostic else batched_nms
+            keep = func(preds_np, match_threshold=self.match_threshold, match_metric=self.match_metric)
+    
+            selected = object_prediction_list[keep].tolist()
+            if not isinstance(selected, list):
+                selected = [selected]
+            return selected
+      
+  
+---|---  
+  
+##### Methods:¶
+
+######  `` `__call__(object_predictions)` ¶
+
+Apply Non-Maximum Suppression to suppress overlapping predictions.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#######  `object_predictions` ¶
+
+|  `list[[ObjectPrediction](../../api/#sahi.prediction.ObjectPrediction "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>ObjectPrediction</code>")]` |  List of ObjectPrediction instances to suppress. |  _required_  
+  
+Returns:
+
+Type | Description  
+---|---  
+`list[[ObjectPrediction](../../api/#sahi.prediction.ObjectPrediction "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>ObjectPrediction</code>")]` |  List of suppressed ObjectPrediction instances.  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    365
+    366
+    367
+    368
+    369
+    370
+    371
+    372
+    373
+    374
+    375
+    376
+    377
+    378
+    379
+    380
+    381
+    382
+
+| 
+    
+    
+    def __call__(self, object_predictions: list[ObjectPrediction]) -> list[ObjectPrediction]:
+        """Apply Non-Maximum Suppression to suppress overlapping predictions.
+    
+        Args:
+            object_predictions: List of ObjectPrediction instances to suppress.
+    
+        Returns:
+            List of suppressed ObjectPrediction instances.
+        """
+        object_prediction_list = ObjectPredictionList(object_predictions)
+        preds_np = object_prediction_list.tonumpy()
+        func = nms if self.class_agnostic else batched_nms
+        keep = func(preds_np, match_threshold=self.match_threshold, match_metric=self.match_metric)
+    
+        selected = object_prediction_list[keep].tolist()
+        if not isinstance(selected, list):
+            selected = [selected]
+        return selected
+      
+  
+---|---  
+  
+####  `` `PostprocessPredictions` ¶
+
+Bases: `ABC`
+
+Abstract base class for postprocessing object prediction lists.
+
+Subclasses implement a specific strategy (NMS, NMM, greedy NMM, etc.) to reduce overlapping detections produced by sliced inference.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#####  `match_threshold` ¶
+
+|  `float` |  Minimum overlap value (IoU or IoS) to consider two predictions as matching. |  `0.5`  
+  
+#####  `match_metric` ¶
+
+|  `str` |  Overlap metric, "IOU" or "IOS". |  `'IOU'`  
+  
+#####  `class_agnostic` ¶
+
+|  `bool` |  If True, apply postprocessing across all categories. If False, apply per category independently. |  `True`  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    263
+    264
+    265
+    266
+    267
+    268
+    269
+    270
+    271
+    272
+    273
+    274
+    275
+    276
+    277
+    278
+    279
+    280
+    281
+    282
+    283
+    284
+    285
+    286
+    287
+    288
+    289
+    290
+    291
+    292
+    293
+    294
+    295
+    296
+    297
+    298
+    299
+    300
+    301
+    302
+    303
+    304
+    305
+    306
+
+| 
+    
+    
+    class PostprocessPredictions(ABC):
+        """Abstract base class for postprocessing object prediction lists.
+    
+        Subclasses implement a specific strategy (NMS, NMM, greedy NMM, etc.)
+        to reduce overlapping detections produced by sliced inference.
+    
+        Args:
+            match_threshold: Minimum overlap value (IoU or IoS) to consider
+                two predictions as matching.
+            match_metric: Overlap metric, "IOU" or "IOS".
+            class_agnostic: If True, apply postprocessing across all
+                categories. If False, apply per category independently.
+        """
+    
+        def __init__(
+            self,
+            match_threshold: float = 0.5,
+            match_metric: str = "IOU",
+            class_agnostic: bool = True,
+        ) -> None:
+            """Initialize the postprocessor with configuration parameters.
+    
+            Args:
+                match_threshold: Minimum overlap value (IoU or IoS) to consider
+                    two predictions as matching.
+                match_metric: Overlap metric, "IOU" or "IOS".
+                class_agnostic: If True, apply postprocessing across all
+                    categories. If False, apply per category independently.
+            """
+            self.match_threshold = match_threshold
+            self.class_agnostic = class_agnostic
+            self.match_metric = match_metric
+    
+        @abstractmethod
+        def __call__(self, predictions: list[ObjectPrediction]) -> list[ObjectPrediction]:
+            """Apply postprocessing to the list of predictions.
+    
+            Args:
+                predictions: List of ObjectPrediction instances to postprocess.
+    
+            Returns:
+                List of postprocessed ObjectPrediction instances.
+            """
+            pass
+      
+  
+---|---  
+  
+##### Methods:¶
+
+######  `` `__call__(predictions)` `abstractmethod` ¶
+
+Apply postprocessing to the list of predictions.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#######  `predictions` ¶
+
+|  `list[[ObjectPrediction](../../api/#sahi.prediction.ObjectPrediction "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>ObjectPrediction</code>")]` |  List of ObjectPrediction instances to postprocess. |  _required_  
+  
+Returns:
+
+Type | Description  
+---|---  
+`list[[ObjectPrediction](../../api/#sahi.prediction.ObjectPrediction "<code class="doc-symbol doc-symbol-heading doc-symbol-class"></code>            <code>ObjectPrediction</code>")]` |  List of postprocessed ObjectPrediction instances.  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    296
+    297
+    298
+    299
+    300
+    301
+    302
+    303
+    304
+    305
+    306
+
+| 
+    
+    
+    @abstractmethod
+    def __call__(self, predictions: list[ObjectPrediction]) -> list[ObjectPrediction]:
+        """Apply postprocessing to the list of predictions.
+    
+        Args:
+            predictions: List of ObjectPrediction instances to postprocess.
+    
+        Returns:
+            List of postprocessed ObjectPrediction instances.
+        """
+        pass
+      
+  
+---|---  
+  
+######  `` `__init__(match_threshold=0.5, match_metric='IOU', class_agnostic=True)` ¶
+
+Initialize the postprocessor with configuration parameters.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#######  `match_threshold` ¶
+
+|  `float` |  Minimum overlap value (IoU or IoS) to consider two predictions as matching. |  `0.5`  
+  
+#######  `match_metric` ¶
+
+|  `str` |  Overlap metric, "IOU" or "IOS". |  `'IOU'`  
+  
+#######  `class_agnostic` ¶
+
+|  `bool` |  If True, apply postprocessing across all categories. If False, apply per category independently. |  `True`  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    277
+    278
+    279
+    280
+    281
+    282
+    283
+    284
+    285
+    286
+    287
+    288
+    289
+    290
+    291
+    292
+    293
+    294
+
+| 
+    
+    
+    def __init__(
+        self,
+        match_threshold: float = 0.5,
+        match_metric: str = "IOU",
+        class_agnostic: bool = True,
+    ) -> None:
+        """Initialize the postprocessor with configuration parameters.
+    
+        Args:
+            match_threshold: Minimum overlap value (IoU or IoS) to consider
+                two predictions as matching.
+            match_metric: Overlap metric, "IOU" or "IOS".
+            class_agnostic: If True, apply postprocessing across all
+                categories. If False, apply per category independently.
+        """
+        self.match_threshold = match_threshold
+        self.class_agnostic = class_agnostic
+        self.match_metric = match_metric
+      
+  
+---|---  
+  
+### Functions:¶
+
+####  `` `batched_greedy_nmm(predictions, match_metric='IOU', match_threshold=0.5)` ¶
+
+Apply greedy non-maximum merging independently per category.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#####  `predictions` ¶
+
+|  `ndarray` |  Array of shape (N, 6) with columns [x1, y1, x2, y2, score, category_id]. |  _required_  
+  
+#####  `match_metric` ¶
+
+|  `str` |  Overlap metric, "IOU" or "IOS". |  `'IOU'`  
+  
+#####  `match_threshold` ¶
+
+|  `float` |  Minimum overlap to merge a lower-scored box. |  `0.5`  
+  
+Returns:
+
+Type | Description  
+---|---  
+`dict[int, list[int]]` |  Dict mapping each kept index to a list of indices merged into it.  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    197
+    198
+    199
+    200
+    201
+    202
+    203
+    204
+    205
+    206
+    207
+    208
+    209
+    210
+    211
+    212
+    213
+
+| 
+    
+    
+    def batched_greedy_nmm(
+        predictions: np.ndarray,
+        match_metric: str = "IOU",
+        match_threshold: float = 0.5,
+    ) -> dict[int, list[int]]:
+        """Apply greedy non-maximum merging independently per category.
+    
+        Args:
+            predictions: Array of shape (N, 6) with columns
+                [x1, y1, x2, y2, score, category_id].
+            match_metric: Overlap metric, "IOU" or "IOS".
+            match_threshold: Minimum overlap to merge a lower-scored box.
+    
+        Returns:
+            Dict mapping each kept index to a list of indices merged into it.
+        """
+        return _batched_apply(predictions, greedy_nmm, match_metric, match_threshold)  # type: ignore[return-value]
+      
+  
+---|---  
+  
+####  `` `batched_nmm(predictions, match_metric='IOU', match_threshold=0.5)` ¶
+
+Apply non-maximum merging (non-greedy, transitive) independently per category.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#####  `predictions` ¶
+
+|  `ndarray` |  Array of shape (N, 6) with columns [x1, y1, x2, y2, score, category_id]. |  _required_  
+  
+#####  `match_metric` ¶
+
+|  `str` |  Overlap metric, "IOU" or "IOS". |  `'IOU'`  
+  
+#####  `match_threshold` ¶
+
+|  `float` |  Minimum overlap to merge a lower-scored box. |  `0.5`  
+  
+Returns:
+
+Type | Description  
+---|---  
+`dict[int, list[int]]` |  Dict mapping each kept index to a list of indices merged into it.  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    239
+    240
+    241
+    242
+    243
+    244
+    245
+    246
+    247
+    248
+    249
+    250
+    251
+    252
+    253
+    254
+    255
+
+| 
+    
+    
+    def batched_nmm(
+        predictions: np.ndarray,
+        match_metric: str = "IOU",
+        match_threshold: float = 0.5,
+    ) -> dict[int, list[int]]:
+        """Apply non-maximum merging (non-greedy, transitive) independently per category.
+    
+        Args:
+            predictions: Array of shape (N, 6) with columns
+                [x1, y1, x2, y2, score, category_id].
+            match_metric: Overlap metric, "IOU" or "IOS".
+            match_threshold: Minimum overlap to merge a lower-scored box.
+    
+        Returns:
+            Dict mapping each kept index to a list of indices merged into it.
+        """
+        return _batched_apply(predictions, nmm, match_metric, match_threshold)  # type: ignore[return-value]
+      
+  
+---|---  
+  
+####  `` `batched_nms(predictions, match_metric='IOU', match_threshold=0.5)` ¶
+
+Apply non-maximum suppression independently per category.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#####  `predictions` ¶
+
+|  `ndarray` |  Array of shape (N, 6) with columns [x1, y1, x2, y2, score, category_id]. |  _required_  
+  
+#####  `match_metric` ¶
+
+|  `str` |  Overlap metric, "IOU" or "IOS". |  `'IOU'`  
+  
+#####  `match_threshold` ¶
+
+|  `float` |  Minimum overlap to suppress a lower-scored box. |  `0.5`  
+  
+Returns:
+
+Type | Description  
+---|---  
+`list[int]` |  List of indices of the kept predictions, sorted by score descending.  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    156
+    157
+    158
+    159
+    160
+    161
+    162
+    163
+    164
+    165
+    166
+    167
+    168
+    169
+    170
+    171
+    172
+
+| 
+    
+    
+    def batched_nms(
+        predictions: np.ndarray,
+        match_metric: str = "IOU",
+        match_threshold: float = 0.5,
+    ) -> list[int]:
+        """Apply non-maximum suppression independently per category.
+    
+        Args:
+            predictions: Array of shape (N, 6) with columns
+                [x1, y1, x2, y2, score, category_id].
+            match_metric: Overlap metric, "IOU" or "IOS".
+            match_threshold: Minimum overlap to suppress a lower-scored box.
+    
+        Returns:
+            List of indices of the kept predictions, sorted by score descending.
+        """
+        return _batched_apply(predictions, nms, match_metric, match_threshold)  # type: ignore[return-value]
+      
+  
+---|---  
+  
+####  `` `greedy_nmm(predictions, match_metric='IOU', match_threshold=0.5)` ¶
+
+Greedy non-maximum merging for axis-aligned bounding boxes.
+
+Instead of discarding overlapping boxes, merges them into the highest-scored box. Dispatches to the resolved backend.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#####  `predictions` ¶
+
+|  `ndarray` |  Array of shape (N, 6) with columns [x1, y1, x2, y2, score, category_id]. |  _required_  
+  
+#####  `match_metric` ¶
+
+|  `str` |  Overlap metric, "IOU" or "IOS". |  `'IOU'`  
+  
+#####  `match_threshold` ¶
+
+|  `float` |  Minimum overlap to merge a lower-scored box. |  `0.5`  
+  
+Returns:
+
+Type | Description  
+---|---  
+`dict[int, list[int]]` |  Dict mapping each kept index to a list of indices merged into it.  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    175
+    176
+    177
+    178
+    179
+    180
+    181
+    182
+    183
+    184
+    185
+    186
+    187
+    188
+    189
+    190
+    191
+    192
+    193
+    194
+
+| 
+    
+    
+    def greedy_nmm(
+        predictions: np.ndarray,
+        match_metric: str = "IOU",
+        match_threshold: float = 0.5,
+    ) -> dict[int, list[int]]:
+        """Greedy non-maximum merging for axis-aligned bounding boxes.
+    
+        Instead of discarding overlapping boxes, merges them into the
+        highest-scored box. Dispatches to the resolved backend.
+    
+        Args:
+            predictions: Array of shape (N, 6) with columns
+                [x1, y1, x2, y2, score, category_id].
+            match_metric: Overlap metric, "IOU" or "IOS".
+            match_threshold: Minimum overlap to merge a lower-scored box.
+    
+        Returns:
+            Dict mapping each kept index to a list of indices merged into it.
+        """
+        return _dispatch("greedy_nmm")(predictions, match_metric, match_threshold)
+      
+  
+---|---  
+  
+####  `` `nmm(predictions, match_metric='IOU', match_threshold=0.5)` ¶
+
+Non-maximum merging (non-greedy, transitive) for axis-aligned bounding boxes.
+
+Unlike greedy NMM, this variant allows transitive merging: if box A merges with B and B merges with C, all three are merged together. Dispatches to the resolved backend.
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#####  `predictions` ¶
+
+|  `ndarray` |  Array of shape (N, 6) with columns [x1, y1, x2, y2, score, category_id]. |  _required_  
+  
+#####  `match_metric` ¶
+
+|  `str` |  Overlap metric, "IOU" or "IOS". |  `'IOU'`  
+  
+#####  `match_threshold` ¶
+
+|  `float` |  Minimum overlap to merge a lower-scored box. |  `0.5`  
+  
+Returns:
+
+Type | Description  
+---|---  
+`dict[int, list[int]]` |  Dict mapping each kept index to a list of indices merged into it.  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    216
+    217
+    218
+    219
+    220
+    221
+    222
+    223
+    224
+    225
+    226
+    227
+    228
+    229
+    230
+    231
+    232
+    233
+    234
+    235
+    236
+
+| 
+    
+    
+    def nmm(
+        predictions: np.ndarray,
+        match_metric: str = "IOU",
+        match_threshold: float = 0.5,
+    ) -> dict[int, list[int]]:
+        """Non-maximum merging (non-greedy, transitive) for axis-aligned bounding boxes.
+    
+        Unlike greedy NMM, this variant allows transitive merging: if box A
+        merges with B and B merges with C, all three are merged together.
+        Dispatches to the resolved backend.
+    
+        Args:
+            predictions: Array of shape (N, 6) with columns
+                [x1, y1, x2, y2, score, category_id].
+            match_metric: Overlap metric, "IOU" or "IOS".
+            match_threshold: Minimum overlap to merge a lower-scored box.
+    
+        Returns:
+            Dict mapping each kept index to a list of indices merged into it.
+        """
+        return _dispatch("nmm")(predictions, match_metric, match_threshold)
+      
+  
+---|---  
+  
+####  `` `nms(predictions, match_metric='IOU', match_threshold=0.5)` ¶
+
+Non-maximum suppression for axis-aligned bounding boxes.
+
+Dispatches to the resolved backend (numpy, numba, or torchvision).
+
+Parameters:
+
+Name | Type | Description | Default  
+---|---|---|---  
+  
+#####  `predictions` ¶
+
+|  `ndarray` |  Array of shape (N, 6) with columns [x1, y1, x2, y2, score, category_id]. |  _required_  
+  
+#####  `match_metric` ¶
+
+|  `str` |  Overlap metric, "IOU" or "IOS". |  `'IOU'`  
+  
+#####  `match_threshold` ¶
+
+|  `float` |  Minimum overlap to suppress a lower-scored box. |  `0.5`  
+  
+Returns:
+
+Type | Description  
+---|---  
+`list[int]` |  List of indices of the kept predictions, sorted by score descending.  
+Source code in `sahi/postprocess/combine.py`
+    
+    
+    133
+    134
+    135
+    136
+    137
+    138
+    139
+    140
+    141
+    142
+    143
+    144
+    145
+    146
+    147
+    148
+    149
+    150
+    151
+    152
+    153
+
+| 
+    
+    
+    def nms(
+        predictions: np.ndarray,
+        match_metric: str = "IOU",
+        match_threshold: float = 0.5,
+    ) -> list[int]:
+        """Non-maximum suppression for axis-aligned bounding boxes.
+    
+        Dispatches to the resolved backend (numpy, numba, or torchvision).
+    
+        Args:
+            predictions: Array of shape (N, 6) with columns
+                [x1, y1, x2, y2, score, category_id].
+            match_metric: Overlap metric, "IOU" or "IOS".
+            match_threshold: Minimum overlap to suppress a lower-scored box.
+    
+        Returns:
+            List of indices of the kept predictions, sorted by score descending.
+        """
+        if len(predictions) == 0:
+            return []
+        return _dispatch("nms")(predictions, match_metric, match_threshold)
+      
+  
+---|---

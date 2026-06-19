@@ -1,0 +1,162 @@
+---
+source_url: https://docs.ultralytics.com/ar/yolov5/tutorials/model-pruning-and-sparsity
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-pruning-and-sparsity.md)
+
+# Link to this sectionتقليم النموذج والندرة في YOLOv5#
+
+📚 يشرح هذا الدليل كيفية تطبيق **التقليم** (pruning) على نماذج YOLOv5 🚀 لإنشاء شبكات أكثر كفاءة مع الحفاظ على الأداء.
+
+## Link to this sectionما هو تقليم النموذج؟#
+
+يعد [تقليم النموذج](https://www.ultralytics.com/glossary/model-pruning) تقنية مستخدمة لتقليل حجم وتعقيد الشبكات العصبية عن طريق إزالة المعلمات (الأوزان والاتصالات) الأقل أهمية. تخلق هذه العملية نموذجاً أكثر كفاءة مع العديد من المزايا:
+
+  * تقليل حجم النموذج لتسهيل النشر على الأجهزة ذات الموارد المحدودة
+  * سرعات استدلال (inference) أسرع مع تأثير ضئيل على الدقة
+  * استهلاك أقل للذاكرة والطاقة
+  * تحسين الكفاءة العامة للتطبيقات في الوقت الفعلي
+
+
+
+يعمل التقليم من خلال تحديد وإزالة المعلمات التي تساهم بأقل قدر في أداء النموذج، مما ينتج عنه نموذج أخف وزناً وبدقة مماثلة.
+
+## Link to this sectionقبل البدء#
+
+قم باستنساخ المستودع وتثبيت [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) في بيئة [**Python >=3.8.0**](https://www.python.org/)، بما في ذلك [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). يتم تنزيل [النماذج](https://github.com/ultralytics/yolov5/tree/master/models) و[مجموعات البيانات](https://github.com/ultralytics/yolov5/tree/master/data) تلقائيًا من أحدث [إصدار](https://github.com/ultralytics/yolov5/releases) لـ YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+## Link to this sectionاختبار الأداء الأساسي#
+
+قبل التقليم، حدد أداءً أساسياً للمقارنة به. يختبر هذا الأمر نموذج YOLOv5x على مجموعة COCO val2017 بحجم صورة 640 بكسل. `yolov5x.pt` هو أكبر نموذج وأكثرها دقة متاح. الخيارات الأخرى هي `yolov5s.pt` و `yolov5m.pt` و `yolov5l.pt`، أو نقطة التفتيش الخاصة بك من تدريب مجموعة بيانات مخصصة `./weights/best.pt`. للحصول على تفاصيل حول جميع النماذج المتاحة، راجع [الجدول](https://github.com/ultralytics/yolov5#pretrained-checkpoints) في ملف README.
+    
+    
+    python val.py --weights yolov5x.pt --data coco.yaml --img 640 --half
+
+المخرجات:
+    
+    
+    val: data=/content/yolov5/data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, workers=8, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True, dnn=False
+    YOLOv5 🚀 v6.0-224-g4c40933 torch 1.10.0+cu111 CUDA:0 (Tesla V100-SXM2-16GB, 16160MiB)
+    
+    Fusing layers...
+    Model Summary: 444 layers, 86705005 parameters, 0 gradients
+    val: Scanning '/content/datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupt: 100% 5000/5000 [00:00<?, ?it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [01:12<00:00,  2.16it/s]
+                     all       5000      36335      0.732      0.628      0.683      0.496
+    Speed: 0.1ms pre-process, 5.2ms inference, 1.7ms NMS per image at shape (32, 3, 640, 640)  # <--- base speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-2/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.507  # <--- base mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.689
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.552
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.345
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.559
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.652
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.381
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.630
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.682
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.526
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.731
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.829
+    Results saved to runs/val/exp
+
+## Link to this sectionتطبيق التقليم على YOLOv5x (ندرة بنسبة 30%)#
+
+يمكننا تطبيق التقليم على النموذج باستخدام أمر `torch_utils.prune()` المعرف في `utils/torch_utils.py`. لاختبار نموذج مقلم، نقوم بتحديث `val.py` لتقليم YOLOv5x إلى ندرة 0.3 (30% من الأوزان مضبوطة على صفر):
+
+![YOLOv5 model pruning to 30% sparsity code](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sparsity-test-yolov5x-coco.avif)
+
+مخرجات مقلمة بنسبة 30%:
+    
+    
+    val: data=/content/yolov5/data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, workers=8, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True, dnn=False
+    YOLOv5 🚀 v6.0-224-g4c40933 torch 1.10.0+cu111 CUDA:0 (Tesla V100-SXM2-16GB, 16160MiB)
+    
+    Fusing layers...
+    Model Summary: 444 layers, 86705005 parameters, 0 gradients
+    Pruning model...  0.3 global sparsity
+    val: Scanning '/content/datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupt: 100% 5000/5000 [00:00<?, ?it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [01:11<00:00,  2.19it/s]
+                     all       5000      36335      0.724      0.614      0.671      0.478
+    Speed: 0.1ms pre-process, 5.2ms inference, 1.7ms NMS per image at shape (32, 3, 640, 640)  # <--- prune speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-3/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.489  # <--- prune mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.677
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.537
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.334
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.542
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.635
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.370
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.612
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.664
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.496
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.722
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.803
+    Results saved to runs/val/exp-3
+
+## Link to this sectionتحليل النتائج#
+
+من النتائج، يمكننا ملاحظة ما يلي:
+
+  * **تحقيق ندرة بنسبة 30%** : 30% من معلمات وزن النموذج في طبقات `nn.Conv2d` أصبحت الآن صفراً
+  * **وقت الاستدلال يظل دون تغيير** : على الرغم من التقليم، فإن سرعة المعالجة هي نفسها تقريباً
+  * **تأثير طفيف على الأداء** : انخفض mAP قليلاً من 0.507 إلى 0.489 (انخفاض بنسبة 3.6% فقط)
+  * **تقليل حجم النموذج** : يتطلب النموذج المقلم ذاكرة أقل للتخزين
+
+
+
+يوضح هذا أن التقليم يمكن أن يقلل بشكل كبير من تعقيد النموذج مع تأثير بسيط على الأداء، مما يجعله تقنية تحسين فعالة للنشر في البيئات ذات الموارد المحدودة.
+
+## Link to this sectionضبط النماذج المقلمة#
+
+للحصول على أفضل النتائج، يجب ضبط النماذج المقلمة بعد التقليم لاستعادة الدقة. يمكن القيام بذلك عن طريق:
+
+  1. تطبيق التقليم بمستوى ندرة مرغوب
+  2. تدريب النموذج المقلم لبضع دورات (epochs) مع معدل تعلم أقل
+  3. تقييم النموذج المقلم بعد الضبط مقابل الأداء الأساسي
+
+
+
+تساعد هذه العملية المعلمات المتبقية على التكيف للتعويض عن الاتصالات التي تمت إزالتها، مما يؤدي غالباً إلى استعادة معظم أو كل الدقة الأصلية.
+
+## Link to this sectionالبيئات المدعومة#
+
+توفر Ultralytics مجموعة من البيئات الجاهزة للاستخدام، حيث يتم تثبيت التبعيات الأساسية مسبقًا مثل [CUDA](https://developer.nvidia.com/cuda)، و [CUDNN](https://developer.nvidia.com/cudnn)، و [Python](https://www.python.org/)، و [PyTorch](https://pytorch.org/)، لبدء مشاريعك.
+
+  * **دفاتر ملاحظات مجانية لوحدات معالجة الرسومات** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [GCP Quickstart Guide](/ar/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [دليل البدء السريع لـ AWS](/ar/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [دليل البدء السريع لـ AzureML](/ar/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [دليل البدء السريع لـ Docker](/ar/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionحالة المشروع#
+
+[![YOLOv5 CI](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+تشير هذه الشارة إلى أن جميع اختبارات التكامل المستمر (CI) الخاصة بـ [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) تمر بنجاح. تقوم اختبارات CI هذه بفحص دقة وأداء YOLOv5 عبر جوانب رئيسية مختلفة بشكل صارم: [التدريب](https://github.com/ultralytics/yolov5/blob/master/train.py)، و[التحقق](https://github.com/ultralytics/yolov5/blob/master/val.py)، و[الاستدلال](https://github.com/ultralytics/yolov5/blob/master/detect.py)، و[التصدير](https://github.com/ultralytics/yolov5/blob/master/export.py)، و[المقاييس](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). وهي تضمن تشغيلًا متسقًا وموثوقًا على macOS و Windows و Ubuntu، مع إجراء الاختبارات كل 24 ساعة ومع كل التزام (commit) جديد.
+
+المساهمون
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-pruning-and-sparsity.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+تم الإنشاء قبل 3 أيامتم التحديث قبل 3 أيام
+
+## التعليقات
+
+في هذه الصفحة
+
+استكشف باستخدام الذكاء الاصطناعي

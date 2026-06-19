@@ -1,0 +1,244 @@
+---
+source_url: https://docs.ultralytics.com/ru/yolov5/tutorials/architecture-description
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/architecture-description.md)
+
+# Link to this sectionАрхитектура Ultralytics YOLOv5#
+
+YOLOv5 (v6.0/6.1) — это мощный алгоритм обнаружения объектов, разработанный Ultralytics. В этой статье мы подробно разберем архитектуру YOLOv5, стратегии [дополнения данных](https://www.ultralytics.com/glossary/data-augmentation), методы обучения и техники вычисления функции потерь. Это комплексное понимание поможет тебе улучшить практическое применение обнаружения объектов в различных областях, включая наблюдение, автономные транспортные средства и [распознавание изображений](https://www.ultralytics.com/glossary/image-recognition).
+
+## Link to this sectionСтруктура модели#
+
+Архитектура YOLOv5 состоит из трех основных частей:
+
+  * **Backbone** : Это основная часть сети. В YOLOv5 для backbone используется структура `CSPDarknet53` — модификация архитектуры Darknet, применявшейся в предыдущих версиях.
+  * **Neck** : Эта часть соединяет backbone и head. В YOLOv5 используются структуры `SPPF` (Spatial Pyramid Pooling - Fast) и `PANet` (Path Aggregation Network).
+  * **Head** : Эта часть отвечает за создание финального вывода. Для этой цели в YOLOv5 используется `YOLOv3 Head`.
+
+
+
+Структура модели показана на изображении ниже. Детали структуры модели можно найти в [`models/yolov5l.yaml`](https://github.com/ultralytics/yolov5/blob/master/models/yolov5l.yaml).
+
+![Архитектура YOLOv5, показывающая backbone, neck и head](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/yolov5-model-structure.avif)
+
+YOLOv5 представляет несколько заметных улучшений по сравнению со своими предшественниками:
+
+  1. Структура `Focus`, встречавшаяся в более ранних версиях, заменена на структуру `6x6 Conv2d`. Это изменение повышает эффективность [#4825](https://github.com/ultralytics/yolov5/issues/4825).
+  2. Структура `SPP` заменена на `SPPF`. Это изменение более чем вдвое увеличивает скорость обработки, сохраняя при этом тот же выходной результат.
+
+
+
+Для тестирования скорости `SPP` и `SPPF` можно использовать следующий код:
+
+SPP vs SPPF speed profiling example (click to open)
+    
+    
+    import time
+    
+    import torch
+    import torch.nn as nn
+    
+    class SPP(nn.Module):
+        def __init__(self):
+            """Initializes an SPP module with three different sizes of max pooling layers."""
+            super().__init__()
+            self.maxpool1 = nn.MaxPool2d(5, 1, padding=2)
+            self.maxpool2 = nn.MaxPool2d(9, 1, padding=4)
+            self.maxpool3 = nn.MaxPool2d(13, 1, padding=6)
+    
+        def forward(self, x):
+            """Applies three max pooling layers on input `x` and concatenates results along channel dimension."""
+            o1 = self.maxpool1(x)
+            o2 = self.maxpool2(x)
+            o3 = self.maxpool3(x)
+            return torch.cat([x, o1, o2, o3], dim=1)
+    
+    class SPPF(nn.Module):
+        def __init__(self):
+            """Initializes an SPPF module with a specific configuration of MaxPool2d layer."""
+            super().__init__()
+            self.maxpool = nn.MaxPool2d(5, 1, padding=2)
+    
+        def forward(self, x):
+            """Applies sequential max pooling and concatenates results with input tensor."""
+            o1 = self.maxpool(x)
+            o2 = self.maxpool(o1)
+            o3 = self.maxpool(o2)
+            return torch.cat([x, o1, o2, o3], dim=1)
+    
+    def main():
+        """Compares outputs and performance of SPP and SPPF on a random tensor (8, 32, 16, 16)."""
+        input_tensor = torch.rand(8, 32, 16, 16)
+        spp = SPP()
+        sppf = SPPF()
+        output1 = spp(input_tensor)
+        output2 = sppf(input_tensor)
+    
+        print(torch.equal(output1, output2))
+    
+        t_start = time.time()
+        for _ in range(100):
+            spp(input_tensor)
+        print(f"SPP time: {time.time() - t_start}")
+    
+        t_start = time.time()
+        for _ in range(100):
+            sppf(input_tensor)
+        print(f"SPPF time: {time.time() - t_start}")
+    
+    if __name__ == "__main__":
+        main()
+
+результат:
+    
+    
+    True
+    SPP time: 0.5373051166534424
+    SPPF time: 0.20780706405639648
+
+## Link to this sectionМетоды дополнения данных#
+
+YOLOv5 применяет различные методы дополнения данных, чтобы улучшить способность модели к обобщению и уменьшить [переобучение](https://www.ultralytics.com/glossary/overfitting). К этим методам относятся:
+
+  * **Mosaic Augmentation** : Метод обработки изображений, который объединяет четыре обучающих изображения в одно, побуждая модели [обнаружения объектов](https://www.ultralytics.com/glossary/object-detection) лучше справляться с различными масштабами и перемещениями объектов.
+
+![Mosaic-дополнение данных YOLOv5, объединяющее четыре изображения](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/mosaic-augmentation.avif)
+
+  * **Copy-Paste Augmentation** : Инновационный метод дополнения данных, который копирует случайные фрагменты с одного изображения и вставляет их на другое случайно выбранное изображение, эффективно создавая новый обучающий образец.
+
+![Copy-Paste дополнение YOLOv5 для сегментации экземпляров](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/copy-paste.avif)
+
+  * **Random Affine Transformations** : Включает случайное вращение, масштабирование, перемещение и сдвиг изображений.
+
+![Случайные аффинные преобразования YOLOv5 для обучения](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/random-affine-transformations.avif)
+
+  * **MixUp Augmentation** : Метод, создающий составные изображения путем взятия линейной комбинации двух изображений и связанных с ними меток.
+
+![MixUp-дополнение данных YOLOv5, смешивающее два изображения](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/mixup.avif)
+
+  * **Albumentations** : Мощная библиотека для дополнения изображений, которая поддерживает огромное разнообразие методов аугментации. Узнай больше об [использовании дополнений Albumentations](https://www.ultralytics.com/blog/using-albumentations-augmentations-to-diversify-your-data).
+
+  * **HSV Augmentation** : Случайные изменения оттенка (Hue), насыщенности (Saturation) и яркости (Value) изображений.
+
+![Примеры дополнения цветового пространства HSV в YOLOv5](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/hsv-augmentation.avif)
+
+  * **Random Horizontal Flip** : Метод дополнения, который случайным образом отражает изображения по горизонтали.
+
+![Случайное горизонтальное отражение YOLOv5](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/random-horizontal-flip.avif)
+
+
+
+
+## Link to this sectionСтратегии обучения#
+
+YOLOv5 применяет несколько сложных стратегий обучения для повышения производительности модели. Они включают:
+
+  * **Multiscale Training** : Во время процесса обучения входные изображения случайным образом масштабируются в диапазоне от 0.5 до 1.5 от их исходного размера.
+  * **AutoAnchor** : Эта стратегия оптимизирует априорные anchor boxes, чтобы они соответствовали статистическим характеристикам ground truth боксов в твоих пользовательских данных.
+  * **Warmup and Cosine LR Scheduler** : Метод корректировки [скорости обучения](https://www.ultralytics.com/glossary/learning-rate) для повышения производительности модели.
+  * **Exponential Moving Average (EMA)** : Стратегия, которая использует среднее значение параметров за прошлые шаги для стабилизации процесса обучения и уменьшения ошибки обобщения.
+  * **[Mixed Precision](https://www.ultralytics.com/glossary/mixed-precision) Training**: Метод выполнения операций в формате половинной [точности](https://www.ultralytics.com/glossary/precision), что снижает использование памяти и увеличивает скорость вычислений.
+  * **Hyperparameter Evolution** : Стратегия автоматической настройки гиперпараметров для достижения оптимальной производительности. Узнай больше о [настройке гиперпараметров](https://docs.ultralytics.com/guides/hyperparameter-tuning).
+
+
+
+## Link to this sectionДополнительные возможности#
+
+### Link to this section4.1 Вычисление потерь#
+
+Потери в YOLOv5 вычисляются как комбинация трех отдельных компонентов потерь:
+
+  * **Classes Loss (BCE Loss)** : Binary Cross-Entropy loss, измеряет ошибку для задачи классификации.
+  * **Objectness Loss (BCE Loss)** : Еще одна Binary Cross-Entropy loss, вычисляет ошибку при обнаружении того, присутствует ли объект в конкретной ячейке сетки или нет.
+  * **Location Loss (CIoU Loss)** : Complete IoU loss, измеряет ошибку локализации объекта внутри ячейки сетки.
+
+
+
+Общая [функция потерь](https://www.ultralytics.com/glossary/loss-function) представлена формулой:
+
+![Формула общей функции потерь YOLOv5](https://latex.codecogs.com/svg.image?Loss=%5Clambda_1L_%7Bcls%7D+%5Clambda_2L_%7Bobj%7D+%5Clambda_3L_%7Bloc%7D)
+
+### Link to this section4.2 Балансировка потерь#
+
+Потери objectness для трех слоев предсказания (`P3`, `P4`, `P5`) взвешиваются по-разному. Веса балансировки составляют `[4.0, 1.0, 0.4]` соответственно. Такой подход гарантирует, что предсказания на разных масштабах вносят соответствующий вклад в общие потери.
+
+![Формула балансировки потерь objectness YOLOv5](https://latex.codecogs.com/svg.image?L_%7Bobj%7D=4.0%5Ccdot&space;L_%7Bobj%7D%5E%7Bsmall%7D+1.0%5Ccdot&space;L_%7Bobj%7D%5E%7Bmedium%7D+0.4%5Ccdot&space;L_%7Bobj%7D%5E%7Blarge%7D)
+
+### Link to this section4.3 Устранение чувствительности сетки#
+
+Архитектура YOLOv5 вносит некоторые важные изменения в стратегию предсказания боксов по сравнению с более ранними версиями YOLO. В YOLOv2 и YOLOv3 координаты бокса предсказывались напрямую с использованием активации последнего слоя.
+
+![Формула предсказания x-координаты ограничивающей рамки](https://latex.codecogs.com/svg.image?b_x=%5Csigma\(t_x\)+c_x) ![Формула предсказания y-координаты ограничивающей рамки](https://latex.codecogs.com/svg.image?b_y=%5Csigma\(t_y\)+c_y) ![Формула предсказания ширины ограничивающей рамки](https://latex.codecogs.com/svg.image?b_w=p_w%5Ccdot&space;e%5E%7Bt_w%7D) ![Формула предсказания высоты ограничивающей рамки](https://latex.codecogs.com/svg.image?b_h=p_h%5Ccdot&space;e%5E%7Bt_h%7D)
+
+![YOLOv5 grid computation](https://user-images.githubusercontent.com/31005897/158508027-8bf63c28-8290-467b-8a3e-4ad09235001a.png#pic_center)
+
+Однако в YOLOv5 формула для предсказания координат бокса была обновлена, чтобы уменьшить чувствительность к сетке и предотвратить предсказание моделью неограниченных размеров бокса.
+
+Пересмотренные формулы для расчета предсказанной [ограничивающей рамки](https://www.ultralytics.com/glossary/bounding-box) выглядят следующим образом:
+
+![Пересмотренная формула x-координаты ограничивающей рамки YOLOv5](https://latex.codecogs.com/svg.image?b_x=\(2%5Ccdot%5Csigma\(t_x\)-0.5\)+c_x) ![Пересмотренная формула y-координаты ограничивающей рамки YOLOv5](https://latex.codecogs.com/svg.image?b_y=\(2%5Ccdot%5Csigma\(t_y\)-0.5\)+c_y) ![Пересмотренная формула ширины ограничивающей рамки YOLOv5](https://latex.codecogs.com/svg.image?b_w=p_w%5Ccdot\(2%5Ccdot%5Csigma\(t_w\)\)%5E2) ![Пересмотренная формула высоты ограничивающей рамки YOLOv5](https://latex.codecogs.com/svg.image?b_h=p_h%5Ccdot\(2%5Ccdot%5Csigma\(t_h\)\)%5E2)
+
+Сравни смещение центральной точки до и после масштабирования. Диапазон смещения центральной точки скорректирован с (0, 1) на (-0.5, 1.5). Таким образом, смещение может легко принимать значения 0 или 1.
+
+![YOLOv5 grid scaling](https://user-images.githubusercontent.com/31005897/158508052-c24bc5e8-05c1-4154-ac97-2e1ec71f582e.png#pic_center)
+
+Сравни коэффициент масштабирования высоты и ширины (относительно анкора) до и после корректировки. Оригинальные уравнения боксов yolo/darknet имеют серьезный изъян. Ширина и высота абсолютно не ограничены, так как они просто являются out=exp(in), что опасно, поскольку это может привести к взрывным градиентам, нестабильности, NaN потерям и, в конечном итоге, к полному провалу обучения. [Обратись к этому выпуску](https://github.com/ultralytics/yolov5/issues/471#issuecomment-662009779) для получения подробностей.
+
+![YOLOv5 unbounded scaling](https://user-images.githubusercontent.com/31005897/158508089-5ac0c7a3-6358-44b7-863e-a6e45babb842.png#pic_center)
+
+### Link to this section4.4 Формирование целей (Build Targets)#
+
+Процесс формирования целей (build target) в YOLOv5 критически важен для эффективности обучения и [точности](https://www.ultralytics.com/glossary/accuracy) модели. Он включает в себя назначение ground truth боксов соответствующим ячейкам сетки на карте вывода и сопоставление их с соответствующими anchor boxes.
+
+Этот процесс состоит из следующих шагов:
+
+  * Вычисли отношение размеров ground truth бокса к размерам каждого шаблона анкора.
+
+
+
+![Формула отношения ширины ground truth к анкору](https://latex.codecogs.com/svg.image?r_w=w_%7Bgt%7D/w_%7Bat%7D)
+
+![Формула отношения высоты ground truth к анкору](https://latex.codecogs.com/svg.image?r_h=h_%7Bgt%7D/h_%7Bat%7D)
+
+![Формула максимального отношения ширины](https://latex.codecogs.com/svg.image?r_w%5E%7Bmax%7D=max\(r_w,1/r_w\))
+
+![Формула максимального отношения высоты](https://latex.codecogs.com/svg.image?r_h%5E%7Bmax%7D=max\(r_h,1/r_h\))
+
+![Формула общего максимального отношения](https://latex.codecogs.com/svg.image?r%5E%7Bmax%7D=max\(r_w%5E%7Bmax%7D,r_h%5E%7Bmax%7D\))
+
+![Формула порога соответствия анкора](https://latex.codecogs.com/svg.image?r%5E%7Bmax%7D%3C%7B%5Crm&space;anchor_t%7D)
+
+![YOLOv5 IoU computation](https://user-images.githubusercontent.com/31005897/158508119-fbb2e483-7b8c-4975-8e1f-f510d367f8ff.png#pic_center)
+
+  * Если рассчитанное отношение находится в пределах порога, сопоставь ground truth бокс с соответствующим анкором.
+
+![YOLOv5 grid overlap](https://user-images.githubusercontent.com/31005897/158508771-b6e7cab4-8de6-47f9-9abf-cdf14c275dfe.png#pic_center)
+
+  * Назначь сопоставленный анкор соответствующим ячейкам, помня, что из-за пересмотренного смещения центральной точки ground truth бокс может быть назначен более чем одному анкору, поскольку диапазон смещения центральной точки скорректирован с (0, 1) на (-0.5, 1.5), что делает возможными дополнительные соответствия.
+
+![YOLOv5 anchor selection](https://user-images.githubusercontent.com/31005897/158508139-9db4e8c2-cf96-47e0-bc80-35d11512f296.png#pic_center)
+
+Таким образом, процесс формирования целей гарантирует, что каждый объект ground truth будет должным образом назначен и сопоставлен во время процесса обучения, позволяя YOLOv5 более эффективно обучаться задаче обнаружения объектов.
+
+## Link to this sectionЗаключение#
+
+YOLOv5 представляет собой значительный шаг в развитии обнаружения объектов в реальном времени. Ее архитектурные решения, стратегии обучения и инженерные доработки обеспечивают высокую производительность и эффективность по сравнению с более ранними версиями YOLO.
+
+Основные улучшения в YOLOv5 включают использование динамической архитектуры, широкий спектр методов дополнения данных, инновационные стратегии обучения, а также важные корректировки в вычислении потерь и процессе формирования целей. Все эти инновации значительно повышают точность и эффективность обнаружения объектов, сохраняя при этом высокую скорость, что является фирменным знаком моделей YOLO.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/architecture-description.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Создано 3 дня назадОбновлено 3 дня назад
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

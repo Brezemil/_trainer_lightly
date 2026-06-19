@@ -1,0 +1,234 @@
+---
+source_url: https://docs.ultralytics.com/vi/guides/yolo26-training-recipe
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo26-training-recipe.md)
+
+# Link to this sectionCông thức huấn luyện YOLO26#
+
+## Link to this sectionGiới thiệu#
+
+Hướng dẫn này ghi lại chính xác công thức [huấn luyện](/vi/modes/train) được sử dụng để tạo ra các checkpoint tiền huấn luyện [YOLO26](/vi/models/yolo26) chính thức trên [COCO](/vi/datasets/detect/coco). Mọi [hyperparameter](https://www.ultralytics.com/glossary/hyperparameter-tuning) được trình bày ở đây đã được tích hợp sẵn trong các trọng số `.pt` đã phát hành và có thể được kiểm tra theo lập trình.
+
+Việc biết được những gì đã tạo nên các checkpoint chính thức — không chỉ kiến trúc, mà còn là các lịch trình [learning rate](https://www.ultralytics.com/glossary/learning-rate), quy trình augmentation, và trọng số loss đã định hình hiệu suất của chúng — sẽ giúp bạn đưa ra quyết định tốt hơn khi [fine-tuning](https://www.ultralytics.com/glossary/fine-tuning): những [data augmentations](/vi/guides/yolo-data-augmentation) nào cần giữ lại, những trọng số [loss function](https://www.ultralytics.com/glossary/loss-function) nào cần điều chỉnh, và các cài đặt optimizer nào hoạt động tốt nhất cho quy mô tập dữ liệu của bạn.
+
+## Link to this sectionTổng quan về huấn luyện#
+
+Tất cả các mô hình cơ sở YOLO26 được huấn luyện trên COCO ở độ phân giải **640x640** sử dụng optimizer **MuSGD** với **[batch size](https://www.ultralytics.com/glossary/batch-size) 128**. Thay vì bắt đầu từ các trọng số ngẫu nhiên trong một lần chạy duy nhất, các mô hình được khởi tạo từ các trọng số tiền huấn luyện trung gian và được tinh chỉnh bằng các hyperparameter tìm thấy thông qua [tìm kiếm tiến hóa](/vi/guides/hyperparameter-tuning#genetic-evolution-and-mutation). Nhật ký huấn luyện đầy đủ và các số liệu cho mọi quy mô mô hình đều có sẵn trên [Ultralytics Platform](https://platform.ultralytics.com/ultralytics/yolo26):
+
+Các lựa chọn thiết kế chính trên tất cả các quy mô:
+
+  * **Huấn luyện end-to-end** (`end2end=True`) với head one-to-one không cần NMS
+  * **Optimizer[MuSGD](/vi/modes/train#musgd-optimizer)** kết hợp SGD với các bản cập nhật trực giao hóa kiểu Muon cho các ma trận trọng số (tham số có `ndim >= 2`, chẳng hạn như trọng số conv và linear)
+  * **Augmentation mosaic mạnh** (xác suất ~0.9-1.0) bị vô hiệu hóa trong 10 epoch cuối (`close_mosaic=10`)
+  * **Augmentation tỷ lệ (scale) mạnh mẽ** (0.56-0.95) để xử lý các đối tượng ở các kích thước khác nhau
+  * **Xoay/cắt (rotation/shear) tối thiểu** cho hầu hết các quy mô, giữ cho biến dạng hình học ở mức thấp
+
+
+
+## Link to this sectionKiểm tra các tham số huấn luyện của Checkpoint YOLO26#
+
+Mỗi checkpoint của Ultralytics lưu trữ cấu hình huấn luyện đầy đủ được sử dụng để tạo ra nó, vì vậy bạn có thể tự mình xác minh từng con số trên trang này:
+
+Kiểm tra các tham số huấn luyện checkpoint
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    print(model.ckpt["train_args"])
+
+Đầu ra liệt kê cấu hình đầy đủ của hơn 100 mục, bao gồm mọi giá trị công thức được ghi lại trên trang này. Một đoạn trích cho `yolo26n.pt`:
+    
+    
+    batch: 128
+    ...
+    box: 5.62767
+    ...
+    close_mosaic: 10
+    cls: 0.56099
+    ...
+    dfl: 9.03871
+    ...
+    epochs: 245
+    ...
+    lr0: 0.0054
+    lrf: 0.04952
+    ...
+    optimizer: MuSGD
+
+Cách này hoạt động với bất kỳ checkpoint `.pt` nào — cả các bản phát hành chính thức và các mô hình bạn tự fine-tune. Để xem danh sách đầy đủ các đối số huấn luyện có thể cấu hình, hãy xem [tài liệu tham khảo về cấu hình huấn luyện](/vi/usage/cfg).
+
+## Link to this sectionHyperparameter huấn luyện YOLO26 theo quy mô mô hình#
+
+Các bảng dưới đây nhóm công thức theo danh mục — optimizer và lịch trình, trọng số loss, và augmentation. Mọi giá trị đều đến trực tiếp từ `train_args` được tích hợp trong các checkpoint đã phát hành.
+
+### Link to this sectionOptimizer và Learning Rate#
+
+Các cài đặt optimizer và lịch trình này đã thúc đẩy quá trình tiền huấn luyện COCO cho từng quy mô; hãy lưu ý cách mô hình N khác biệt với phần còn lại:
+
+Cài đặt| N| S| M| L| X  
+---|---|---|---|---|---  
+`optimizer`| MuSGD| MuSGD| MuSGD| MuSGD| MuSGD  
+`lr0`| 0.0054| 0.00038| 0.00038| 0.00038| 0.00038  
+`lrf`| 0.0495| 0.882| 0.882| 0.882| 0.882  
+`momentum`| 0.947| 0.948| 0.948| 0.948| 0.948  
+`weight_decay`| 0.00064| 0.00027| 0.00027| 0.00027| 0.00027  
+`warmup_epochs`| 0.98| 0.99| 0.99| 0.99| 0.99  
+`epochs`| 245| 70| 80| 60| 40  
+`batch`| 128| 128| 128| 128| 128  
+`imgsz`| 640| 640| 640| 640| 640  
+  
+Chiến lược Learning rate
+
+Mô hình N đã sử dụng learning rate khởi đầu cao hơn với độ suy giảm nhanh (`lrf=0.0495`), trong khi các mô hình S/M/L/X sử dụng LR khởi đầu thấp hơn nhiều với lịch trình nhẹ nhàng hơn (`lrf=0.882`). Điều này phản ánh các động lực hội tụ khác nhau của các mô hình nhỏ so với mô hình lớn hơn — các mô hình nhỏ hơn cần các bản cập nhật mạnh mẽ hơn để học hiệu quả.
+
+### Link to this sectionTrọng số hàm mất mát (Loss Weights)#
+
+Các trọng số loss cân bằng ba thành phần của loss phát hiện — hồi quy IoU [bounding box](https://www.ultralytics.com/glossary/bounding-box) (`box`), phân loại (`cls`), và một thuật ngữ hồi quy khoảng cách hộp (`dfl`). Lưu ý rằng YOLO26 không dùng DFL sẽ tái sử dụng mức tăng `dfl` để đánh trọng số loss L1 trên các khoảng cách hộp chuẩn hóa thay vì distribution focal loss:
+
+Cài đặt| N| S| M| L| X  
+---|---|---|---|---|---  
+`box`| 5.63| 9.83| 9.83| 9.83| 9.83  
+`cls`| 0.56| 0.65| 0.65| 0.65| 0.65  
+`dfl`| 9.04| 0.96| 0.96| 0.96| 0.96  
+  
+Mô hình N ưu tiên thuật ngữ hồi quy khoảng cách `dfl`, trong khi các mô hình S/M/L/X chuyển trọng tâm sang hồi quy hộp dựa trên IoU. Loss phân loại vẫn tương đối ổn định trên tất cả các quy mô.
+
+### Link to this sectionQuy trình Augmentation#
+
+Để có lời giải thích chi tiết về từng kỹ thuật, hãy xem [hướng dẫn Augmentation dữ liệu YOLO](/vi/guides/yolo-data-augmentation).
+
+Cài đặt| N| S| M| L| X  
+---|---|---|---|---|---  
+[`mosaic`](/vi/guides/yolo-data-augmentation#mosaic-mosaic)| 0.909| 0.992| 0.992| 0.992| 0.992  
+[`mixup`](/vi/guides/yolo-data-augmentation#mixup-mixup)| 0.012| 0.05| 0.427| 0.427| 0.427  
+[`copy_paste`](/vi/guides/yolo-data-augmentation#copy-paste-copy_paste)| 0.075| 0.404| 0.304| 0.404| 0.404  
+[`scale`](/vi/guides/yolo-data-augmentation#scale-scale)| 0.562| 0.9| 0.95| 0.95| 0.95  
+[`fliplr`](/vi/guides/yolo-data-augmentation#flip-left-right-fliplr)| 0.606| 0.304| 0.304| 0.304| 0.304  
+[`degrees`](/vi/guides/yolo-data-augmentation#rotation-degrees)| 1.11| ~0| ~0| ~0| ~0  
+[`shear`](/vi/guides/yolo-data-augmentation#shear-shear)| 1.46| ~0| ~0| ~0| ~0  
+[`translate`](/vi/guides/yolo-data-augmentation#translation-translate)| 0.071| 0.275| 0.275| 0.275| 0.275  
+[`hsv_h`](/vi/guides/yolo-data-augmentation#hue-adjustment-hsv_h)| 0.014| 0.013| 0.013| 0.013| 0.013  
+[`hsv_s`](/vi/guides/yolo-data-augmentation#saturation-adjustment-hsv_s)| 0.645| 0.353| 0.353| 0.353| 0.353  
+[`hsv_v`](/vi/guides/yolo-data-augmentation#brightness-adjustment-hsv_v)| 0.566| 0.194| 0.194| 0.194| 0.194  
+[`bgr`](/vi/guides/yolo-data-augmentation#bgr-channel-swap-bgr)| 0.106| 0.0| 0.0| 0.0| 0.0  
+  
+Các giá trị hiển thị là `~0` nằm dưới 0.01 trong các checkpoint thực tế (ví dụ: `degrees=0.00012` cho mô hình S) — augmentation đó thực tế đã bị vô hiệu hóa.
+
+Các mô hình lớn hơn sử dụng augmentation tổng thể mạnh mẽ hơn (mixup, copy-paste, và scale cao hơn), vì chúng có khả năng học lớn hơn và được hưởng lợi từ việc [regularization](https://www.ultralytics.com/glossary/regularization) mạnh hơn. Mô hình N là quy mô duy nhất có augmentation xoay, cắt, và BGR đáng kể.
+
+### Link to this sectionTham số huấn luyện nội bộ#
+
+Nâng cao: các tham số quy trình nội bộ
+
+Các checkpoint cũng chứa các tham số được sử dụng trong quy trình huấn luyện nội bộ nhưng **không** được hiển thị dưới dạng cài đặt do người dùng cấu hình trong `default.yaml`:
+
+Cài đặt| Mô tả| N| S| M| L| X  
+---|---|---|---|---|---|---  
+`muon_w`| Trọng số cập nhật Muon trong MuSGD| 0.528| 0.436| 0.436| 0.436| 0.436  
+`sgd_w`| Trọng số cập nhật SGD trong MuSGD| 0.674| 0.479| 0.479| 0.479| 0.479  
+`cls_w`| Trọng số phân loại nội bộ| 2.74| 3.48| 3.48| 3.48| 3.48  
+`o2m`| Trọng số hàm mất mát cho head one-to-many| 1.0| 0.705| 0.705| 0.705| 0.705  
+`topk`| Gán nhãn Top-k| 8| 5| 5| 5| 5  
+  
+Xem mục FAQ về các tham số này để hiểu ý nghĩa của chúng khi thực hiện fine-tuning.
+
+## Link to this sectionFine-Tuning YOLO26 trên tập dữ liệu của bạn#
+
+Khi fine-tuning YOLO26 trên tập dữ liệu của riêng bạn, bạn không cần phải sao chép toàn bộ công thức tiền huấn luyện (pretraining recipe). Các weights đã được huấn luyện sẵn đã mã hóa kiến thức về augmentation và tối ưu hóa từ quá trình huấn luyện trên COCO. Để biết các phương pháp hay nhất về huấn luyện tổng quát, hãy xem [Mẹo huấn luyện mô hình](/vi/guides/model-training-tips).
+
+### Link to this sectionFine-Tune với cài đặt mặc định#
+
+Fine-tune với các giá trị mặc định
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    results = model.train(data="your-dataset.yaml", epochs=100, imgsz=640)
+
+Fine-tuning với các giá trị mặc định là một baseline mạnh mẽ. Chỉ điều chỉnh các siêu tham số nếu bạn có lý do cụ thể.
+
+### Link to this sectionKhi nào cần điều chỉnh các siêu tham số của YOLO26#
+
+**Tập dữ liệu nhỏ ( < 1.000 ảnh):**
+
+  * Giảm cường độ augmentation: `mosaic=0.5`, `mixup=0.0`, `copy_paste=0.0`
+  * Giảm learning rate: `lr0=0.001`
+  * Sử dụng ít [epochs](https://www.ultralytics.com/glossary/epoch) hơn với patience: `epochs=50`, `patience=20`
+  * Xem xét việc đóng băng các lớp backbone: `freeze=10`
+
+
+
+**Tập dữ liệu lớn ( > 50.000 ảnh):**
+
+  * Phù hợp chặt chẽ hơn với công thức tiền huấn luyện
+  * Xem xét `optimizer=MuSGD` cho các lần chạy dài hơn
+  * Tăng cường augmentation: `mosaic=1.0`, `mixup=0.3`, `scale=0.9`
+
+
+
+**Hình ảnh chuyên biệt theo lĩnh vực (trên không, y tế, dưới nước):**
+
+  * Tăng `flipud=0.5` nếu hướng dọc thay đổi
+  * Tăng `degrees` nếu các đối tượng xuất hiện ở các góc xoay tùy ý
+  * Điều chỉnh `hsv_s` và `hsv_v` nếu điều kiện ánh sáng khác biệt đáng kể so với COCO
+
+
+
+Để tối ưu hóa siêu tham số tự động, hãy xem [Hướng dẫn Tinh chỉnh Siêu tham số](/vi/guides/hyperparameter-tuning).
+
+### Link to this sectionChọn kích thước mô hình#
+
+Mô hình| Phù hợp nhất cho| Hướng dẫn về Batch Size  
+---|---|---  
+YOLO26n| Thiết bị Edge, di động, thời gian thực trên CPU| Batch lớn (64-128) trên GPU người dùng phổ thông  
+YOLO26s| Cân bằng giữa tốc độ và độ chính xác| Batch trung bình (32-64)  
+YOLO26m| Độ chính xác cao hơn với mức tính toán vừa phải| Batch nhỏ hơn (16-32)  
+YOLO26l| Độ chính xác cao khi có GPU| Batch nhỏ (8-16) hoặc đa GPU  
+YOLO26x| Độ chính xác tối đa, triển khai máy chủ| Batch nhỏ (4-8) hoặc đa GPU  
+  
+Để biết các tùy chọn xuất và triển khai, hãy xem [Hướng dẫn Xuất](/vi/modes/export) và [Tùy chọn Triển khai Mô hình](/vi/guides/model-deployment-options).
+
+## Link to this sectionKết luận#
+
+Các checkpoint YOLO26 đi kèm với công thức huấn luyện đầy đủ được nhúng bên trong, vì vậy các siêu tham số chính xác đằng sau mỗi kích thước mô hình luôn có thể được tìm thấy thông qua tra cứu `train_args`. Hãy bắt đầu fine-tuning từ các cài đặt mặc định, điều chỉnh cẩn thận bằng cách sử dụng các bảng trên trang này và xác minh mọi thay đổi dựa trên tập validation của riêng bạn. Nếu có câu hỏi phát sinh trong quá trình thực hiện, hãy hỏi cộng đồng trên [kho lưu trữ Ultralytics GitHub](https://github.com/ultralytics/ultralytics) hoặc [máy chủ Ultralytics Discord](https://discord.com/invite/ultralytics).
+
+## Link to this sectionCâu hỏi thường gặp#
+
+### Link to this sectionLàm thế nào để xem các siêu tham số chính xác được sử dụng cho bất kỳ checkpoint nào?#
+
+Tải checkpoint bằng `torch.load()` và truy cập khóa `train_args`, hoặc sử dụng `model.ckpt["train_args"]` với Ultralytics API. Xem Kiểm tra các đối số huấn luyện của Checkpoint YOLO26 để biết các ví dụ đầy đủ.
+
+### Link to this sectionTại sao số lượng epoch lại khác nhau đối với mỗi kích thước mô hình?#
+
+Các mô hình lớn hơn thường cần ít epoch hơn trên COCO vì dung lượng lớn hơn giúp tăng tốc hội tụ — mô hình X được huấn luyện trong 40 epoch so với 245 của N — mặc dù số lượng không hoàn toàn đơn điệu (S dùng 70, M dùng 80). Khi fine-tuning trên tập dữ liệu của riêng bạn, số lượng epoch tối ưu phụ thuộc vào kích thước và độ phức tạp của tập dữ liệu, không phải kích thước mô hình. Sử dụng tính năng dừng sớm (`patience`) để tìm điểm dừng phù hợp một cách tự động.
+
+### Link to this sectionTôi có nên sử dụng MuSGD để fine-tuning không?#
+
+Thông thường bạn không cần phải chọn: với `optimizer=auto` mặc định, Ultralytics tự động chọn **MuSGD** cho các lần huấn luyện dài hơn (>10.000 lần lặp) và **AdamW** cho các lần ngắn hơn. Bạn có thể đặt rõ ràng `optimizer=MuSGD` nếu muốn. Để biết thêm về cách MuSGD hoạt động, hãy xem [tài liệu huấn luyện](/vi/modes/train#musgd-optimizer).
+
+### Link to this sectionCác tham số `muon_w`, `sgd_w`, `cls_w`, `o2m` và `topk` trong checkpoint là gì?#
+
+Đây là các tham số nội bộ từ quy trình huấn luyện tạo ra các checkpoint cơ sở, được ghi lại trong `train_args` để đảm bảo tính tái lập. Chúng không phải là các cài đặt do người dùng cấu hình trong `default.yaml`, và việc chuyển chúng vào `model.train()` sẽ gây ra lỗi đối số không hợp lệ — gói phần mềm công khai không đọc các giá trị này. Bạn không cần thiết lập chúng khi fine-tuning; xem Các tham số huấn luyện nội bộ để biết giá trị của chúng theo từng kích thước mô hình.
+
+### Link to this sectionTôi có thể sao chép chính xác quá trình tiền huấn luyện từ đầu không?#
+
+Không chính xác — các checkpoint được tạo bằng cách sử dụng một nhánh huấn luyện nội bộ với các tính năng bổ sung không có trong cơ sở mã công khai (như trọng số `o2m` và `cls_w` có thể cấu hình). Bạn có thể nhận được kết quả rất gần với thực tế bằng cách sử dụng các siêu tham số được ghi lại trên trang này với gói Ultralytics công khai, nhưng để tái tạo chính xác thì cần nhánh nội bộ đó.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/yolo26-training-recipe.md)
+
+[RAraimbekovm2](https://github.com/raimbekovm)[Y-Y-T-G1](https://github.com/Y-T-G)
+
+Đã tạo 2 tháng trướcĐã cập nhật tuần trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

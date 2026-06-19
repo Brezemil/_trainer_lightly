@@ -1,0 +1,349 @@
+---
+source_url: https://docs.ultralytics.com/vi/integrations/qnn
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/qnn.md)
+
+# Link to this sectionXuất Qualcomm QNN cho các model Ultralytics YOLO#
+
+Việc triển khai các model thị giác máy tính trên thiết bị Qualcomm Snapdragon đòi hỏi một định dạng model được điều chỉnh cho runtime Qualcomm AI Engine Direct (QNN). Xuất các model [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) sang định dạng QNN cho phép bạn chạy inference tăng tốc ngay trên thiết bị, tận dụng phần cứng CPU Snapdragon, GPU Adreno và Hexagon NPU có mặt trên hàng tỷ điện thoại di động, laptop, hệ thống ô tô và thiết bị IoT. Hướng dẫn này sẽ giải thích quy trình xuất YOLO sang Qualcomm QNN và cách triển khai để đạt được hiệu suất inference nhanh, tiêu thụ năng lượng thấp trên phần cứng Snapdragon.
+
+Chạy YOLO trên các NPU Snapdragon ngay hôm nay với các ứng dụng di động chính thức.
+
+[Ultralytics Flutter plugin](https://github.com/ultralytics/yolo-flutter-app) chính thức hỗ trợ chạy các tệp xuất QNN trên Hexagon NPU ngay khi cài đặt — bao gồm suy luận camera thời gian thực, dự đoán trên từng ảnh và tự động tải xuống model cho tất cả sáu tác vụ YOLO26. Để triển khai trên iOS, hãy xem [Ultralytics YOLO iOS SDK](https://github.com/ultralytics/yolo-ios-app) và [CoreML integration](/vi/integrations/coreml).
+
+## Link to this sectionQualcomm QNN là gì?#
+
+![Qualcomm QNN on-device inference](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/qnn_cover.avif)
+
+[Qualcomm AI Engine Direct](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk) — thường được gọi là **QNN** và được phân phối như một phần của Qualcomm AI Runtime (QAIRT) SDK — là ngăn xếp suy luận cấp thấp của Qualcomm dành cho các bộ vi xử lý [Snapdragon](https://www.qualcomm.com/products). Nó cung cấp một API thống nhất với các thư viện dành riêng cho backend nhắm mục tiêu đến CPU Snapdragon, GPU Adreno và Hexagon Tensor Processor (HTP), bộ xử lý [mạng thần kinh](https://www.ultralytics.com/glossary/neural-network-nn) (NPU) chuyên dụng bên trong các SoC Snapdragon hiện đại. QNN cung cấp cho các nhà phát triển quyền truy cập full-stack vào các bộ tăng tốc AI Snapdragon này và là phiên bản kế nhiệm hiện đại của SDK [Snapdragon Neural Processing Engine (SNPE)](https://www.qualcomm.com/developer/software/neural-processing-sdk-for-ai) cũ hơn. Nó hỗ trợ AI trên thiết bị cho các nền tảng di động Snapdragon 8 Gen 2, 8 Gen 3 và 8 Elite, máy tính xách tay Snapdragon X, cùng các sản phẩm ô tô và XR.
+
+## Link to this sectionTại sao cần xuất sang Qualcomm QNN?#
+
+Snapdragon là nền tảng điện toán di động được triển khai rộng rãi nhất trên thế giới. Việc xuất Ultralytics YOLO sang định dạng Qualcomm QNN giúp mở khóa phần cứng AI chuyên dụng trên các thiết bị này:
+
+  * **Tăng tốc Hexagon NPU** : Chạy YOLO trên Hexagon Tensor Processor mang lại thông lượng cao hơn đáng kể và tiêu thụ năng lượng thấp hơn so với inference trên CPU — cực kỳ lý tưởng cho [inference thời gian thực](https://www.ultralytics.com/glossary/real-time-inference) và các ứng dụng thị giác máy tính luôn hoạt động trên Snapdragon.
+  * **Trên thiết bị và ngoại tuyến** : QNN inference chạy hoàn toàn trên thiết bị Snapdragon, vì vậy không cần kết nối đám mây, độ trễ luôn thấp và dữ liệu không bao giờ rời khỏi thiết bị.
+  * **Hiệu quả lượng tử hóa** : Xuất QNN thực hiện [lượng tử hóa](https://www.ultralytics.com/glossary/model-quantization) model YOLO sang trọng số INT8 với các activation 16-bit, đây là sự cân bằng giữa độ chính xác/hiệu suất ưu tiên của Hexagon NPU, giúp thu nhỏ kích thước model và tối đa hóa khung hình trên giây (FPS) trên phần cứng chạy bằng pin.
+  * **Một định dạng, nhiều thiết bị** : Một lần xuất Qualcomm QNN duy nhất có thể nhắm mục tiêu vào CPU Snapdragon, GPU Adreno và Hexagon NPU trên các dòng chip Snapdragon 8 Gen 2, 8 Gen 3, 8 Elite và hơn thế nữa.
+  * **Stack AI Qualcomm sẵn sàng cho sản xuất** : QNN (Qualcomm AI Engine Direct / QAIRT) là runtime AI trên thiết bị hiện tại, được duy trì tích cực của Qualcomm và là giải pháp thay thế được khuyến nghị cho SNPE.
+
+
+
+## Link to this sectionĐịnh dạng xuất QNN#
+
+Ultralytics biên dịch các model YOLO sang QNN **tại chỗ (locally)** bằng cách sử dụng [ONNX Runtime](https://onnxruntime.ai/) QNN Execution Provider (gói `onnxruntime-qnn` có thể cài đặt qua pip, tích hợp sẵn các thư viện QAIRT). Trình xuất chuyển đổi model của bạn sang [ONNX](/vi/integrations/onnx), **lượng tử hóa nó** bằng dữ liệu hiệu chỉnh sang các activation 16-bit và trọng số INT8 (sự cân bằng được khuyến nghị cho Hexagon NPU), sau đó khởi tạo phiên ONNX Runtime với tính năng bộ đệm context-binary được bật — quá trình này biên dịch biểu đồ đã lượng tử hóa thành một **QNN context binary** được nhúng trong `<model>_qnn.onnx`. Không cần tài khoản Qualcomm, upload lên đám mây hay tải xuống SDK riêng biệt.
+
+Không giống như [Qualcomm AI Hub](https://aihub.qualcomm.com/) dựa trên đám mây, vốn yêu cầu biên dịch và profiling model trên các thiết bị Snapdragon được lưu trữ bởi Qualcomm và cần có tài khoản Qualcomm, tính năng xuất QNN của Ultralytics chạy hoàn toàn trên máy tính của bạn chỉ với một lệnh `export(format="qnn")`. Bạn nhận được cùng một target runtime QNN/QAIRT — CPU Snapdragon, GPU Adreno và Hexagon NPU — mà không cần đăng ký, không giới hạn dung lượng upload, không thời gian chờ đợi hàng đợi, và nó tích hợp thẳng vào quy trình xuất YOLO tiêu chuẩn.
+
+Tệp `*_qnn.onnx` được xuất ra là một tệp độc lập: nó nhúng QNN context binary và các metadata ONNX như tên lớp, kích thước ảnh và tác vụ.
+
+## Link to this sectionCác tính năng chính của các model QNN#
+
+  * **Lượng tử hóa** : Model được lượng tử hóa sang các activation 16-bit và trọng số INT8 với luồng ONNX Runtime QNN QDQ và tập dữ liệu hiệu chỉnh, tạo ra sự cân bằng độ chính xác/hiệu suất được khuyến nghị cho Hexagon NPU. Tìm hiểu thêm về [lượng tử hóa model](https://www.ultralytics.com/glossary/model-quantization).
+  * **Biên dịch hoàn toàn tại chỗ** : Context binary được tạo hoàn toàn trên máy chủ của bạn — không cần tài khoản Qualcomm, API token hoặc upload lên đám mây.
+  * **Tăng tốc Snapdragon đầy đủ** : Chạy inference trên Hexagon NPU (HTP), GPU Adreno hoặc CPU thông qua một runtime thống nhất duy nhất.
+  * **Khả năng tiếp cận thiết bị rộng rãi** : Nhắm mục tiêu đến phạm vi rộng lớn các nền tảng Snapdragon được tích hợp trong điện thoại, PC (Windows on Snapdragon), ô tô, XR và các sản phẩm nhúng.
+  * **Context Binary được biên dịch trước** : Việc vận chuyển một tệp context binary giúp giảm thiểu việc biên dịch biểu đồ trên thiết bị, giảm độ trễ khi tải model trên thiết bị mục tiêu.
+  * **Đầu ra độc lập** : Tệp ONNX đã xuất bao gồm QNN context binary được biên dịch trước và metadata để triển khai đơn giản.
+
+
+
+## Link to this sectionHiệu suất đo lường#
+
+### Link to this sectionĐiện thoại Android#
+
+Suy luận end-to-end trên từng ảnh đối với các model YOLO26n chính thức trên điện thoại Xiaomi 17 sử dụng Qualcomm Snapdragon 8 Elite Gen 5 (SM8850) — bao gồm Qualcomm Oryon CPU, Adreno GPU và Hexagon NPU (HTP v81). Mỗi ô hiển thị **tổng thời gian** (tiền xử lý + suy luận + hậu xử lý, không bao gồm chú thích) cùng với phân bổ thời gian từng giai đoạn bên dưới. CPU và GPU chạy INT8 TFLite qua LiteRT; NPU chạy các tệp nhị phân ngữ cảnh QNN (trọng số INT8, kích hoạt 16-bit).
+
+Mô hình| Tác vụ| kích thước  
+(pixel)| CPU  
+INT8 TFLite  
+(ms)| GPU Adreno  
+INT8 TFLite  
+(ms)| NPU Hexagon  
+QNN A16W8  
+(ms)  
+---|---|---|---|---|---  
+YOLO26n| Detect| 640| 53.3  
+3.6 / 47.4 / 2.4| 17.2  
+3.6 / 9.1 / 4.5| **11.3**  
+3.5 / 5.6 / 2.2  
+YOLO26n-seg| Segment| 640| 76.0  
+3.6 / 64.7 / 7.7| 23.9  
+3.6 / 11.8 / 8.6| **21.3**  
+3.5 / 7.9 / 10.0  
+YOLO26n-sem| Ngữ nghĩa| 1024| 66.6  
+3.6 / 46.3 / 16.8| **37.7**  
+3.6 / 17.4 / 16.7| 49.11  
+8.8 / 20.8 / 19.5  
+YOLO26n-cls| Classify| 224| 5.2  
+0.8 / 4.0 / 0.5| 4.5  
+1.6 / 2.2 / 0.7| **2.4**  
+1.1 / 0.6 / 0.7  
+YOLO26n-pose| Pose| 640| 57.7  
+3.5 / 52.4 / 1.8| 15.2  
+3.6 / 9.7 / 1.9| **10.8**  
+3.5 / 5.6 / 1.8  
+YOLO26n-obb| OBB| 1024| 50.3  
+3.6 / 45.4 / 1.3| **13.9**  
+3.8 / 8.2 / 1.8| 21.0  
+8.8 / 10.9 / 1.3  
+  
+  * Các giá trị **Tốc độ** là **độ trễ khi xử lý một ảnh trong thời gian ngắn** — giá trị trung bình của 15 lần chạy sau 3 lần chạy khởi động trên `bus.jpg`, được đo bằng bộ công cụ benchmark trên thiết bị của [plugin Flutter](https://github.com/ultralytics/yolo-flutter-app) trên một thiết bị đã ổn định nhiệt độ. Thời gian khung hình camera thời gian thực duy trì sẽ cao hơn (bao gồm quá trình letterboxing khi chụp ảnh từng khung hình cộng với sự ổn định nhiệt); hãy sử dụng phân tích chi tiết trước/trong/sau suy luận trên màn hình của ứng dụng để có các con số trạng thái ổn định trên thiết bị của bạn.
+  * 1 QNN Semantic sử dụng đầu ra ArgMax class-map trong đồ thị từ bản phát hành này, thay thế cho việc giải mã các logit không ổn định từ 123-1065 ms bằng mức ổn định ~49 ms; GPU vẫn nhanh hơn một chút cho tác vụ semantic ở độ phân giải 1024px.
+
+
+
+### Link to this sectionMáy tính xách tay Windows on Snapdragon#
+
+Inference đơn ảnh end-to-end cho các model YOLO26n chính thức trên máy tính xách tay Lenovo sử dụng Qualcomm Snapdragon X Elite (X1E78100) — CPU Qualcomm Oryon và NPU Hexagon (HTP v73), RAM 32 GB, Windows 11. Phép so sánh Windows-on-Snapdragon này chạy baseline CPU PyTorch FP32 nguyên bản mà hầu hết các nhà phát triển desktop đều bắt đầu, so với đường dẫn QNN Hexagon NPU. Mỗi ô hiển thị **tổng thời gian`model.predict()` (wall time)** với thời gian tiền xử lý / suy luận / hậu xử lý được báo cáo bên dưới; tổng thời gian có thể bao gồm overhead của framework ngoài ba giai đoạn đó. Các con số CPU là PyTorch FP32 (`torch==2.10.0+cpu`) và các con số NPU là ONNX Runtime QNN (`onnxruntime-qnn==2.2.0`, trọng số INT8 / activation 16-bit).
+
+Mô hình| Tác vụ| kích thước  
+(pixel)| CPU  
+PT FP32  
+(ms)| NPU Hexagon  
+QNN A16W8  
+(ms)  
+---|---|---|---|---  
+YOLO26n| Detect| 640| 91.4  
+4.3 / 75.2 / 0.1| **27.2**  
+4.9 / 19.4 / 0.9  
+YOLO26n-seg| Segment| 640| 138.8  
+4.5 / 127.1 / 2.8| **34.3**  
+5.0 / 24.0 / 5.1  
+YOLO26n-sem| Ngữ nghĩa| 1024| 295.8  
+9.1 / 189.2 / 94.8| **133.0**  
+8.8 / 37.4 / 83.9  
+YOLO26n-cls| Classify| 224| 15.4  
+3.0 / 9.8 / 0.0| **11.7**  
+2.7 / 5.5 / 0.0  
+YOLO26n-pose| Pose| 640| 109.6  
+4.6 / 102.9 / 0.2| **28.9**  
+5.3 / 23.3 / 0.6  
+YOLO26n-obb| OBB| 1024| 267.8  
+8.1 / 254.6 / 0.1| **64.8**  
+8.9 / 54.7 / 0.6  
+  
+  * Các giá trị **Tốc độ** là **độ trễ khi xử lý một ảnh trong thời gian ngắn** — giá trị trung bình của 100 lần chạy sau 10 lần chạy khởi động trên `bus.jpg`, được đo bằng `time.perf_counter()` xung quanh toàn bộ lệnh gọi `model.predict()` trên một thiết bị đã ổn định nhiệt độ (`ultralytics==8.4.67`, Python 3.12.10).
+  * Hexagon NPU chạy nhanh hơn khoảng **2-4 lần** so với baseline CPU PyTorch trên các tác vụ 640-1024 px (phát hiện đối tượng ~3.4 lần), thu hẹp xuống còn ~1.3 lần trên bộ phân loại 224 px nơi overhead tiền xử lý cố định chiếm ưu thế đối với khối lượng công việc nhỏ.
+
+
+
+## Link to this sectionCác tác vụ được hỗ trợ#
+
+Xuất QNN hỗ trợ tập hợp tác vụ tiêu chuẩn có sẵn trong mỗi dòng model, bao gồm phân đoạn ngữ nghĩa YOLO26.
+
+Tác vụ| Được hỗ trợ  
+---|---  
+[Object Detection](https://docs.ultralytics.com/tasks/detect)| ✅  
+[Instance Segmentation](https://docs.ultralytics.com/tasks/segment)| ✅  
+[Semantic Segmentation](https://docs.ultralytics.com/tasks/semantic)| ✅  
+[Pose Estimation](https://docs.ultralytics.com/tasks/pose)| ✅  
+[Phát hiện OBB](https://docs.ultralytics.com/tasks/obb)| ✅  
+[Classification](https://docs.ultralytics.com/tasks/classify)| ✅  
+  
+## Link to this sectionXuất sang QNN: Chuyển đổi Model YOLO của bạn#
+
+Xuất model Ultralytics YOLO sang định dạng QNN để triển khai trên phần cứng Snapdragon. Context binary được hoàn thiện cho một kiến trúc Hexagon Tensor Processor (HTP) mục tiêu mà bạn chọn bằng đối số `name` — cùng một đối số được sử dụng để nhắm mục tiêu chip trong [xuất RKNN](/vi/integrations/rockchip-rknn).
+
+### Link to this sectionCác kiến trúc HTP được hỗ trợ#
+
+Truyền kiến trúc mục tiêu qua `name` (ví dụ: `name="73"`). Các giá trị hợp lệ:
+
+`name`| Hexagon HTP| Nền tảng Snapdragon  
+---|---|---  
+`68`| v68| Snapdragon 888  
+`69`| v69| Snapdragon 8 Gen 1 / 8+ Gen 1  
+`73`| v73| Snapdragon 8 Gen 2, X Elite (mặc định)  
+`75`| v75| Snapdragon 8 Gen 3  
+`79`| v79| Snapdragon 8 Elite  
+`81`| v81| Snapdragon 8 Elite Gen 5  
+  
+Hỗ trợ nền tảng
+
+Xuất QNN sử dụng gói `onnxruntime-qnn`. Các wheel được xây dựng sẵn được công bố cho **Windows (x64 và ARM64)** và **Linux ARM64 (aarch64)** ; trên **Linux x86-64** , hãy tự build ONNX Runtime từ mã nguồn với `--use_qnn` (không có wheel xây dựng sẵn, và macOS không phải là host QNN được hỗ trợ). Việc tạo QNN context-binary chạy trên host x64 — Windows x64 hoặc Linux x86-64 — và không yêu cầu thiết bị Snapdragon cho bước xuất.
+
+### Link to this sectionCài đặt#
+
+Để cài đặt các gói cần thiết, hãy chạy:
+
+Cài đặt
+    
+    
+    # Install the required package for YOLO
+    pip install ultralytics
+
+Gói `onnxruntime-qnn` (cung cấp ONNX Runtime QNN Execution Provider và đóng gói các thư viện QAIRT) được cài đặt tự động trong lần xuất đầu tiên. Để có hướng dẫn chi tiết và các phương pháp tốt nhất liên quan đến quy trình cài đặt, hãy kiểm tra [hướng dẫn cài đặt Ultralytics](/vi/quickstart) của chúng tôi. Trong khi cài đặt các gói cần thiết cho YOLO, nếu bạn gặp bất kỳ khó khăn nào, hãy tham khảo [hướng dẫn các vấn đề thường gặp](/vi/guides/yolo-common-issues) để biết giải pháp và mẹo.
+
+### Link to this sectionCách sử dụng#
+
+Định dạng QNN hỗ trợ các chế độ [Export](/vi/modes/export), [Predict](/vi/modes/predict) và [Validate](/vi/modes/val). Inference và validation chạy trên phần cứng Qualcomm Snapdragon thông qua ONNX Runtime's QNN Execution Provider (cùng gói `onnxruntime-qnn` được sử dụng để xuất). Hãy xuất model của bạn, sau đó tải model đã xuất trên thiết bị Snapdragon để chạy inference hoặc validate độ chính xác.
+
+Xuất (Export)
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Export to Qualcomm QNN format (INT8, enforced automatically), targeting an HTP architecture via 'name'
+    # 'name' can be one of 68, 69, 73, 75, 79, 81 (Snapdragon 888, 8 Gen 1, 8 Gen 2, 8 Gen 3, 8 Elite, 8 Elite Gen 5)
+    model.export(format="qnn", name="73")  # creates 'yolo26n_qnn.onnx'
+
+Dự đoán (Predict)
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported QNN model (on a Snapdragon device with onnxruntime-qnn)
+    model = YOLO("yolo26n_qnn.onnx")
+    
+    # Run inference
+    results = model("https://ultralytics.com/images/bus.jpg")
+
+Xác thực
+    
+    
+    from ultralytics import YOLO
+    
+    # Load the exported QNN model (on a Snapdragon device with onnxruntime-qnn)
+    model = YOLO("yolo26n_qnn.onnx")
+    
+    # Validate accuracy on the COCO8 dataset
+    metrics = model.val(data="coco8.yaml")
+
+### Link to this sectionĐối số xuất#
+
+Đối số| Loại| Mặc định| Mô tả  
+---|---|---|---  
+`format`| `str`| `'qnn'`| Định dạng mục tiêu cho model đã xuất, xác định khả năng tương thích với runtime Qualcomm QNN.  
+`imgsz`| `int` hoặc `tuple`| `640`| Kích thước ảnh mong muốn cho đầu vào model. Có thể là một số nguyên cho ảnh vuông hoặc một tuple `(height, width)`.  
+`batch`| `int`| `1`| Chỉ định kích thước batch xuất model, được nhúng vào QNN context binary đã tạo.  
+`name`| `str`| `'73'`| Phiên bản kiến trúc Hexagon HTP mục tiêu: `68`, `69`, `73`, `75`, `79`, hoặc `81` (Snapdragon 888, 8 Gen 1, 8 Gen 2, 8 Gen 3, 8 Elite, 8 Elite Gen 5). Context binary được hoàn thiện cho kiến trúc này.  
+`int8`| `bool`| `True`| Bật lượng tử hóa INT8. Bắt buộc đối với xuất QNN HTP — tự động đặt thành `True` nếu không được chỉ định.  
+`data`| `str`| `'coco8.yaml'`| Tệp cấu hình tập dữ liệu được sử dụng cho hiệu chuẩn INT8. Chỉ định nguồn hình ảnh hiệu chuẩn.  
+`fraction`| `float`| `1.0`| Tỷ lệ phần trăm của tập dữ liệu hiệu chỉnh được sử dụng cho lượng tử hóa INT8.  
+`device`| `str`| `None`| Chỉ định thiết bị cho bước xuất ONNX: GPU (`device=0`) hoặc CPU (`device=cpu`).  
+  
+Precision
+
+Xuất QNN lượng tử hóa model sang **các activation 16-bit và trọng số INT8** — sự cân bằng độ chính xác/hiệu suất được khuyến nghị cho Hexagon NPU — sử dụng luồng [lượng tử hóa ONNX Runtime QDQ](https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html) với các ảnh hiệu chỉnh từ `data`. `int8=True` được thực thi tự động.
+
+Để biết thêm chi tiết về quy trình xuất, hãy truy cập [trang tài liệu của Ultralytics về việc xuất](/vi/modes/export).
+
+### Link to this sectionCấu trúc đầu ra#
+
+Sau khi xuất thành công, một tệp ONNX độc lập sẽ được tạo:
+
+`yolo26n_qnn.onnx # ONNX wrapping the precompiled QNN context binary and metadata `
+
+Tệp `yolo26n_qnn.onnx` nhúng QNN context binary và được tải bởi ONNX Runtime với QNN Execution Provider trên thiết bị Snapdragon. Nó cũng mang các metadata model như tên lớp, kích thước ảnh và tác vụ trong `metadata_props` của ONNX.
+
+## Link to this sectionTriển khai các Model YOLO QNN đã xuất#
+
+Các model QNN chạy trên phần cứng Qualcomm Snapdragon, giúp [triển khai model](https://www.ultralytics.com/glossary/model-deployment) trên thiết bị trở nên đơn giản. Trên thiết bị Snapdragon đã cài đặt `onnxruntime-qnn`, hãy chạy trực tiếp model đã xuất bằng API Ultralytics (`yolo predict`/`yolo val`, xem Cách sử dụng ở trên) — Ultralytics tải context binary thông qua [ONNX Runtime QNN Execution Provider](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html) và chọn backend HTP (NPU), GPU hoặc CPU.
+
+Đối với các pipeline tùy chỉnh, bạn cũng có thể tải [ONNX](https://onnx.ai/) context-binary trực tiếp bằng ONNX Runtime. `onnxruntime-qnn` là một plugin Execution Provider, vì vậy hãy đăng ký nó khi chạy:
+    
+    
+    import onnxruntime as ort
+    import onnxruntime_qnn as qnn_ep
+    
+    # On the Snapdragon device, register the QNN plugin EP and select its device(s)
+    ort.register_execution_provider_library("QNNExecutionProvider", qnn_ep.get_library_path())
+    devices = [d for d in ort.get_ep_devices() if d.ep_name == "QNNExecutionProvider"]
+    
+    options = ort.SessionOptions()
+    options.add_provider_for_devices(devices, {"backend_path": qnn_ep.get_qnn_htp_path()})
+    session = ort.InferenceSession("yolo26n_qnn.onnx", sess_options=options)
+    outputs = session.run(None, {"images": input_tensor})  # input_tensor: float32 NCHW
+
+Vì QNN context binary được biên dịch trước, phiên làm việc sẽ tải nhanh chóng mà không cần biên dịch lại biểu đồ trên thiết bị.
+
+## Link to this sectionQuy trình làm việc được đề xuất#
+
+  1. **Huấn luyện** model của bạn bằng [Train Mode](/vi/modes/train) của Ultralytics
+  2. **Xuất** sang định dạng QNN bằng `model.export(format="qnn")` trên nền tảng được hỗ trợ (Windows x64 hoặc ARM64, hoặc Linux ARM64)
+  3. **Triển khai** tệp `*_qnn.onnx` đã xuất tới thiết bị Snapdragon của bạn
+  4. **Chạy** inference với ONNX Runtime và QNN Execution Provider, chọn backend HTP, GPU hoặc CPU
+
+
+
+## Link to this sectionỨng dụng trong thực tế#
+
+Các model YOLO chạy trên phần cứng Qualcomm Snapdragon rất phù hợp cho nhiều ứng dụng [edge AI](https://www.ultralytics.com/glossary/edge-ai):
+
+  * **Điện thoại thông minh** : [Phát hiện đối tượng](https://www.ultralytics.com/glossary/object-detection) theo thời gian thực và hiểu cảnh trong các ứng dụng máy ảnh và ảnh với sự tăng tốc của NPU.
+  * **Windows on Snapdragon** : Thị giác máy tính trên thiết bị trong các PC Copilot+ mà không cần offload lên đám mây.
+  * **Ô tô** : Giám sát người lái, phát hiện hành khách và các tính năng ADAS trên nền tảng Snapdragon Digital Chassis.
+  * **XR và Thiết bị đeo** : Khả năng nhận thức độ trễ thấp, tiêu thụ năng lượng thấp cho kính AR/VR và kính thông minh.
+  * **IoT và Robotics** : Inference thị giác hiệu quả trên camera, máy bay không người lái và các hệ thống nhúng chạy bằng Snapdragon.
+
+
+
+## Link to this sectionTóm tắt#
+
+Trong hướng dẫn này, bạn đã học cách xuất các model Ultralytics YOLO sang định dạng Qualcomm QNN **tại chỗ** với ONNX Runtime QNN Execution Provider. Pipeline xuất chuyển đổi model của bạn sang ONNX, sau đó biên dịch nó thành QNN context binary trên máy chủ của bạn — không cần tài khoản Qualcomm hoặc đám mây — tạo ra một tệp `*_qnn.onnx` được tối ưu hóa cho phần cứng CPU Snapdragon, GPU Adreno và Hexagon NPU thông qua runtime QNN/QAIRT.
+
+Sự kết hợp giữa [Ultralytics YOLO](https://www.ultralytics.com/yolo) và stack AI trên thiết bị của Qualcomm cung cấp một giải pháp hiệu quả để chạy các khối lượng công việc [thị giác máy tính](https://www.ultralytics.com/glossary/computer-vision-cv) tiên tiến trên toàn bộ hệ sinh thái Snapdragon rộng lớn.
+
+Đối với các mục tiêu triển khai trên thiết bị di động khác, hãy xem các hướng dẫn xuất [ONNX](/vi/integrations/onnx), [CoreML](/vi/integrations/coreml), [NCNN](/vi/integrations/ncnn), [TFLite](/vi/integrations/tflite), [ExecuTorch](/vi/integrations/executorch), [RKNN](/vi/integrations/rockchip-rknn), [Sony IMX500](/vi/integrations/sony-imx500) và [TensorRT](/vi/integrations/tensorrt) liên quan. Để so sánh các định dạng trước khi vận chuyển, hãy sử dụng [chế độ Benchmark](/vi/modes/benchmark). Để xem danh sách đầy đủ các định dạng và tùy chọn, hãy truy cập tài liệu [Chế độ xuất (Export mode)](/vi/modes/export) và [trang hướng dẫn tích hợp](/vi/integrations).
+
+## Link to this sectionCâu hỏi thường gặp#
+
+### Link to this sectionLàm thế nào để tôi xuất model Ultralytics YOLO của mình sang định dạng QNN?#
+
+Bạn có thể xuất model của mình bằng phương thức `export()` trong Python hoặc qua CLI với `format="qnn"`. Quá trình xuất trước tiên tạo một model ONNX, sau đó biên dịch nó tại chỗ thành QNN context binary bằng ONNX Runtime QNN Execution Provider. Gói `onnxruntime-qnn` được cài đặt tự động trong lần xuất đầu tiên.
+
+Ví dụ
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    model.export(format="qnn")
+
+### Link to this sectionTôi có cần tài khoản Qualcomm hoặc quyền truy cập đám mây không?#
+
+Không. Xuất QNN chạy hoàn toàn trên máy cục bộ của bạn bằng gói `onnxruntime-qnn`, gói này tích hợp các thư viện QAIRT. Không cần tài khoản Qualcomm, API token hoặc truy cập mạng.
+
+### Link to this sectionXuất Ultralytics QNN so với Qualcomm AI Hub như thế nào?#
+
+[Qualcomm AI Hub](https://aihub.qualcomm.com/) là dịch vụ đám mây của Qualcomm để biên dịch, profiling và benchmark các model trên các thiết bị Snapdragon được lưu trữ, và nó yêu cầu tài khoản Qualcomm. Xuất Ultralytics QNN nhắm mục tiêu vào cùng một runtime QNN/QAIRT (CPU Snapdragon, GPU Adreno và Hexagon NPU) nhưng biên dịch context binary **tại chỗ** với ONNX Runtime QNN Execution Provider — không tài khoản, không upload và không hàng đợi. Đây là cách nhanh nhất để đi từ một model `.pt` sang một bản build sẵn sàng cho Snapdragon trực tiếp bên trong quy trình xuất YOLO tiêu chuẩn.
+
+### Link to this sectionTôi có thể xuất trên những nền tảng nào?#
+
+`onnxruntime-qnn` cung cấp các wheel xây dựng sẵn cho **Windows (x64 và ARM64)** và **Linux ARM64 (aarch64)** ; trên **Linux x86-64** , hãy tự build ONNX Runtime từ mã nguồn với `--use_qnn` (không có wheel xây dựng sẵn, và macOS không phải là host QNN được hỗ trợ). Việc tạo context-binary chạy trên host x64 — Windows x64 hoặc Linux x86-64 — và không yêu cầu thiết bị Snapdragon vật lý.
+
+### Link to this sectionLàm thế nào để tôi chạy YOLO trên Qualcomm Snapdragon NPU?#
+
+Xuất với `model.export(format="qnn")`, sao chép tệp `yolo26n_qnn.onnx` thu được vào thiết bị Snapdragon của bạn và chạy `yolo predict model=yolo26n_qnn.onnx source=image.jpg` (hoặc `yolo val`). Ultralytics tải context binary thông qua ONNX Runtime QNN Execution Provider và chạy nó trên Hexagon NPU — xem Triển khai các Model YOLO QNN đã xuất.
+
+### Link to this sectionSự khác biệt giữa QNN và SNPE là gì?#
+
+QNN (Qualcomm AI Engine Direct, một phần của QAIRT SDK) là stack inference hiện tại của Qualcomm và là giải pháp thay thế được khuyến nghị cho bộ SDK Snapdragon Neural Processing Engine (SNPE) cũ hơn. Các triển khai mới nên nhắm mục tiêu vào QNN.
+
+### Link to this sectionTôi có thể chạy một model QNN với `yolo predict` và `yolo val` không?#
+
+Có, trên một thiết bị Qualcomm Snapdragon đã cài đặt `onnxruntime-qnn` — `YOLO("yolo26n_qnn.onnx")` sẽ tải context binary thông qua QNN Execution Provider và chạy `predict`/`val` giống như bất kỳ định dạng nào khác. Trên host x86 không có phần cứng QNN, model không thể thực thi vì context binary nhắm mục tiêu đến Snapdragon NPU.
+
+### Link to this sectionĐầu ra của một bản xuất QNN là gì?#
+
+Quá trình xuất tạo ra một tệp ONNX context-binary độc lập (ví dụ: `yolo26n_qnn.onnx`) với tên lớp, kích thước ảnh, tác vụ và các metadata model khác được nhúng trong `metadata_props` của ONNX.
+
+Người đóng góp
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/qnn.md)
+
+[GLglenn-jocher8](https://github.com/glenn-jocher)[SHShuaiLYU1](https://github.com/ShuaiLYU)
+
+Đã tạo 3 tuần trướcĐã cập nhật 3 ngày trước
+
+## Bình luận
+
+Trên trang này
+
+Khám phá với AI

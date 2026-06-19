@@ -1,0 +1,598 @@
+---
+source_url: https://docs.ultralytics.com/fr/guides/vertex-ai-deployment-with-docker
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/vertex-ai-deployment-with-docker.md)
+
+# Link to this sectionDéploie un modèle YOLO pré-entraîné avec Ultralytics sur Vertex AI pour l'inférence#
+
+Ce guide te montre comment conteneuriser un modèle YOLO26 pré-entraîné avec Ultralytics, créer un serveur d'inférence FastAPI pour celui-ci et déployer le modèle avec le serveur d'inférence sur Google Cloud Vertex AI. L'exemple d'implémentation couvrira le cas d'usage de détection d'objets pour YOLO26, mais les mêmes principes s'appliqueront pour utiliser [d'autres modes YOLO](/fr/modes).
+
+Avant de commencer, tu devras créer un projet Google Cloud Platform (GCP). Tu obtiens 300 $ de crédits GCP à utiliser gratuitement en tant que nouvel utilisateur, et ce montant suffit pour tester une configuration opérationnelle que tu pourras étendre plus tard pour tout autre cas d'usage YOLO26, y compris l'entraînement, ou l'inférence par lot et en streaming.
+
+## Link to this sectionCe que tu vas apprendre#
+
+  1. Créer un backend d'inférence pour un modèle Ultralytics YOLO26 en utilisant FastAPI.
+  2. Créer un dépôt GCP Artifact Registry pour stocker ton image Docker.
+  3. Construire et pousser l'image Docker avec le modèle vers Artifact Registry.
+  4. Importer ton modèle dans Vertex AI.
+  5. Créer un point de terminaison Vertex AI et déployer le modèle.
+
+
+
+Pourquoi déployer un modèle conteneurisé ?
+
+  * **Contrôle total du modèle avec Ultralytics** : Tu peux utiliser une logique d'inférence personnalisée avec un contrôle complet sur le prétraitement, le post-traitement et le formatage des réponses.
+  * **Vertex AI s'occupe du reste** : Il effectue une mise à l'échelle automatique tout en offrant une flexibilité dans la configuration des ressources de calcul, de la mémoire et des configurations GPU.
+  * **Intégrations et sécurité GCP natives** : Configuration transparente avec Cloud Storage, BigQuery, Cloud Functions, contrôles VPC, politiques IAM et journaux d'audit.
+
+
+
+## Link to this sectionPrérequis#
+
+  1. Installe [Docker](https://docs.docker.com/engine/install/) sur ta machine.
+  2. Installe le [Google Cloud SDK](https://docs.cloud.google.com/sdk/docs/install-sdk) et [authentifie-toi pour utiliser le gcloud CLI](https://docs.cloud.google.com/sdk/docs/authenticate).
+  3. Il est fortement recommandé de parcourir le [Guide de démarrage rapide Docker pour Ultralytics](https://docs.ultralytics.com/guides/docker-quickstart), car tu devras étendre l'une des images Docker officielles d'Ultralytics en suivant ce guide.
+
+
+
+## Link to this sectionCrée un backend d'inférence avec FastAPI#
+
+Tout d'abord, tu dois créer une application FastAPI qui traitera les requêtes d'inférence du modèle YOLO26. Cette application gérera le chargement du modèle, le prétraitement des images et la logique d'inférence (prédiction).
+
+### Link to this sectionFondamentaux de conformité Vertex AI#
+
+Vertex AI attend que ton conteneur implémente deux points de terminaison spécifiques :
+
+  1. Point de terminaison **Health** (`/health`) : Doit retourner le statut HTTP `200 OK` lorsque le service est prêt.
+
+  2. Point de terminaison **Predict** (`/predict`) : Accepte des requêtes de prédiction structurées avec des images **encodées en base64** et des paramètres optionnels. Des [limites de taille de charge utile](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/predictions/choose-endpoint-type) s'appliquent en fonction du type de point de terminaison.
+
+Les charges utiles de requête pour le point de terminaison `/predict` doivent suivre cette structure JSON :
+         
+         {
+             "instances": [{ "image": "base64_encoded_image" }],
+             "parameters": { "confidence": 0.5 }
+         }
+
+
+
+
+### Link to this sectionStructure du dossier de projet#
+
+La majeure partie de notre construction se déroulera à l'intérieur du conteneur Docker, et Ultralytics chargera également un modèle YOLO26 pré-entraîné, donc tu peux garder la structure du dossier local simple :
+    
+    
+    YOUR_PROJECT/
+    ├── src/
+    │   ├── __init__.py
+    │   ├── app.py              # Core YOLO26 inference logic
+    │   └── main.py             # FastAPI inference server
+    ├── tests/
+    ├── .env                    # Environment variables for local development
+    ├── Dockerfile              # Container configuration
+    ├── LICENSE                 # AGPL-3.0 License
+    └── pyproject.toml          # Python dependencies and project config
+
+Note importante sur la licence
+
+Les modèles et le framework Ultralytics YOLO26 sont sous licence AGPL-3.0, ce qui comporte des exigences de conformité importantes. Assure-toi de lire la documentation Ultralytics sur [comment se conformer aux termes de la licence](/fr/help/contributing#how-to-comply-with-agpl-30).
+
+### Link to this sectionCrée pyproject.toml avec les dépendances#
+
+Pour gérer facilement ton projet, crée un fichier `pyproject.toml` avec les dépendances suivantes :
+    
+    
+    [project]
+    name = "YOUR_PROJECT_NAME"
+    version = "0.0.1"
+    description = "YOUR_PROJECT_DESCRIPTION"
+    requires-python = ">=3.10,<3.13"
+    dependencies = [
+       "ultralytics>=8.3.0",
+       "fastapi[all]>=0.89.1",
+       "uvicorn[standard]>=0.20.0",
+       "pillow>=9.0.0",
+    ]
+    
+    [build-system]
+    requires = ["setuptools>=61.0"]
+    build-backend = "setuptools.build_meta"
+
+  * `uvicorn` sera utilisé pour exécuter le serveur FastAPI.
+  * `pillow` sera utilisé pour le traitement d'image, mais tu n'es pas limité aux images PIL seulement — Ultralytics prend en charge [beaucoup d'autres formats](/fr/modes/predict#inference-sources).
+
+
+
+### Link to this sectionCrée une logique d'inférence avec Ultralytics YOLO26#
+
+Maintenant que tu as configuré la structure du projet et les dépendances, tu peux implémenter la logique d'inférence YOLO26 principale. Crée un fichier `src/app.py` qui gérera le chargement du modèle, le traitement d'image et la prédiction, en utilisant l'API Python d'Ultralytics.
+    
+    
+    # src/app.py
+    
+    from ultralytics import YOLO
+    
+    # Model initialization and readiness state
+    model_yolo = None
+    _model_ready = False
+    
+    def _initialize_model():
+        """Initialize the YOLO model."""
+        global model_yolo, _model_ready
+    
+        try:
+            # Use pretrained YOLO26n model from Ultralytics base image
+            model_yolo = YOLO("yolo26n.pt")
+            _model_ready = True
+    
+        except Exception as e:
+            print(f"Error initializing YOLO model: {e}")
+            _model_ready = False
+            model_yolo = None
+    
+    # Initialize model on module import
+    _initialize_model()
+    
+    def is_model_ready() -> bool:
+        """Check if the model is ready for inference."""
+        return _model_ready and model_yolo is not None
+
+Cela chargera le modèle une fois lors du démarrage du conteneur, et le modèle sera partagé entre toutes les requêtes. Si ton modèle doit gérer une lourde charge d'inférence, il est recommandé de choisir un type de machine avec plus de mémoire lors de l'importation d'un modèle dans Vertex AI à une étape ultérieure.
+
+Ensuite, crée deux fonctions utilitaires pour le traitement des images d'entrée et de sortie avec `pillow`. YOLO26 prend en charge les images PIL nativement.
+    
+    
+    def get_image_from_bytes(binary_image: bytes) -> Image.Image:
+        """Convert image from bytes to PIL RGB format."""
+        input_image = Image.open(io.BytesIO(binary_image)).convert("RGB")
+        return input_image
+    
+    
+    def get_bytes_from_image(image: Image.Image) -> bytes:
+        """Convert PIL image to bytes."""
+        return_image = io.BytesIO()
+        image.save(return_image, format="JPEG", quality=85)
+        return_image.seek(0)
+        return return_image.getvalue()
+
+Enfin, implémente la fonction `run_inference` qui gérera la détection d'objets. Dans cet exemple, nous extrairons les boîtes englobantes, les noms de classes et les scores de confiance à partir des prédictions du modèle. La fonction retournera un dictionnaire avec les détections et les résultats bruts pour un traitement ou une annotation ultérieurs.
+    
+    
+    def run_inference(input_image: Image.Image, confidence_threshold: float = 0.5) -> Dict[str, Any]:
+        """Run inference on an image using YOLO26n model."""
+        global model_yolo
+    
+        # Check if model is ready
+        if not is_model_ready():
+            print("Model not ready for inference")
+            return {"detections": [], "results": None}
+    
+        try:
+            # Make predictions and get raw results
+            results = model_yolo.predict(
+                imgsz=640, source=input_image, conf=confidence_threshold, save=False, augment=False, verbose=False
+            )
+    
+            # Extract detections (bounding boxes, class names, and confidences)
+            detections = []
+            if results and len(results) > 0:
+                result = results[0]
+                if result.boxes is not None and len(result.boxes.xyxy) > 0:
+                    boxes = result.boxes
+    
+                    # Convert tensors to numpy for processing
+                    xyxy = boxes.xyxy.cpu().numpy()
+                    conf = boxes.conf.cpu().numpy()
+                    cls = boxes.cls.cpu().numpy().astype(int)
+    
+                    # Create detection dictionaries
+                    for i in range(len(xyxy)):
+                        detection = {
+                            "xmin": float(xyxy[i][0]),
+                            "ymin": float(xyxy[i][1]),
+                            "xmax": float(xyxy[i][2]),
+                            "ymax": float(xyxy[i][3]),
+                            "confidence": float(conf[i]),
+                            "class": int(cls[i]),
+                            "name": model_yolo.names.get(int(cls[i]), f"class_{int(cls[i])}"),
+                        }
+                        detections.append(detection)
+    
+            return {
+                "detections": detections,
+                "results": results,  # Keep raw results for annotation
+            }
+        except Exception as e:
+            # If there's an error, return empty structure
+            print(f"Error in YOLO detection: {e}")
+            return {"detections": [], "results": None}
+
+Optionnellement, tu peux ajouter une fonction pour annoter l'image avec des boîtes englobantes et des étiquettes en utilisant la méthode de traçage intégrée d'Ultralytics. Cela sera utile si tu souhaites retourner des images annotées dans la réponse de prédiction.
+    
+    
+    def get_annotated_image(results: list) -> Image.Image:
+        """Get annotated image using Ultralytics built-in plot method."""
+        if not results or len(results) == 0:
+            raise ValueError("No results provided for annotation")
+    
+        result = results[0]
+        # Use Ultralytics built-in plot method with PIL output
+        return result.plot(pil=True)
+
+### Link to this sectionCrée un serveur d'inférence HTTP avec FastAPI#
+
+Maintenant que tu as la logique d'inférence YOLO26 principale, tu peux créer une application FastAPI pour la servir. Cela inclura les points de terminaison de vérification de santé et de prédiction requis par Vertex AI.
+
+Tout d'abord, ajoute les importations et configure la journalisation pour Vertex AI. Parce que Vertex AI traite stderr comme une sortie d'erreur, il est logique de rediriger les journaux vers stdout.
+    
+    
+    import sys
+    
+    from loguru import logger
+    
+    # Configure logger
+    logger.remove()
+    logger.add(
+        sys.stdout,
+        colorize=True,
+        format="<green>{time:HH:mm:ss}</green> | <level>{message}</level>",
+        level=10,
+    )
+    logger.add("log.log", rotation="1 MB", level="DEBUG", compression="zip")
+
+Pour une conformité totale avec Vertex AI, définis les points de terminaison requis dans les variables d'environnement et règle la limite de taille pour les requêtes. Il est recommandé d'utiliser des [points de terminaison privés Vertex AI](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/predictions/choose-endpoint-type) pour les déploiements en production. De cette façon, tu bénéficieras d'une limite de taille de charge utile plus élevée (10 Mo au lieu de 1,5 Mo pour les points de terminaison publics), ainsi que d'une sécurité et d'un contrôle d'accès robustes.
+    
+    
+    # Vertex AI environment variables
+    AIP_HTTP_PORT = int(os.getenv("AIP_HTTP_PORT", "8080"))
+    AIP_HEALTH_ROUTE = os.getenv("AIP_HEALTH_ROUTE", "/health")
+    AIP_PREDICT_ROUTE = os.getenv("AIP_PREDICT_ROUTE", "/predict")
+    
+    # Request size limit (10 MB for private endpoints, 1.5 MB for public)
+    MAX_REQUEST_SIZE = 10 * 1024 * 1024  # 10 MB in bytes
+
+Ajoute deux modèles Pydantic pour valider tes requêtes et tes réponses :
+    
+    
+    # Pydantic models for request/response
+    class PredictionRequest(BaseModel):
+        instances: list
+        parameters: Optional[Dict[str, Any]] = None
+    
+    class PredictionResponse(BaseModel):
+        predictions: list
+
+Ajoute le point de terminaison de vérification de santé pour vérifier la disponibilité de ton modèle. **Ceci est important pour Vertex AI** , car sans une vérification de santé dédiée, son orchestrateur enverra des pings sur des sockets aléatoires et ne sera pas en mesure de déterminer si le modèle est prêt pour l'inférence. Ta vérification doit retourner `200 OK` en cas de succès et `503 Service Unavailable` en cas d'échec :
+    
+    
+    # Health check endpoint
+    @app.get(AIP_HEALTH_ROUTE, status_code=status.HTTP_200_OK)
+    def health_check():
+        """Health check endpoint for Vertex AI."""
+        if not is_model_ready():
+            raise HTTPException(status_code=503, detail="Model not ready")
+        return {"status": "healthy"}
+
+Tu as maintenant tout ce qu'il faut pour implémenter le point de terminaison de prédiction qui traitera les requêtes d'inférence. Il acceptera un fichier image, exécutera l'inférence et retournera les résultats. Note que l'image doit être encodée en base64, ce qui augmente en outre la taille de la charge utile jusqu'à 33 %.
+    
+    
+    @app.post(AIP_PREDICT_ROUTE, response_model=PredictionResponse)
+    async def predict(request: PredictionRequest):
+        """Prediction endpoint for Vertex AI."""
+        try:
+            predictions = []
+    
+            for instance in request.instances:
+                if isinstance(instance, dict):
+                    if "image" in instance:
+                        image_data = base64.b64decode(instance["image"])
+                        input_image = get_image_from_bytes(image_data)
+                    else:
+                        raise HTTPException(status_code=400, detail="Instance must contain 'image' field")
+                else:
+                    raise HTTPException(status_code=400, detail="Invalid instance format")
+    
+                # Extract YOLO26 parameters if provided
+                parameters = request.parameters or {}
+                confidence_threshold = parameters.get("confidence", 0.5)
+                return_annotated_image = parameters.get("return_annotated_image", False)
+    
+                # Run inference with YOLO26n model
+                result = run_inference(input_image, confidence_threshold=confidence_threshold)
+                detections_list = result["detections"]
+    
+                # Format predictions for Vertex AI
+                detections = []
+                for detection in detections_list:
+                    formatted_detection = {
+                        "class": detection["name"],
+                        "confidence": detection["confidence"],
+                        "bbox": {
+                            "xmin": detection["xmin"],
+                            "ymin": detection["ymin"],
+                            "xmax": detection["xmax"],
+                            "ymax": detection["ymax"],
+                        },
+                    }
+                    detections.append(formatted_detection)
+    
+                # Build prediction response
+                prediction = {"detections": detections, "detection_count": len(detections)}
+    
+                # Add annotated image if requested and detections exist
+                if (
+                    return_annotated_image
+                    and result["results"]
+                    and result["results"][0].boxes is not None
+                    and len(result["results"][0].boxes) > 0
+                ):
+                    import base64
+    
+                    annotated_image = get_annotated_image(result["results"])
+                    img_bytes = get_bytes_from_image(annotated_image)
+                    prediction["annotated_image"] = base64.b64encode(img_bytes).decode("utf-8")
+    
+                predictions.append(prediction)
+    
+            logger.info(
+                f"Processed {len(request.instances)} instances, found {sum(len(p['detections']) for p in predictions)} total detections"
+            )
+    
+            return PredictionResponse(predictions=predictions)
+    
+        except HTTPException:
+            # Re-raise HTTPException as-is (don't catch and convert to 500)
+            raise
+        except Exception as e:
+            logger.error(f"Prediction error: {e}")
+            raise HTTPException(status_code=500, detail=f"Prediction failed: {e}")
+
+Enfin, ajoute le point d'entrée de l'application pour exécuter le serveur FastAPI.
+    
+    
+    if __name__ == "__main__":
+        import uvicorn
+    
+        logger.info(f"Starting server on port {AIP_HTTP_PORT}")
+        logger.info(f"Health check route: {AIP_HEALTH_ROUTE}")
+        logger.info(f"Predict route: {AIP_PREDICT_ROUTE}")
+        uvicorn.run(app, host="0.0.0.0", port=AIP_HTTP_PORT)
+
+Tu as maintenant une application FastAPI complète qui peut servir les requêtes d'inférence YOLO26. Tu peux la tester localement en installant les dépendances et en exécutant le serveur, par exemple avec uv.
+    
+    
+    # Install dependencies
+    uv pip install -e .
+    
+    # Run the FastAPI server directly
+    uv run src/main.py
+
+Pour tester le serveur, tu peux interroger les points de terminaison `/health` et `/predict` en utilisant cURL. Place une image de test dans le dossier `tests`. Ensuite, dans ton Terminal, exécute les commandes suivantes :
+    
+    
+    # Test health endpoint
+    curl http://localhost:8080/health
+    
+    # Test predict endpoint with base64 encoded image
+    curl -X POST -H "Content-Type: application/json" -d "{\"instances\": [{\"image\": \"$(base64 -i tests/test_image.jpg)\"}]}" http://localhost:8080/predict
+
+Tu devrais recevoir une réponse JSON avec les objets détectés. Lors de ta première requête, attends-toi à un court délai, car Ultralytics doit extraire et charger le modèle YOLO26.
+
+## Link to this sectionÉtends l'image Docker Ultralytics avec ton application#
+
+Ultralytics fournit plusieurs images Docker que tu peux utiliser comme base pour ton image d'application. Docker installera Ultralytics et les pilotes GPU nécessaires.
+
+Pour utiliser toutes les capacités des modèles Ultralytics YOLO, tu devrais sélectionner l'image optimisée CUDA pour l'inférence GPU. Cependant, si l'inférence CPU suffit pour ta tâche, tu peux économiser des ressources informatiques en sélectionnant également l'image CPU uniquement :
+
+  * [Dockerfile](https://github.com/ultralytics/ultralytics/blob/main/docker/Dockerfile) : Image optimisée CUDA pour l'entraînement et l'inférence YOLO26 sur un/plusieurs GPU.
+  * [Dockerfile-cpu](https://github.com/ultralytics/ultralytics/blob/main/docker/Dockerfile-cpu) : Image CPU uniquement pour l'inférence YOLO26.
+
+
+
+### Link to this sectionCrée une image Docker pour ton application#
+
+Crée un `Dockerfile` à la racine de ton projet avec le contenu suivant :
+    
+    
+    # Extends official Ultralytics Docker image for YOLO26
+    FROM ultralytics/ultralytics:latest
+    
+    ENV PYTHONUNBUFFERED=1 \
+        PYTHONDONTWRITEBYTECODE=1
+    
+    # Install FastAPI and dependencies
+    RUN uv pip install fastapi[all] uvicorn[standard] loguru
+    
+    WORKDIR /app
+    COPY src/ ./src/
+    COPY pyproject.toml ./
+    
+    # Install the application package
+    RUN uv pip install -e .
+    
+    RUN mkdir -p /app/logs
+    ENV PYTHONPATH=/app/src
+    
+    # Port for Vertex AI
+    EXPOSE 8080
+    
+    # Start the inference server
+    ENTRYPOINT ["python", "src/main.py"]
+
+Dans l'exemple, l'image Docker officielle Ultralytics `ultralytics:latest` est utilisée comme base. Elle contient déjà le modèle YOLO26 et toutes les dépendances nécessaires. Le point d'entrée du serveur est le même que celui utilisé pour tester l'application FastAPI localement.
+
+### Link to this sectionConstruis et teste l'image Docker#
+
+Maintenant, tu peux construire l'image Docker avec la commande suivante :
+    
+    
+    docker build --platform linux/amd64 -t IMAGE_NAME:IMAGE_VERSION .
+
+Remplace `IMAGE_NAME` et `IMAGE_VERSION` par les valeurs souhaitées, par exemple `yolo26-fastapi:0.1`. Note que tu dois construire l'image pour l'architecture `linux/amd64` si tu déploies sur Vertex AI. Le paramètre `--platform` doit être explicitement défini si tu construis l'image sur un Mac Apple Silicon ou toute autre architecture non-x86.
+
+Une fois la construction de l'image terminée, tu peux tester l'image Docker localement :
+    
+    
+    docker run --platform linux/amd64 -p 8080:8080 IMAGE_NAME:IMAGE_VERSION
+
+Ton conteneur Docker exécute maintenant un serveur FastAPI sur le port `8080`, prêt à accepter les requêtes d'inférence. Tu peux tester les deux points de terminaison `/health` et `/predict` avec les mêmes commandes cURL qu'avant :
+    
+    
+    # Test health endpoint
+    curl http://localhost:8080/health
+    
+    # Test predict endpoint with base64 encoded image
+    curl -X POST -H "Content-Type: application/json" -d "{\"instances\": [{\"image\": \"$(base64 -i tests/test_image.jpg)\"}]}" http://localhost:8080/predict
+
+## Link to this sectionTélécharge l'image Docker vers Google Cloud Artifact Registry#
+
+Pour importer ton modèle conteneurisé dans Vertex AI, tu dois télécharger l'image Docker vers Google Cloud Artifact Registry. Si tu n'as pas encore de dépôt Artifact Registry, tu devras d'abord en créer un.
+
+### Link to this sectionCrée un dépôt dans Google Cloud Artifact Registry#
+
+Ouvre la [page Artifact Registry](https://console.cloud.google.com/artifacts) dans la console Google Cloud. Si tu utilises Artifact Registry pour la première fois, tu pourrais être invité à activer l'API Artifact Registry en premier.
+
+![Google Cloud Artifact Registry repository creation](https://github.com/lussebullar/temp-image-storage/releases/download/docs/create-artifact-registry-repo.png)
+
+  1. Sélectionne Créer un dépôt.
+  2. Entre le nom de ton dépôt. Sélectionne la région souhaitée et utilise les paramètres par défaut pour les autres options, sauf si tu dois les modifier spécifiquement.
+
+
+
+Remarque
+
+La sélection de la région peut affecter la disponibilité des machines et certaines limitations de calcul pour les utilisateurs non-Entreprise. Tu peux trouver plus d'informations dans la documentation officielle de Vertex AI : [Quotas et limites de Vertex AI](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/quotas).
+
+  1. Une fois le dépôt créé, enregistre ton PROJECT_ID, l'emplacement (région) et le nom du dépôt dans ton coffre-fort de secrets ou ton fichier `.env`. Tu en auras besoin plus tard pour taguer et pousser ton image Docker vers Artifact Registry.
+
+
+
+### Link to this sectionAuthentifie Docker auprès d'Artifact Registry#
+
+Authentifie ton client Docker auprès du dépôt Artifact Registry que tu viens de créer. Exécute la commande suivante dans ton terminal :
+    
+    
+    gcloud auth configure-docker YOUR_REGION-docker.pkg.dev
+
+### Link to this sectionTague et pousse ton image vers Artifact Registry#
+
+Tague et pousse l'image Docker vers Google Artifact Registry.
+
+Utilise des tags uniques pour tes images
+
+Il est recommandé d'utiliser des tags uniques à chaque mise à jour de ton image. La plupart des services GCP, y compris Vertex AI, s'appuient sur les tags d'image pour le versionnage et la mise à l'échelle automatisés, il est donc de bonne pratique d'utiliser un versionnage sémantique ou des tags basés sur la date.
+
+Tague ton image avec l'URL du dépôt Artifact Registry. Remplace les espaces réservés par les valeurs que tu as enregistrées précédemment.
+    
+    
+    docker tag IMAGE_NAME:IMAGE_VERSION YOUR_REGION-docker.pkg.dev/YOUR_PROJECT_ID/YOUR_REPOSITORY_NAME/IMAGE_NAME:IMAGE_VERSION
+
+Pousse l'image taguée vers le dépôt Artifact Registry.
+    
+    
+    docker push YOUR_REGION-docker.pkg.dev/YOUR_PROJECT_ID/YOUR_REPOSITORY_NAME/IMAGE_NAME:IMAGE_VERSION
+
+Attends que le processus se termine. Tu devrais maintenant voir l'image dans ton dépôt Artifact Registry.
+
+Pour des instructions plus spécifiques sur la façon de travailler avec des images dans Artifact Registry, consulte la documentation Artifact Registry : [Pousser et extraire des images](https://docs.cloud.google.com/artifact-registry/docs/docker/pushing-and-pulling).
+
+## Link to this sectionImporte ton modèle dans Vertex AI#
+
+En utilisant l'image Docker que tu viens de pousser, tu peux maintenant importer le modèle dans Vertex AI.
+
+  1. Dans le menu de navigation de Google Cloud, va dans Vertex AI > Registre de modèles. Alternativement, cherche "Vertex AI" dans la barre de recherche en haut de la console Google Cloud.
+
+
+
+![Vertex AI Model Registry import interface](https://github.com/lussebullar/temp-image-storage/releases/download/docs/vertex-ai-import.png)
+
+1\. Click Import. 1\. Select Import as a new model. 1\. Select the region. You can choose the same region as your Artifact Registry repository, but your selection should be dictated by the availability of machine types and quotas in your region. 1\. Select Import an existing model container. 
+
+![Vertex AI import model dialog](https://github.com/lussebullar/temp-image-storage/releases/download/docs/import-model.png)
+
+1\. In the Container image field, browse the Artifact Registry repository you created earlier and select the image you just pushed. 1\. Scroll down to the Environment variables section and enter the predict and health endpoints, and the port that you defined in your FastAPI application. 
+
+![Vertex AI environment variables configuration](https://github.com/lussebullar/temp-image-storage/releases/download/docs/predict-health-port.png)
+
+1\. Click Import. Vertex AI will take several minutes to register the model and prepare it for deployment. You will receive an email notification once the import is complete. 
+
+## Link to this sectionCrée un point de terminaison Vertex AI et déploie ton modèle#
+
+Points de terminaison vs Modèles dans Vertex AI
+
+Dans la terminologie Vertex AI, les **points de terminaison** font référence aux modèles **déployés** , car ils représentent les points de terminaison HTTP où tu envoies des requêtes d'inférence, tandis que les **modèles** sont les artefacts ML entraînés stockés dans le Registre de modèles.
+
+Pour déployer un modèle, tu dois créer un point de terminaison dans Vertex AI.
+
+  1. Dans ton menu de navigation Vertex AI, va dans Points de terminaison. Sélectionne la région que tu as utilisée lors de l'importation de ton modèle. Clique sur Créer.
+
+
+
+![Vertex AI create endpoint interface](https://github.com/lussebullar/temp-image-storage/releases/download/docs/endpoint-name.png)
+
+1\. Enter the Endpoint name. 1\. For Access, Vertex AI recommends using private Vertex AI endpoints. Apart from security benefits, you get a higher payload limit if you select a private endpoint, however you will need to configure your VPC network and firewall rules to allow access to the endpoint. Refer to the Vertex AI documentation for more instructions on [private endpoints](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/predictions/choose-endpoint-type). 1\. Click Continue. 1\. On the Model settings dialog, select the model you imported earlier. Now you can configure the machine type, memory, and GPU settings for your model. Allow for ample memory if you are expecting high inference loads to ensure there are no I/O bottlenecks for the proper YOLO26 performance. 1\. In Accelerator type, select the GPU type you want to use for inference. If you are not sure which GPU to select, you can start with NVIDIA T4, which is CUDA-supported.
+
+Quotas de région et de type de machine
+
+N'oublie pas que certaines régions ont des quotas de calcul très limités, tu pourrais donc ne pas être en mesure de sélectionner certains types de machines ou GPU dans ta région. Si c'est critique, change la région de ton déploiement pour une région disposant d'un quota plus important. Trouve plus d'informations dans la documentation officielle de Vertex AI : [Quotas et limites de Vertex AI](https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/quotas).
+
+  1. Une fois le type de machine sélectionné, tu peux cliquer sur Continuer. À ce stade, tu peux choisir d'activer le suivi de modèle dans Vertex AI — un service supplémentaire qui suivra les performances de ton modèle et fournira des informations sur son comportement. Ceci est optionnel et entraîne des coûts supplémentaires, choisis donc en fonction de tes besoins. Clique sur Créer.
+
+
+
+Vertex AI prendra plusieurs minutes (jusqu'à 30 min dans certaines régions) pour déployer le modèle. Tu recevras une notification par e-mail une fois le déploiement terminé.
+
+## Link to this sectionTeste ton modèle déployé#
+
+Une fois le déploiement terminé, Vertex AI te fournira un exemple d'interface API pour tester ton modèle.
+
+Pour tester l'inférence à distance, tu peux utiliser la commande cURL fournie ou créer une autre bibliothèque cliente Python qui enverra des requêtes au modèle déployé. Souviens-toi que tu dois encoder ton image en base64 avant de l'envoyer au point de terminaison `/predict`.
+
+![Vertex AI endpoint testing with cURL](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/vertex-ai-endpoint-test-curl-yolo11.avif)
+
+Attends-toi à un court délai lors de la première requête
+
+De manière similaire aux tests locaux, attends-toi à un court délai lors de la première requête, car Ultralytics devra extraire et charger le modèle YOLO26 dans le conteneur en cours d'exécution.
+
+Tu as déployé avec succès un modèle YOLO26 pré-entraîné avec Ultralytics sur Google Cloud Vertex AI.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionPuis-je utiliser les modèles Ultralytics YOLO sur Vertex AI sans Docker ?#
+
+Oui ; cependant, tu devras d'abord exporter le modèle vers un format compatible avec Vertex AI, tel que TensorFlow, Scikit-learn ou XGBoost. Google Cloud fournit un guide sur l'exécution de modèles `.pt` sur Vertex avec un aperçu complet du processus de conversion : [Exécuter des modèles PyTorch sur Vertex AI](https://cloud.google.com/blog/topics/developers-practitioners/pytorch-google-cloud-how-deploy-pytorch-models-vertex-ai).
+
+Veuillez noter que la configuration résultante s'appuiera uniquement sur la couche de service standard de Vertex AI et ne prendra pas en charge les fonctionnalités avancées du framework Ultralytics. Comme Vertex AI prend entièrement en charge les modèles conteneurisés et peut les mettre à l'échelle automatiquement en fonction de ta configuration de déploiement, cela te permet d'exploiter toutes les capacités des modèles Ultralytics YOLO sans avoir besoin de les convertir dans un format différent.
+
+### Link to this sectionPourquoi FastAPI est-il un bon choix pour servir l'inférence de YOLO26 ?#
+
+FastAPI offre un débit élevé pour les charges de travail d'inférence. Le support asynchrone permet de gérer plusieurs requêtes simultanées sans bloquer le thread principal, ce qui est important lorsque tu sers des modèles de vision par ordinateur.
+
+La validation automatique des requêtes/réponses avec FastAPI réduit les erreurs d'exécution dans les services d'inférence en production. C'est particulièrement précieux pour les API de détection d'objets où la cohérence du format d'entrée est critique.
+
+FastAPI ajoute une surcharge computationnelle minimale à ton pipeline d'inférence, laissant plus de ressources disponibles pour l'exécution du modèle et les tâches de traitement d'image.
+
+FastAPI prend également en charge SSE (Server-Sent Events), ce qui est utile pour les scénarios d'inférence en streaming.
+
+### Link to this sectionPourquoi dois-je sélectionner une région si souvent ?#
+
+Il s'agit en fait d'une fonctionnalité de polyvalence de Google Cloud Platform, où tu dois sélectionner une région pour chaque service que tu utilises. Pour la tâche de déploiement d'un modèle conteneurisé sur Vertex AI, ta sélection de région la plus importante est celle pour le Model Registry. Elle déterminera la disponibilité des types de machines et les quotas pour ton déploiement de modèle.
+
+De plus, si tu étends la configuration et que tu stockes des données de prédiction ou des résultats dans Cloud Storage ou BigQuery, tu devras utiliser la même région que pour le Model Registry afin de minimiser la latence et garantir un débit élevé pour l'accès aux données.
+
+Contributeurs
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/vertex-ai-deployment-with-docker.md)
+
+[GLglenn-jocher10](https://github.com/glenn-jocher)[PDpderrenger1](https://github.com/pderrenger)VIvitali lobanov1
+
+Créé 29 juil. 2025Mis à jour il y a 5 jours
+
+## Commentaires
+
+Sur cette page
+
+Explorer avec l'IA

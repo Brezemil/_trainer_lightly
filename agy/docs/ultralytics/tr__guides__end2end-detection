@@ -1,0 +1,233 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/end2end-detection
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/end2end-detection.md)
+
+# Link to this sectionUltralytics YOLO26'da Uçtan Uca Tespit'i Anlamak#
+
+## Link to this sectionGiriş#
+
+If you're upgrading to [YOLO26](/tr/models/yolo26) from an earlier model like [YOLOv8](/tr/models/yolov8) or [YOLO11](/tr/models/yolo11), one of the biggest changes you'll notice is the removal of [Non-Maximum Suppression](https://www.ultralytics.com/glossary/non-maximum-suppression-nms) (NMS). Traditional YOLO models produce thousands of overlapping predictions that need a separate NMS post-processing step to filter down to final detections. This adds latency, complicates export graphs, and can behave inconsistently across different hardware platforms.
+
+YOLO26 farklı bir yaklaşım benimser. Nihai tespitleri doğrudan modelden çıkarır; harici bir filtreleme gerekmez. Bu, **uçtan uca[nesne tespiti](https://www.ultralytics.com/glossary/object-detection)** olarak bilinir ve tüm YOLO26 modellerinde varsayılan olarak etkindir. Sonuç; daha basit bir dağıtım hattı, daha düşük gecikme süresi ve **CPU'larda %43'e varan daha hızlı çıkarım** sağlar.
+
+Bu kılavuz, nelerin değiştiğini, kodunu güncellemen gerekip gerekmediğini, hangi dışa aktarma formatlarının uçtan uca çıkarımı desteklediğini ve eski YOLO modellerinden nasıl sorunsuz geçiş yapacağını sana anlatır.
+
+Bu mimari değişimin arkasındaki motivasyona daha derin bir bakış için, [Ultralytics'in YOLO26'nın neden NMS'yi kaldırdığına ve bunun dağıtımı nasıl değiştirdiğine dair blog yazısına](https://www.ultralytics.com/blog/why-ultralytics-yolo26-removes-nms-and-how-that-changes-deployment) göz at.
+
+Hızlı Özet
+
+  * **Ultralytics API veya CLI mı kullanıyorsun?** Herhangi bir değişiklik yapmana gerek yok; sadece model adını `yolo26n.pt` olarak değiştirmen yeterli.
+  * **Using custom inference code (ONNX Runtime, TensorRT, etc.)?** Update your post-processing — detection output is now `(N, 300, 6)` in `xyxy` format, no NMS required. Other tasks append extra data (mask coefficients, keypoints, or angle).
+  * **Dışa aktarıyor musun?** Çoğu format uçtan uca çıktıyı yerel olarak destekler. Ancak, birkaç format (NCNN, RKNN, PaddlePaddle, ExecuTorch, IMX, Edge TPU ve QNN), desteklenmeyen operatör kısıtlamaları (örneğin `torch.topk`) nedeniyle otomatik olarak geleneksel çıktıya geri döner. Hailo HEF iş akışları ONNX'ten Hailo'ya özgü betiklerle derlenir, bu yüzden modelin için tespit başlığını ve NMS yapılandırmasını doğrula.
+
+
+
+## Link to this sectionUçtan Uca Tespit Nasıl Çalışır?#
+
+YOLO26, [eğitim](/tr/modes/train) sırasında **çift başlı bir mimari** kullanır. Her iki başlık aynı omurgayı ve boyun kısmını paylaşır ancak çıktıları farklı yollarla üretir:
+
+Başlık| Amaç| Tespit Çıktısı| İşlem Sonrası (Post-Processing)  
+---|---|---|---  
+**Bire-Bir** (varsayılan)| Uçtan uca çıkarım| `(N, 300, 6)`| Sadece güven eşiği  
+**Bire-Çok**|  Geleneksel YOLO çıktısı| `(N, nc + 4, 8400)`| NMS gerektirir  
+  
+Yukarıdaki şekiller [tespit](/tr/tasks/detect) içindir. Diğer görevler, bire-bir çıktıyı her tespit için ek verilerle genişletir:
+
+Görev| Uçtan Uca Çıktı| Ek Veri  
+---|---|---  
+[Tespit](/tr/tasks/detect)| `(N, 300, 6)`| —  
+[Örnek Segmentasyonu](/tr/tasks/segment)| `(N, 300, 6 + nm)` \+ proto `(N, nm, H, W)`| `nm` maske katsayıları (varsayılan 32)  
+[Poz](/tr/tasks/pose)| `(N, 300, 57)`| 17 kilit nokta × 3 (x, y, görünürlük)  
+[OBB](/tr/tasks/obb)| `(N, 300, 7)`| Dönüş açısı  
+  
+During training, both heads run simultaneously — the one-to-many head provides a richer learning signal, while the one-to-one head learns to produce clean, non-overlapping predictions. During [inference](/tr/modes/predict) and [export](/tr/modes/export), only the **one-to-one head** is active by default, producing up to 300 detections per image in the format `[x1, y1, x2, y2, confidence, class_id]`.
+
+`model.fuse()` komutunu çalıştırdığında, daha hızlı çıkarım için Conv + BatchNorm katmanlarını birleştirir ve uçtan uca modellerde, bire-çok başlığını da kaldırarak model boyutunu ve FLOP değerlerini azaltır. Çift başlı mimari hakkında daha fazla ayrıntı için [YOLO26 model sayfasına](/tr/models/yolo26) bak.
+
+## Link to this sectionKodumu Değiştirmem Gerekiyor mu?#
+
+### Link to this sectionUltralytics Python API veya CLI Kullanımı#
+
+**Değişiklik yapmana gerek yok.** Standart [Ultralytics Python API](/tr/usage/python) veya [CLI](/tr/usage/cli) kullanıyorsan, her şey otomatik çalışır; [tahmin](/tr/modes/predict), [doğrulama](/tr/modes/val) ve [dışa aktarma](/tr/modes/export) işlemlerinin tümü uçtan uca modelleri doğrudan destekler.
+
+Ultralytics API ile kod değişikliği gerekmez
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a YOLO26 model
+    model = YOLO("yolo26n.pt")
+    
+    # Predict — no NMS step, no code changes
+    results = model.predict("image.jpg")
+
+### Link to this sectionÖzel Çıkarım Kodu Kullanımı#
+
+**Evet, çıktı formatı farklıdır.** [YOLOv8](/tr/models/yolov8) veya [YOLO11](/tr/models/yolo11) için özel işlem sonrası mantığı yazdıysan (örneğin [ONNX Runtime](/tr/integrations/onnx) veya [TensorRT](/tr/integrations/tensorrt) ile çıkarım yaparken), bunu yeni çıktı şeklini ele alacak şekilde güncellemen gerekecektir:
+
+| YOLOv8 / YOLO11| YOLO26 (uçtan uca)  
+---|---|---  
+**Tespit çıktısı**| `(N, nc + 4, 8400)`| `(N, 300, 6)`  
+**Kutu formatı**| `xywh` (merkez x, merkez y, genişlik, yükseklik)| `xyxy` (sol-üst x, sol-üst y, sağ-alt x, sağ-alt y)  
+**Düzen**|  Çapa başına kutu koordinatları + sınıf skorları| `[x1, y1, x2, y2, conf, class_id]`  
+**NMS gerekli**|  Evet| Hayır  
+**İşlem sonrası**|  NMS + güven filtresi| Sadece güven filtresi  
+  
+[Segmentasyon](/tr/tasks/segment), [poz](/tr/tasks/pose) ve [OBB](/tr/tasks/obb) görevleri için, YOLO26 her tespite göreve özel veriler ekler; yukarıdaki çıktı şekilleri tablosuna bak.
+
+Burada `N` [yığın boyutu (batch size)](https://www.ultralytics.com/glossary/batch-size), `nc` ise sınıf sayısıdır (örneğin [COCO](/tr/datasets/detect/coco) için 80).
+
+Uçtan uca modellerle işlem sonrası süreç çok daha basitleşir; örneğin [ONNX Runtime](/tr/integrations/onnx) kullanırken:
+    
+    
+    import onnxruntime as ort
+    
+    # Load and run the exported end-to-end model
+    session = ort.InferenceSession("yolo26n.onnx")
+    output = session.run(None, {session.get_inputs()[0].name: input_tensor})
+    
+    # End-to-end output: (batch, 300, 6) → [x1, y1, x2, y2, confidence, class_id]
+    detections = output[0][0]  # first image in batch
+    detections = detections[detections[:, 4] > conf_threshold]  # confidence filter — that's it!
+
+### Link to this sectionBire-Çok Başlığına Geçiş#
+
+Geleneksel YOLO çıktı formatına ihtiyacın varsa (örneğin, mevcut NMS tabanlı işlem sonrası kodunu yeniden kullanmak için), `end2end=False` ayarını yaparak istediğin zaman bire-çok başlığına geçebilirsin:
+
+Geleneksel NMS tabanlı çıktı için bire-çok başlığını kullanma
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.pt")
+    
+    # Prediction with NMS (traditional behavior)
+    results = model.predict("image.jpg", end2end=False)
+    
+    # Validation with NMS
+    metrics = model.val(data="coco.yaml", end2end=False)
+    
+    # Export without end-to-end
+    model.export(format="onnx", end2end=False)
+
+## Link to this sectionDışa Aktarma Format Uyumluluğu#
+
+Çoğu [dışa aktarma formatı](/tr/modes/export#export-formats), [ONNX](/tr/integrations/onnx), [TensorRT](/tr/integrations/tensorrt), [CoreML](/tr/integrations/coreml), [OpenVINO](/tr/integrations/openvino), [TFLite](/tr/integrations/tflite), [TF.js](/tr/integrations/tfjs) ve [MNN](/tr/integrations/mnn) dahil olmak üzere uçtan uca çıkarımı doğrudan destekler.
+
+Aşağıdaki formatlar uçtan uca desteğine sahip değildir ve otomatik olarak bire-çok başlığına geri döner: [NCNN](/tr/integrations/ncnn), [RKNN](/tr/integrations/rockchip-rknn), [PaddlePaddle](/tr/integrations/paddlepaddle), [ExecuTorch](/tr/integrations/executorch), [IMX](/tr/integrations/sony-imx500), [Edge TPU](/tr/integrations/edge-tpu) ve [Qualcomm QNN](/tr/integrations/qnn).
+
+Uçtan uca desteklenmediğinde ne olur
+
+When you export to one of these formats, Ultralytics automatically switches to the one-to-many head and logs a warning — no manual intervention needed. This means **you'll need NMS in your inference pipeline** for these formats, just like with [YOLOv8](/tr/models/yolov8) or [YOLO11](/tr/models/yolo11).
+
+[Hailo HEF](/tr/integrations/hailo) için derleme adımı, ONNX dışa aktarımından sonra `model.export(format=...)` dışında gerçekleşir. Tam tespit modeline uyan Hailo DFC günlüklerini, `.alls` model betiğini ve NMS JSON dosyasını kullan; eğer uçtan uca YOLO26 grafiği Hailo araç zincirin tarafından desteklenmiyorsa, ONNX modelini `end2end=False` ile dışa aktar ve geleneksel tespit başlığını derle.
+
+TensorRT + INT8
+
+[TensorRT](/tr/integrations/tensorrt) uçtan uca desteğe sahiptir ancak JetPack 6 üzerinde TensorRT 10.3.0 ile `int8=True` kullanılarak dışa aktarılırken **otomatik olarak devre dışı bırakılır**.
+
+## Link to this sectionDoğruluk ve Hız Dengeleri#
+
+Uçtan uca tespit, [doğruluk](https://www.ultralytics.com/glossary/accuracy) üzerinde minimum etkiyle önemli dağıtım avantajları sağlar:
+
+Metrik| Uçtan Uca (varsayılan)| Bire-Çok + NMS (`end2end=False`)  
+---|---|---  
+**CPU Çıkarım Hızı**|  %43'e kadar **daha hızlı**|  Temel Seviye  
+**mAP Etkisi**|  ~0.5 mAP daha düşük| YOLO11 ile eşleşir veya geçer  
+**İşlem Sonrası**|  Sadece güven filtresi| Tam NMS hattı  
+**Dağıtım Karmaşıklığı**|  Minimum| NMS uygulaması gerektirir  
+  
+Çoğu gerçek dünya uygulaması için, ~0.5 [mAP](https://www.ultralytics.com/glossary/mean-average-precision-map) farkı ihmal edilebilir, özellikle hız ve basitlik kazanımları göz önüne alındığında. Maksimum doğruluk önceliğinse, her zaman `end2end=False` kullanarak bire-çok başlığına geri dönebilirsin.
+
+Tüm model boyutları (n, s, m, l, x) genelindeki ayrıntılı kıyaslamalar için [YOLO26 performans metriklerine](/tr/models/yolo26#performance-metrics) bak.
+
+## Link to this sectionYOLOv8 veya YOLO11'den Geçiş#
+
+Mevcut bir projeyi YOLO26'ya yükseltiyorsan, sorunsuz bir geçiş sağlamak için işte hızlı bir kontrol listesi:
+
+  * **Ultralytics API / CLI kullanıcıları:** Değişiklik gerekmez; sadece model adını `yolo26n.pt` (veya `yolo26n-seg.pt`, `yolo26n-pose.pt`, `yolo26n-obb.pt`) olarak güncelle.
+  * **Özel işlem sonrası kodu:** Yeni çıktı şekillerini (tespit için `(N, 300, 6)` artı [segmentasyon](/tr/tasks/segment), [poz](/tr/tasks/pose) ve [OBB](/tr/tasks/obb) için göreve özel veriler) ele alacak şekilde güncelle. Ayrıca kutu formatının `xywh` yerine `xyxy` olduğuna dikkat et.
+  * **Dışa aktarma hatları:** Hedef formatın için yukarıdaki format uyumluluğu bölümünü kontrol et.
+  * **TensorRT + INT8:** JetPack 6'da, TensorRT 10.3.0 `int8=True` ile uçtan uca desteği otomatik olarak devre dışı bırakır; uçtan uca desteği korumak için farklı bir TensorRT sürümü kullan.
+  * **FP16 dışa aktarımları:** Tüm çıktıların FP16 olmasını istiyorsan, `end2end=False` ile dışa aktar; [neden output0'ın FP32 kaldığına dair bilgi için](/tr/modes/export#why-is-output0-fp32-when-exporting-with-halftrue-and-end2endtrue) bak.
+  * **iOS / CoreML:** End-to-end is fully supported. If you need Xcode Preview support, use `end2end=False` with `nms=True`
+  * **Uç cihazlar (NCNN, RKNN):** Bu formatlar otomatik olarak bire-çok başlığına döner, bu nedenle cihaz içi hattına NMS'yi dahil et.
+
+
+
+## Link to this sectionSSS#
+
+### Link to this sectionend2end=True ve nms=True seçeneklerini birlikte kullanabilir miyim?#
+
+No. These options are mutually exclusive. If you set `nms=True` on an end-to-end model during [export](/tr/modes/export), it will be automatically forced to `nms=False` with a warning. The end-to-end head already handles duplicate filtering internally, so external NMS is unnecessary.
+
+Ancak, `end2end=False` ile birleştirilmiş `nms=True` geçerli bir yapılandırmadır; geleneksel NMS'yi dışa aktarma grafiğine işler. Bu, [CoreML](/tr/integrations/coreml) dışa aktarımları için yararlı olabilir çünkü Xcode'daki Önizleme işlevini doğrudan tespit modeliyle kullanmana olanak tanır.
+
+### Link to this sectionUçtan uca modellerde max_det parametresi neyi kontrol eder?#
+
+The `max_det` parameter (default: 300) sets the maximum number of detections the one-to-one head can output per image. You can adjust it at inference or export time:
+    
+    
+    model.predict("image.jpg", max_det=100)  # fewer detections, slightly faster
+    model.export(format="onnx", max_det=500)  # more detections for dense scenes
+
+Note that the default YOLO26 checkpoints were trained with `max_det=300`. While you can increase this value, the one-to-one head was optimized during training to produce up to 300 clean detections, so detections beyond that limit may be lower quality. If you need more than 300 detections per image, consider retraining with a higher `max_det` value.
+
+### Link to this sectionDışa aktarılan ONNX modelim (1, 300, 6) çıktısını veriyor — bu doğru mu?#
+
+Yes, that's the expected end-to-end output format for detection: [batch size](https://www.ultralytics.com/glossary/batch-size) of 1, up to 300 detections, each with 6 values `[x1, y1, x2, y2, confidence, class_id]`. Simply filter by confidence threshold and you're done — no NMS needed.
+
+Diğer görevler için çıktı şekli farklıdır:
+
+Görev| Çıktı Şekli| Açıklama  
+---|---|---  
+Tespit| `(1, 300, 6)`| `[x1, y1, x2, y2, conf, class_id]`  
+Örnekleme (Segmentation)| `(1, 300, 38)` \+ `(1, 32, 160, 160)`| 6 kutu değeri + 32 maske katsayısı ve ayrıca bir prototip maske tensörü  
+Pose| `(1, 300, 57)`| 6 kutu değeri + 17 anahtar nokta × 3 (x, y, görünürlük)  
+OBB| `(1, 300, 7)`| 6 kutu değeri + 1 dönüş açısı  
+  
+### Link to this sectionDışa aktardığım modelin uçtan uca olup olmadığını nasıl kontrol ederim?#
+
+Bunu Ultralytics Python API'sini kullanarak veya doğrudan dışa aktarılan ONNX model meta verilerini inceleyerek kontrol edebilirsin:
+
+Bir modelin uçtan uca olup olmadığını kontrol et
+    
+    
+    from ultralytics import YOLO
+    
+    model = YOLO("yolo26n.onnx")
+    model.predict(verbose=False)  # run predict to setup predictor first
+    print(model.predictor.model.end2end)  # True if end-to-end is enabled
+
+Alternatively, check the output shape — end-to-end detection models output `(1, 300, 6)`, while traditional models output `(1, nc + 4, 8400)`. For other task shapes, see the output shapes FAQ.
+
+### Link to this sectionUçtan uca özellik, örnekleme (instance segmentation), poz ve OBB görevleri için destekleniyor mu?#
+
+Yes. YOLO26 detection-style task variants — [detection](/tr/tasks/detect), [instance segmentation](/tr/tasks/segment), [pose estimation](/tr/tasks/pose), and [oriented object detection (OBB)](/tr/tasks/obb) — support end-to-end inference by default. The `end2end=False` fallback is available across these tasks as well.
+
+Her görev, temel tespit çıktısını göreve özgü verilerle genişletir:
+
+Görev| Model| Uçtan Uca Çıktı  
+---|---|---  
+Tespit| `yolo26n.pt`| `(N, 300, 6)`  
+Örnekleme (Instance Segmentation)| `yolo26n-seg.pt`| `(N, 300, 38)` \+ proto `(N, 32, 160, 160)`  
+Pose| `yolo26n-pose.pt`| `(N, 300, 57)`  
+OBB| `yolo26n-obb.pt`| `(N, 300, 7)`  
+  
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/end2end-detection.md)
+
+[GLglenn-jocher5](https://github.com/glenn-jocher)[AMambitious-octopus1](https://github.com/ambitious-octopus)[RAraimbekovm1](https://github.com/raimbekovm)
+
+Oluşturulma 3 ay önceGüncellenme geçen hafta
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

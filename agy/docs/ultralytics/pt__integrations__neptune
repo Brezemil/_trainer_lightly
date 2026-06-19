@@ -1,0 +1,166 @@
+---
+source_url: https://docs.ultralytics.com/pt/integrations/neptune
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/neptune.md)
+
+Aquisição da Neptune e descontinuação de SaaS
+
+A Neptune firmou um acordo para ser adquirida pela OpenAI e encerrará seu serviço hospedado (SaaS) após um período de transição que termina em 4 de março de 2026. Revise o [anúncio oficial](https://neptune.ai/blog/we-are-joining-openai) e planeje migrações ou exportações de acordo.
+
+# Link to this sectionRastreamento de Experimentos com Neptune#
+
+O [Neptune](https://neptune.ai/) é um repositório de metadados para MLOps, criado para equipes que executam muitos experimentos. Ele oferece um único lugar para registrar, armazenar, exibir, organizar, comparar e consultar todos os metadados de construção de modelos.
+
+O Ultralytics YOLO26 integra-se ao Neptune para simplificar o [rastreamento de experimentos](https://www.ultralytics.com/glossary/experiment-tracking). Essa integração permite que você registre automaticamente métricas de treinamento, visualize previsões de modelos e armazene artefatos de modelos sem escrever código de registro personalizado.
+
+![Neptune.ai ML experiment tracking dashboard](https://docs.neptune.ai/img/app/app_preview.png)
+
+## Link to this sectionPrincipais recursos#
+
+  * **Registro Automatizado** : Registre automaticamente métricas-chave de treinamento, como perda de caixa (box loss), perda de classificação e [mAP](https://www.ultralytics.com/glossary/mean-average-precision-map).
+  * **Visualização de Imagens** : Veja mosaicos de treinamento e previsões de validação diretamente no painel do Neptune.
+  * **Checkpoint de Modelo** : Faça upload e controle a versão dos pesos do seu modelo treinado (`best.pt`) automaticamente ao final do treinamento.
+  * **Rastreamento de Hiperparâmetros** : Registre todos os parâmetros de configuração para garantir a reprodutibilidade total dos seus experimentos.
+  * **Gráficos Interativos** : Visualize matrizes de confusão e curvas de precisão-revocação para analisar o desempenho do modelo.
+
+
+
+## Link to this sectionInstalação#
+
+Para usar o Neptune com Ultralytics, você precisará instalar o pacote de cliente `neptune` junto com `ultralytics`.
+
+Instalação
+    
+    
+    # Install the required packages
+    pip install ultralytics neptune
+    
+    # Enable Neptune integration in Ultralytics settings
+    yolo settings neptune=True
+
+## Link to this sectionConfiguração#
+
+Antes de começar o treinamento, você precisa conectar seu ambiente local ao seu projeto Neptune. Você precisará do seu **API Token** e **Project Name** no painel do Neptune.
+
+### Link to this sectionObtenha suas credenciais#
+
+  1. Faça login em [Neptune.ai](https://neptune.ai/).
+  2. Crie um novo projeto (ou selecione um existente).
+  3. Vá ao menu do usuário e obtenha seu **API Token**.
+
+
+
+### Link to this sectionDefina variáveis de ambiente#
+
+A maneira mais segura de lidar com credenciais é por meio de variáveis de ambiente. Observe que o callback Neptune do Ultralytics lê o argumento YOLO `project` e não usa `NEPTUNE_PROJECT`. Passe o slug completo do Neptune (por exemplo, `workspace/name`) via `project=` no seu comando de treinamento; caso contrário, o Neptune tentará usar o padrão literal `"Ultralytics"` e a execução falhará.
+    
+    
+    export NEPTUNE_API_TOKEN="your_long_api_token_here" # required
+
+## Link to this sectionUtilização#
+
+Uma vez configurado, você pode começar a treinar seus modelos YOLO26. A integração com o Neptune funciona automaticamente quando o pacote `neptune` está instalado e a integração está habilitada nas configurações.
+
+### Link to this sectionExemplo de Treinamento#
+
+Treine YOLO26 com registro no Neptune
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a model
+    model = YOLO("yolo26n.pt")
+    
+    # Train the model
+    # Pass the Neptune project slug as the 'project' argument (workspace/name)
+    results = model.train(data="coco8.yaml", epochs=10, project="my-workspace/my-project", name="experiment-1")
+
+## Link to this sectionEntendendo a integração#
+
+O diagrama a seguir ilustra como o pipeline de treinamento Ultralytics interage com o Neptune para registrar vários artefatos e métricas.
+    
+    
+    graph LR
+        A[YOLO Training Loop] --> B{Neptune Callback}
+        B -->|Log Scalars| C[Loss, mAP, LR]
+        B -->|Log Images| D[Mosaics, Preds]
+        B -->|Log Artifacts| E[Model Weights]
+        B -->|Log Metadata| F[Hyperparameters]
+    
+        C --> G[Neptune Server]
+        D --> G
+        E --> G
+        F --> G
+    
+        G --> H[Neptune Web Dashboard]
+
+### Link to this sectionO que é registrado?#
+
+Ao executar o comando de treinamento, a integração com o Neptune captura automaticamente a seguinte estrutura de dados na sua execução:
+
+  1. **Configuração/Hiperparâmetros** : Todos os argumentos de treinamento (épocas, lr0, otimizador, etc.) são registrados na seção Configuration.
+  2. **Configuração/Modelo** : A arquitetura e definição do modelo.
+  3. **Métricas** : 
+     * **Treino** : `box_loss`, `cls_loss`, `dfl_loss`, `lr` (taxa de aprendizado).
+     * **Métricas** : `precision`, `recall`, `mAP50`, `mAP50-95`.
+  4. **Imagens** : 
+     * `Mosaic`: Lotes de treinamento mostrando aumento de dados.
+     * `Validation`: Rótulos de verdade fundamental (ground truth) e previsões do modelo em dados de validação.
+     * `Plots`: Matrizes de confusão, curvas de precisão-revocação.
+  5. **Pesos** : O modelo treinado final (`best.pt`) é enviado para a pasta `weights` na execução do Neptune.
+
+
+
+## Link to this sectionUso avançado#
+
+### Link to this sectionOrganizando execuções#
+
+Você pode usar os argumentos padrão `project` e `name` do Ultralytics para organizar suas execuções no Neptune.
+
+  * `project`: Deve ser o slug do projeto Neptune `workspace/name`; é o que o callback passa para `neptune.init_run`.
+  * `name`: Atua como o identificador para a execução específica.
+
+
+
+### Link to this sectionRegistro personalizado#
+
+Se precisar registrar métricas personalizadas adicionais junto com o registro automático, você pode acessar a instância de execução do Neptune. Observe que você precisará modificar a lógica do treinador ou criar um callback personalizado para acessar o objeto de execução específico, pois a integração Ultralytics gerencia o ciclo de vida da execução internamente.
+
+## Link to this sectionFAQ#
+
+### Link to this sectionComo desativo o registro do Neptune?#
+
+Se você instalou o `neptune` mas deseja desativar o registro para uma sessão específica ou globalmente, pode modificar as configurações do YOLO.
+    
+    
+    # Disable Neptune integration
+    yolo settings neptune=False
+
+### Link to this sectionMinhas imagens não estão sendo enviadas. O que há de errado?#
+
+Certifique-se de que sua rede permita conexões com os servidores do Neptune. Além disso, o registro de imagens geralmente ocorre em intervalos específicos (por exemplo, final de épocas ou final do treinamento). Se você interromper o treinamento precocemente usando `Ctrl+C`, alguns artefatos finais, como matrizes de confusão ou os melhores pesos do modelo, podem não ser enviados.
+
+### Link to this sectionPosso registrar em um ID de execução específico do Neptune?#
+
+A integração atual cria automaticamente uma nova execução para cada sessão de treinamento. Para retomar o registro em uma execução existente, você geralmente precisaria lidar com a inicialização do Neptune manualmente no código Python, o que está fora do escopo da integração automática. No entanto, o Ultralytics suporta a retomada do treinamento localmente, o que criará uma nova execução no Neptune para rastrear as épocas retomadas.
+
+### Link to this sectionOnde encontro os pesos do modelo no Neptune?#
+
+No painel do Neptune, navegue até a seção **Artifacts** ou **All Metadata**. Você encontrará uma pasta `weights` contendo seu arquivo `best.pt`, que você pode baixar para implantação.
+
+Colaboradores
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/integrations/neptune.md)
+
+[GLglenn-jocher3](https://github.com/glenn-jocher)[RAraimbekovm1](https://github.com/raimbekovm)
+
+Criado 4 de dez. de 2025Atualizado há 2 meses
+
+## Comentários
+
+Nesta página
+
+Explorar com IA

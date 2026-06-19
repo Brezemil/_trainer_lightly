@@ -1,0 +1,349 @@
+---
+source_url: https://docs.ultralytics.com/tr/guides/isolating-segmentation-objects
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/isolating-segmentation-objects.md)
+
+# Link to this sectionSegmentasyon Nesnelerini İzole Etme#
+
+[Segmentasyon Görevi](/tr/tasks/segment) gerçekleştirildikten sonra, bazen izole edilen nesneleri çıkarım sonuçlarından ayıklamak istenebilir. Bu kılavuz, Ultralytics [Tahmin Modu](/tr/modes/predict) kullanarak bunu nasıl yapacağına dair genel bir yöntem sunar.
+
+  
+
+
+  
+**Watch:** How to Remove Background and Isolate Objects with Ultralytics YOLO Segmentation & OpenCV in Python 🚀 
+
+## Link to this sectionYöntem İncelemesi#
+
+  1. Gerekli kütüphanelerin kurulumuna dair hızlı bir başlangıç için [Ultralytics Hızlı Başlangıç Kurulumu bölümüne](/tr/quickstart) bak.
+
+* * *
+
+  2. Bir model yükle ve bir kaynak üzerinde `predict()` yöntemini çalıştır.
+         
+         from ultralytics import YOLO
+         
+         # Load a model
+         model = YOLO("yolo26n-seg.pt")
+         
+         # Run inference
+         results = model.predict()
+
+
+
+
+Tahmin Argümanı Yok mu?
+
+Bir kaynak belirtmezsen, kütüphanedeki örnek görseller kullanılacaktır:
+    
+    
+    'ultralytics/assets/bus.jpg'
+    'ultralytics/assets/zidane.jpg'
+
+Bu, `predict()` yöntemiyle hızlı testler yapmak için faydalıdır.
+
+Segmentasyon Modelleri hakkında ek bilgi için [Segmentasyon Görevi](/tr/tasks/segment#models) sayfasını ziyaret et. `predict()` yöntemi hakkında daha fazla bilgi edinmek için Dokümantasyonun [Tahmin Modu](/tr/modes/predict) bölümüne bak.
+
+`*** `
+
+3\. Şimdi sonuçlar ve konturlar üzerinde yinele. Görseli dosyaya kaydetmek isteyen iş akışları için, kaynak görselin `base-name` değeri ve tespit edilen `class-label` daha sonra kullanılmak üzere alınır (isteğe bağlı).
+    
+    
+    ```{ .py .annotate }
+    from pathlib import Path
+    
+    import numpy as np
+    
+    # (2) Iterate detection results (helpful for multiple images)
+    for r in results:
+        img = np.copy(r.orig_img)
+        img_name = Path(r.path).stem  # source image base-name
+    
+        # Iterate each object contour (multiple detections)
+        for ci, c in enumerate(r):
+            # (1) Get detection class name
+            label = c.names[c.boxes.cls.tolist().pop()]
+    ```
+    
+    1. To learn more about working with detection results, see [Boxes Section for Predict Mode](../modes/predict.md#boxes).
+    2. To learn more about `predict()` results see [Working with Results for Predict Mode](../modes/predict.md#working-with-results)
+
+For Döngüsü
+
+Tek bir görsel, ilk döngüyü yalnızca bir kez çalıştıracaktır. Sadece tek bir tespiti olan tek bir görsel, her döngüyü _yalnızca_ bir kez çalıştıracaktır.
+
+* * *
+
+  4. Kaynak görselden bir ikili maske oluşturarak başla ve ardından maskenin üzerine dolu bir kontur çiz. Bu, nesnenin görselin diğer kısımlarından izole edilmesini sağlayacaktır. `bus.jpg` örneğinden, tespit edilen `person` sınıfı nesnelerinden biri için bir örnek sağ tarafta gösterilmiştir.
+
+![İkili Maske Görseli](https://github.com/ultralytics/ultralytics/assets/62214284/59bce684-fdda-4b17-8104-0b4b51149aca){ width="240", align="right" }
+         
+         import cv2
+         
+         # Create binary mask
+         b_mask = np.zeros(img.shape[:2], np.uint8)
+         
+         # (1) Extract contour result
+         contour = c.masks.xy.pop()
+         # (2) Changing the type
+         contour = contour.astype(np.int32)
+         # (3) Reshaping
+         contour = contour.reshape(-1, 1, 2)
+         
+         # Draw contour onto mask
+         _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+
+     1. `c.masks.xy` hakkında daha fazla bilgi için [Tahmin Modu Maskeler Bölümü](/tr/modes/predict#masks) kısmına bak.
+
+     2. Here the values are cast into `np.int32` for compatibility with `drawContours()` function from [OpenCV](https://www.ultralytics.com/glossary/opencv).
+
+     3. OpenCV `drawContours()` fonksiyonu, konturların `[N, 1, 2]` şeklinde olmasını bekler, daha fazla detay için aşağıdaki bölümü genişlet.
+
+Expand to understand what is happening when defining the `contour` variable.
+
+\- `c.masks.xy` :: Provides the coordinates of the mask contour points in the format `(x, y)`. For more details, refer to the [Masks Section from Predict Mode](../modes/predict.md#masks). \- `.pop()` :: As `masks.xy` is a list containing a single element, this element is extracted using the `pop()` method. \- `.astype(np.int32)` :: Using `masks.xy` will return with a data type of `float32`, but this won't be compatible with the OpenCV `drawContours()` function, so this will change the data type to `int32` for compatibility. \- `.reshape(-1, 1, 2)` :: Reformats the data into the required shape of `[N, 1, 2]` where `N` is the number of contour points, with each point represented by a single entry `1`, and the entry is composed of `2` values. The `-1` denotes that the number of values along this dimension is flexible. 
+
+Expand for an explanation of the `drawContours()` configuration.
+
+\- Encapsulating the `contour` variable within square brackets, `[contour]`, was found to effectively generate the desired contour mask during testing. \- The value `-1` specified for the `drawContours()` parameter instructs the function to draw all contours present in the image. \- The `tuple` `(255, 255, 255)` represents the color white, which is the desired color for drawing the contour in this binary mask. \- The addition of `cv2.FILLED` will color all pixels enclosed by the contour boundary the same, in this case, all enclosed pixels will be white. \- See [OpenCV Documentation on `drawContours()`](https://docs.opencv.org/4.8.0/d6/d6e/group__imgproc__draw.html#ga746c0625f1781f1ffc9056259103edbc) for more information. 
+
+* * *
+
+  5. Bir sonraki adımda, görselle nasıl ilerleyeceğine dair 2 seçenek ve her biri için izleyen birer seçenek bulunmaktadır.
+
+### Link to this sectionNesne İzole Etme Seçenekleri#
+
+
+
+
+Örnek
+    
+    
+    # Create 3-channel mask
+    mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+    
+    # Isolate object with binary mask
+    isolated = cv2.bitwise_and(mask3ch, img)
+
+Bu nasıl çalışır?
+
+  * Öncelikle, ikili maske tek kanallı bir görselden üç kanallı bir görsele dönüştürülür. Bu dönüşüm, maske ve orijinal görselin birleştirildiği sonraki adım için gereklidir. Karıştırma işlemiyle uyumlu olması için her iki görselin de aynı sayıda kanala sahip olması gerekir.
+
+  * Orijinal görsel ve üç kanallı ikili maske, OpenCV `bitwise_and()` fonksiyonu kullanılarak birleştirilir. Bu işlem, her iki görselden de sıfırdan büyük `(> 0)` olan piksel değerlerini _yalnızca_ korur. Maske pikselleri _yalnızca_ kontur bölgesinde sıfırdan büyük `(> 0)` olduğu için, orijinal görselden geriye kalan pikseller, konturla örtüşenlerdir.
+
+
+
+
+### Link to this sectionSiyah Piksellerle İzole Et: Alt Seçenekler#
+
+Tam Boyutlu Görsel
+
+Görseli tam boyutta tutarsan ek bir adım gerekmez.
+
+![Example Full size Isolated Object Image Black Background](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/full-size-isolated-object-black-background.avif){ width=240 } Example full-size output
+
+Kırpılmış Nesne Görseli
+
+Görseli sadece nesne bölgesini içerecek şekilde kırpmak için ek adımlar gerekir.
+
+![Siyah Arka Planlı İzole Edilmiş Nesne Görseli Örneği](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/example-crop-isolated-object-image-black-background.avif){ align="right" }
+    
+    
+    # (1) Bounding box coordinates
+    x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+    # Crop image to object region
+    iso_crop = isolated[y1:y2, x1:x2]
+
+  1. [Sınırlayıcı kutu](https://www.ultralytics.com/glossary/bounding-box) sonuçları hakkında daha fazla bilgi için [Tahmin Modu Kutular Bölümü](/tr/modes/predict#boxes) kısmına bak.
+
+Bu kod ne yapıyor?
+
+  * `c.boxes.xyxy.cpu().numpy()` çağrısı, sınırlayıcı kutuları `xyxy` formatında bir NumPy dizisi olarak alır; burada `xmin`, `ymin`, `xmax` ve `ymax` sınırlayıcı kutu dikdörtgeninin koordinatlarını temsil eder. Daha fazla detay için [Tahmin Modu Kutular Bölümü](/tr/modes/predict#boxes) kısmına bak.
+
+  * `squeeze()` işlemi, NumPy dizisindeki gereksiz boyutları kaldırarak beklenen şekle sahip olmasını sağlar.
+
+  * Koordinat değerlerini `.astype(np.int32)` kullanarak dönüştürmek, kutu koordinatlarının veri türünü `float32` değerinden `int32` değerine değiştirerek indeks dilimleme yoluyla görsel kırpma için uyumlu hale getirir.
+
+  * Son olarak, sınırlayıcı kutu bölgesi indeks dilimleme kullanılarak görselden kırpılır. Sınırlar, tespit edilen sınırlayıcı kutunun `[ymin:ymax, xmin:xmax]` koordinatları tarafından belirlenir.
+
+
+
+
+Peki, kırpılmış nesneyi arka plan **dahil** istiyorsam ne yapmalıyım?
+
+This is a built-in feature for the Ultralytics library. See the `save_crop` argument for [Predict Mode Inference Arguments](/tr/modes/predict#inference-arguments) for details.
+
+* * *
+
+  6. _Bundan sonra ne yapacağın tamamen geliştirici olarak sana kalmıştır._ Olası bir sonraki adımın (görseli ileride kullanmak üzere dosyaya kaydetme) temel bir örneği gösterilmiştir. 
+     * **NOT:** Bu adım isteğe bağlıdır ve özel kullanım durumun için gerekmiyorsa atlanabilir.
+
+Örnek Son Adım
+    
+    
+    # Save isolated object to file
+    _ = cv2.imwrite(f"{img_name}_{label}-{ci}.png", iso_crop)
+
+  * Bu örnekte, `img_name` kaynak görsel dosyasının temel adıdır, `label` tespit edilen sınıf adıdır ve `ci` ise [nesne tespiti](https://www.ultralytics.com/glossary/object-detection) indeksidir (aynı sınıf adına sahip birden fazla örnek olması durumunda).
+
+
+
+## Link to this sectionTam Örnek kod#
+
+Burada, önceki bölümdeki tüm adımlar tek bir kod bloğunda birleştirilmiştir. Tekrarlayan kullanımlar için, `for` döngülerinde yer alan komutların bir kısmını veya tamamını gerçekleştirecek bir fonksiyon tanımlamak en iyisi olacaktır, ancak bu okuyucuya bırakılmış bir alıştırmadır.
+    
+    
+    from pathlib import Path
+    
+    import cv2
+    import numpy as np
+    
+    from ultralytics import YOLO
+    
+    m = YOLO("yolo26n-seg.pt")  # (4)!
+    res = m.predict(source="path/to/image.jpg")  # (3)!
+    
+    # Iterate detection results (5)
+    for r in res:
+        img = np.copy(r.orig_img)
+        img_name = Path(r.path).stem
+    
+        # Iterate each object contour (6)
+        for ci, c in enumerate(r):
+            label = c.names[c.boxes.cls.tolist().pop()]
+    
+            b_mask = np.zeros(img.shape[:2], np.uint8)
+    
+            # Create contour mask (1)
+            contour = c.masks.xy.pop().astype(np.int32).reshape(-1, 1, 2)
+            _ = cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+    
+            # Choose one:
+    
+            # OPTION-1: Isolate object with black background
+            mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+            isolated = cv2.bitwise_and(mask3ch, img)
+    
+            # OPTION-2: Isolate object with transparent background (when saved as PNG)
+            isolated = np.dstack([img, b_mask])
+    
+            # OPTIONAL: detection crop (from either OPT1 or OPT2)
+            x1, y1, x2, y2 = c.boxes.xyxy.cpu().numpy().squeeze().astype(np.int32)
+            iso_crop = isolated[y1:y2, x1:x2]
+    
+            # Add your custom post-processing here (2)
+
+  1. `contour` değerini dolduran satır burada tek bir satırda birleştirilmiştir, yukarıda ise birkaç satıra bölünmüştü.
+  2. {==Buraya ne geleceği sana kalmış!==}
+  3. Ek bilgi için [Tahmin Modu](/tr/modes/predict) bölümüne bak.
+  4. Daha fazla bilgi için [Segmentasyon Görevi](/tr/tasks/segment#models) bölümüne bak.
+  5. [Sonuçlarla Çalışma](/tr/modes/predict#working-with-results) hakkında daha fazla bilgi edin
+  6. [Segmentasyon Maskesi Sonuçları](/tr/modes/predict#masks) hakkında daha fazla bilgi edin
+
+
+
+## Link to this sectionSSS#
+
+### Link to this sectionUltralytics YOLO26 kullanarak segmentasyon görevleri için nesneleri nasıl izole ederim?#
+
+Ultralytics YOLO26 kullanarak nesneleri izole etmek için şu adımları izle:
+
+  1. **Modeli yükle ve çıkarımı çalıştır:**
+         
+         from ultralytics import YOLO
+         
+         model = YOLO("yolo26n-seg.pt")
+         results = model.predict(source="path/to/your/image.jpg")
+
+  2. **İkili maske oluştur ve konturları çiz:**
+         
+         import cv2
+         import numpy as np
+         
+         img = np.copy(results[0].orig_img)
+         b_mask = np.zeros(img.shape[:2], np.uint8)
+         contour = results[0].masks.xy[0].astype(np.int32).reshape(-1, 1, 2)
+         cv2.drawContours(b_mask, [contour], -1, (255, 255, 255), cv2.FILLED)
+
+  3. **İkili maskeyi kullanarak nesneyi izole et:**
+         
+         mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+         isolated = cv2.bitwise_and(mask3ch, img)
+
+
+
+
+Daha fazla bilgi için [Tahmin Modu](/tr/modes/predict) ve [Segmentasyon Görevi](/tr/tasks/segment) hakkındaki kılavuza başvur.
+
+### Link to this sectionSegmentasyondan sonra izole edilen nesneleri kaydetmek için hangi seçenekler mevcuttur?#
+
+Ultralytics YOLO26, izole edilen nesneleri kaydetmek için iki ana seçenek sunar:
+
+  1. **Siyah Arka Plan ile:**
+         
+         mask3ch = cv2.cvtColor(b_mask, cv2.COLOR_GRAY2BGR)
+         isolated = cv2.bitwise_and(mask3ch, img)
+
+  2. **Şeffaf Arka Plan ile:**
+         
+         isolated = np.dstack([img, b_mask])
+
+
+
+
+Daha fazla ayrıntı için [Tahmin Modu](/tr/modes/predict) bölümünü ziyaret et.
+
+### Link to this sectionUltralytics YOLO26 kullanarak izole edilmiş nesneleri sınırlayıcı kutularına göre nasıl kırpabilirim?#
+
+İzole edilmiş nesneleri sınırlayıcı kutularına göre kırpmak için:
+
+  1. **Sınırlayıcı kutu koordinatlarını al:**
+         
+         x1, y1, x2, y2 = results[0].boxes.xyxy[0].cpu().numpy().astype(np.int32)
+
+  2. **İzole edilmiş görseli kırp:**
+         
+         iso_crop = isolated[y1:y2, x1:x2]
+
+
+
+
+Sınırlayıcı kutu sonuçları hakkında daha fazla bilgiyi [Tahmin Modu](/tr/modes/predict#boxes) dokümantasyonunda bul.
+
+### Link to this sectionSegmentasyon görevlerinde nesne izolasyonu için neden Ultralytics YOLO26 kullanmalıyım?#
+
+Ultralytics YOLO26 şunları sağlar:
+
+  * **Yüksek hızlı** gerçek zamanlı nesne tespiti ve segmentasyon.
+  * Hassas nesne izolasyonu için **Doğru sınırlayıcı kutu ve maske oluşturma**.
+  * Verimli geliştirme için **Kapsamlı dokümantasyon** ve kullanımı kolay API.
+
+
+
+YOLO kullanmanın faydalarını [Segmentasyon Görevi dokümantasyonunda](/tr/tasks/segment) keşfet.
+
+### Link to this sectionUltralytics YOLO26 kullanarak arka plan dahil izole edilmiş nesneleri kaydedebilir miyim?#
+
+Yes, this is a built-in feature in Ultralytics YOLO26. Use the `save_crop` argument in the `predict()` method. For example:
+    
+    
+    results = model.predict(source="path/to/your/image.jpg", save_crop=True)
+
+`save_crop` argümanı hakkında daha fazla bilgiyi [Tahmin Modu Çıkarım Argümanları](/tr/modes/predict#inference-arguments) bölümünde oku.
+
+Katkıda bulunanlar
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/guides/isolating-segmentation-objects.md)
+
+[GLglenn-jocher16](https://github.com/glenn-jocher)[RIRizwanMunawar6](https://github.com/RizwanMunawar)[JKjk4e2](https://github.com/jk4e)[PDpderrenger1](https://github.com/pderrenger)[Y-Y-T-G1](https://github.com/Y-T-G)WIWillie Maddox1[IVIvorZhu3311](https://github.com/IvorZhu331)[BUBurhan-Q1](https://github.com/Burhan-Q)
+
+Oluşturulma 27 Kas 2023Güncellenme 4 ay önce
+
+## Yorumlar
+
+Bu Sayfada
+
+Yapay zeka ile keşfet

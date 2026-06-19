@@ -1,0 +1,162 @@
+---
+source_url: https://docs.ultralytics.com/ru/yolov5/tutorials/model-pruning-and-sparsity
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-pruning-and-sparsity.md)
+
+# Link to this sectionПрунинг и разреженность моделей в YOLOv5#
+
+📚 Это руководство объясняет, как применить **прунинг** к моделям YOLOv5 🚀, чтобы создать более эффективные нейросети, сохраняя при этом производительность.
+
+## Link to this sectionЧто такое прунинг моделей?#
+
+[Прунинг моделей](https://www.ultralytics.com/glossary/model-pruning) — это метод, используемый для уменьшения размера и сложности нейронных сетей путем удаления менее важных параметров (весов и связей). Этот процесс создает более эффективную модель и дает несколько преимуществ:
+
+  * Уменьшенный размер модели для более простого развертывания на устройствах с ограниченными ресурсами
+  * Более высокая скорость инференса с минимальным влиянием на точность
+  * Снижение использования памяти и энергопотребления
+  * Улучшенная общая эффективность для приложений реального времени
+
+
+
+Прунинг работает путем идентификации и удаления параметров, которые вносят минимальный вклад в производительность модели, в результате чего получается более легкая модель с аналогичной точностью.
+
+## Link to this sectionПеред началом#
+
+Клонируй репозиторий и установи [requirements.txt](https://github.com/ultralytics/yolov5/blob/master/requirements.txt) в окружении [**Python >=3.8.0**](https://www.python.org/), включая [**PyTorch >=1.8**](https://pytorch.org/get-started/locally/). [Модели](https://github.com/ultralytics/yolov5/tree/master/models) и [наборы данных](https://github.com/ultralytics/yolov5/tree/master/data) загружаются автоматически из последнего [релиза](https://github.com/ultralytics/yolov5/releases) YOLOv5.
+    
+    
+    git clone https://github.com/ultralytics/yolov5 # clone
+    cd yolov5
+    pip install -r requirements.txt # install
+
+## Link to this sectionТестирование базовой производительности#
+
+Перед прунингом установи базовую производительность для сравнения. Эта команда тестирует YOLOv5x на наборе данных COCO val2017 при размере изображения 640 пикселей. `yolov5x.pt` — самая большая и точная доступная модель. Другие варианты: `yolov5s.pt`, `yolov5m.pt` и `yolov5l.pt`, или твой собственный чекпоинт после обучения на пользовательском наборе данных `./weights/best.pt`. Подробности обо всех доступных моделях смотри в [таблице](https://github.com/ultralytics/yolov5#pretrained-checkpoints) в README.
+    
+    
+    python val.py --weights yolov5x.pt --data coco.yaml --img 640 --half
+
+Результат:
+    
+    
+    val: data=/content/yolov5/data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, workers=8, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True, dnn=False
+    YOLOv5 🚀 v6.0-224-g4c40933 torch 1.10.0+cu111 CUDA:0 (Tesla V100-SXM2-16GB, 16160MiB)
+    
+    Fusing layers...
+    Model Summary: 444 layers, 86705005 parameters, 0 gradients
+    val: Scanning '/content/datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupt: 100% 5000/5000 [00:00<?, ?it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [01:12<00:00,  2.16it/s]
+                     all       5000      36335      0.732      0.628      0.683      0.496
+    Speed: 0.1ms pre-process, 5.2ms inference, 1.7ms NMS per image at shape (32, 3, 640, 640)  # <--- base speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-2/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.507  # <--- base mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.689
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.552
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.345
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.559
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.652
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.381
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.630
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.682
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.526
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.731
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.829
+    Results saved to runs/val/exp
+
+## Link to this sectionПрименение прунинга к YOLOv5x (разреженность 30%)#
+
+Ты можешь применить прунинг к модели, используя команду `torch_utils.prune()`, определенную в `utils/torch_utils.py`. Чтобы протестировать прунингованную модель, мы обновляем `val.py` для прунинга YOLOv5x до разреженности 0.3 (30% весов устанавливаются в ноль):
+
+![YOLOv5 model pruning to 30% sparsity code](https://cdn.jsdelivr.net/gh/ultralytics/assets@main/docs/sparsity-test-yolov5x-coco.avif)
+
+Результат после прунинга 30%:
+    
+    
+    val: data=/content/yolov5/data/coco.yaml, weights=['yolov5x.pt'], batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.65, task=val, device=, workers=8, single_cls=False, augment=False, verbose=False, save_txt=False, save_conf=False, save_json=True, project=runs/val, name=exp, exist_ok=False, half=True, dnn=False
+    YOLOv5 🚀 v6.0-224-g4c40933 torch 1.10.0+cu111 CUDA:0 (Tesla V100-SXM2-16GB, 16160MiB)
+    
+    Fusing layers...
+    Model Summary: 444 layers, 86705005 parameters, 0 gradients
+    Pruning model...  0.3 global sparsity
+    val: Scanning '/content/datasets/coco/val2017.cache' images and labels... 4952 found, 48 missing, 0 empty, 0 corrupt: 100% 5000/5000 [00:00<?, ?it/s]
+                   Class     Images     Labels          P          R     mAP@.5 mAP@.5:.95: 100% 157/157 [01:11<00:00,  2.19it/s]
+                     all       5000      36335      0.724      0.614      0.671      0.478
+    Speed: 0.1ms pre-process, 5.2ms inference, 1.7ms NMS per image at shape (32, 3, 640, 640)  # <--- prune speed
+    
+    Evaluating pycocotools mAP... saving runs/val/exp-3/yolov5x_predictions.json...
+    ...
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.489  # <--- prune mAP
+     Average Precision  (AP) @[ IoU=0.50      | area=   all | maxDets=100 ] = 0.677
+     Average Precision  (AP) @[ IoU=0.75      | area=   all | maxDets=100 ] = 0.537
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.334
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.542
+     Average Precision  (AP) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.635
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=  1 ] = 0.370
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets= 10 ] = 0.612
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=   all | maxDets=100 ] = 0.664
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= small | maxDets=100 ] = 0.496
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area=medium | maxDets=100 ] = 0.722
+     Average Recall     (AR) @[ IoU=0.50:0.95 | area= large | maxDets=100 ] = 0.803
+    Results saved to runs/val/exp-3
+
+## Link to this sectionАнализ результатов#
+
+По результатам мы можем заметить следующее:
+
+  * **Достигнута разреженность 30%** : 30% весовых параметров модели в слоях `nn.Conv2d` теперь равны нулю
+  * **Время инференса осталось неизменным** : несмотря на прунинг, скорость обработки практически такая же
+  * **Минимальное влияние на производительность** : mAP снизился незначительно с 0.507 до 0.489 (всего на 3.6%)
+  * **Уменьшение размера модели** : прунингованная модель требует меньше памяти для хранения
+
+
+
+Это демонстрирует, что прунинг может значительно снизить сложность модели при минимальном влиянии на производительность, что делает его эффективным методом оптимизации для развертывания в средах с ограниченными ресурсами.
+
+## Link to this sectionТонкая настройка прунингованных моделей#
+
+Для достижения наилучших результатов прунингованные модели следует дообучить (fine-tune) после прунинга, чтобы восстановить точность. Это можно сделать следующим образом:
+
+  1. Примени прунинг с желаемым уровнем разреженности
+  2. Обучи прунингованную модель в течение нескольких эпох с более низким темпом обучения (learning rate)
+  3. Оцени дообученную прунингованную модель относительно базовой
+
+
+
+Этот процесс помогает оставшимся параметрам адаптироваться и компенсировать удаленные связи, часто восстанавливая большую часть или всю исходную точность.
+
+## Link to this sectionПоддерживаемые окружения#
+
+Ultralytics предоставляет ряд готовых к использованию окружений, каждое из которых предустановлено с необходимыми зависимостями, такими как [CUDA](https://developer.nvidia.com/cuda), [CUDNN](https://developer.nvidia.com/cudnn), [Python](https://www.python.org/) и [PyTorch](https://pytorch.org/), для быстрого старта твоих проектов.
+
+  * **Бесплатные GPU ноутбуки** : [![Run on Gradient](https://assets.paperspace.io/img/gradient-badge.svg)](https://bit.ly/yolov5-paperspace-notebook) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ultralytics/yolov5/blob/master/tutorial.ipynb) [![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/models/ultralytics/yolov5)
+  * **Google Cloud** : [Руководство по быстрому запуску в GCP](/ru/yolov5/environments/google-cloud-quickstart-tutorial)
+  * **Amazon** : [AWS Quickstart Guide](/ru/yolov5/environments/aws-quickstart-tutorial)
+  * **Azure** : [AzureML Quickstart Guide](/ru/yolov5/environments/azureml-quickstart-tutorial)
+  * **Docker** : [Docker Quickstart Guide](/ru/yolov5/environments/docker-image-quickstart-tutorial) [![Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/yolov5?logo=docker)](https://hub.docker.com/r/ultralytics/yolov5)
+
+
+
+## Link to this sectionСтатус проекта#
+
+[![YOLOv5 CI](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml/badge.svg)](https://github.com/ultralytics/yolov5/actions/workflows/ci-testing.yml)
+
+Этот значок означает, что все тесты непрерывной интеграции (CI) [YOLOv5 GitHub Actions](https://github.com/ultralytics/yolov5/actions) успешно проходят. Эти CI-тесты строго проверяют функциональность и производительность YOLOv5 по различным ключевым аспектам: [обучение](https://github.com/ultralytics/yolov5/blob/master/train.py), [валидация](https://github.com/ultralytics/yolov5/blob/master/val.py), [инференс](https://github.com/ultralytics/yolov5/blob/master/detect.py), [экспорт](https://github.com/ultralytics/yolov5/blob/master/export.py) и [бенчмарки](https://github.com/ultralytics/yolov5/blob/master/benchmarks.py). Они обеспечивают стабильную и надежную работу на macOS, Windows и Ubuntu, при этом тесты проводятся каждые 24 часа и при каждом новом коммите.
+
+Авторы
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/yolov5/tutorials/model-pruning-and-sparsity.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)
+
+Создано 3 дня назадОбновлено 3 дня назад
+
+## Комментарии
+
+На этой странице
+
+Исследовать с помощью ИИ

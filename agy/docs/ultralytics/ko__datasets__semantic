@@ -1,0 +1,258 @@
+---
+source_url: https://docs.ultralytics.com/ko/datasets/semantic
+---
+
+[GitHub131.6k](https://github.com/ultralytics/ultralytics)
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/semantic/index.md)
+
+# Link to this section시맨틱 세그멘테이션 데이터셋 개요#
+
+[시맨틱 세그멘테이션](https://www.ultralytics.com/glossary/semantic-segmentation)은 이미지의 모든 픽셀에 하나의 클래스 레이블을 할당합니다. [인스턴스 세그멘테이션](/ko/datasets/segment)과 달리, 시맨틱 세그멘테이션은 동일한 클래스의 개별 객체를 구분하지 않습니다. 학습 타겟은 각 픽셀이 클래스 ID를 저장하는 덴스 클래스 맵(dense class map)입니다.
+
+이 가이드는 Ultralytics YOLO 시맨틱 세그멘테이션 모델에서 사용하는 데이터셋 형식을 설명하며, 학습 및 검증에 사용할 수 있는 기본 데이터셋 구성을 나열합니다.
+
+## Link to this section지원되는 데이터셋 형식#
+
+두 가지 레이블 형식이 지원됩니다. 데이터셋 로더는 데이터셋 YAML 파일에서 `masks_dir` 키를 정의했는지 여부에 따라 경로를 선택합니다.
+
+### Link to this sectionPNG 마스크 형식#
+
+시맨틱 세그멘테이션 데이터셋은 샘플당 하나의 이미지 파일과 하나의 마스크 파일을 사용합니다. 마스크는 일반적으로 PNG 형식의 단일 채널 이미지이며, 각 픽셀 값은 해당 이미지 픽셀의 클래스 인덱스입니다.
+
+  * 픽셀 값 `0`, `1`, `2`, ...는 데이터셋 `names` 매핑의 클래스 ID를 나타냅니다.
+  * 픽셀 값 `255`는 무시 레이블(ignore label)로 처리되며 손실 및 메트릭 계산에서 제외됩니다.
+  * 마스크 파일은 해당 이미지 파일과 동일한 스템(stem)을 사용해야 합니다. 예: `frankfurt_000000_000294.png`.
+  * Masks are resolved as `.png` by default; if missing, other supported image extensions are also accepted. Use lossless formats such as `.png` or `.tiff`, since lossy compression (e.g. `.jpg`) corrupts the class ID pixel values.
+
+
+
+기본 레이아웃은 이미지와 마스크를 병렬 폴더에 유지합니다. 데이터셋 YAML의 `masks_dir` 값은 마스크를 찾기 위해 `images` 경로 구성 요소를 대체합니다.
+    
+    
+    dataset/
+    ├── images/
+    │   ├── train/
+    │   └── val/
+    └── masks/
+        ├── train/
+        └── val/
+
+For example, an image at `images/train/aachen_000000_000019.png` is paired with a mask at `masks/train/aachen_000000_000019.png` when `masks_dir: masks`.
+
+### Link to this sectionYOLO 다각형 레이블 형식#
+
+If your dataset already has Ultralytics YOLO polygon labels (one `.txt` per image with `<class-index> <x1> <y1> <x2> <y2> ...` rows), you can train semantic segmentation directly from them — no PNG mask conversion needed. See the [instance segmentation dataset format](/ko/datasets/segment#ultralytics-yolo-format) for the row-level layout.
+
+이 경로는 데이터셋 YAML에서 `masks_dir`을 **생략** 할 때 자동으로 선택됩니다. 작동 방식은 다음과 같습니다:
+
+  * 다각형은 로드 시점에 이미지당 시맨틱 마스크로 변환되며, 겹치는 영역에서 작은 객체가 큰 객체를 덮어쓰도록 면적별로 정렬됩니다.
+  * **Multi-class** (`N > 1` in `names`): an extra `background` class is appended after your declared classes for pixels not covered by any polygon. The model is built with `N + 1` output channels and the last channel is background.
+  * **Single-class** (`N == 1` in `names`): still trained as 1 class. The mask is binary, with your declared class shown as `1` and pixels not covered by any polygon as `0`. No extra background class is added to `names`.
+  * 증강 패딩(예: 무작위 크롭)으로 추가된 픽셀은 계속 `255`를 무시 레이블로 사용합니다.
+
+
+
+데이터가 이미 인스턴스 다각형으로 레이블링되어 있고 동일한 파일로 시맨틱 세그멘테이션 모델을 만들고자 할 때 이 경로를 사용하십시오.
+
+### Link to this section데이터셋 YAML 형식#
+
+시맨틱 세그멘테이션 데이터셋은 YAML 파일로 구성됩니다. 주요 필드는 다음과 같습니다:
+
+키| 설명  
+---|---  
+`path`| 데이터셋 루트 디렉토리입니다.  
+`train`| `path` 기준의 학습 이미지 경로 또는 절대 경로입니다.  
+`val`| `path` 기준의 검증 이미지 경로 또는 절대 경로입니다.  
+`test`| 선택적인 테스트 이미지 경로입니다.  
+`masks_dir`| 시맨틱 마스크에 사용되는 디렉토리 이름입니다. YOLO 다각형 레이블 형식으로 전환하려면 이 키를 생략하십시오.  
+`names`| 클래스 ID와 클래스 이름 매핑입니다.  
+`label_mapping`| 소스 데이터셋 ID를 학습 ID 또는 `ignore_label`로 변환하는 선택적 매핑입니다.  
+  
+ultralytics/cfg/datasets/cityscapes8.yaml
+    
+    
+    # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+    
+    # Cityscapes semantic segmentation dataset (19 classes)
+    # Documentation: https://docs.ultralytics.com/datasets/semantic/cityscapes8
+    # Example usage: yolo semantic train data=cityscapes8.yaml model=yolo26n-sem.pt
+    # parent
+    # ├── ultralytics
+    # └── datasets
+    #     └── cityscapes8 ← downloads here (small subset)
+    #         └── images
+    #         └── masks
+    
+    # Dataset root directory
+    path: cityscapes8 # dataset root dir
+    train: images/train # train images (relative to 'path') 4 images
+    val: images/val # val images (relative to 'path') 4 images
+    
+    masks_dir: masks # semantic mask directory
+    
+    # Cityscapes 19-class labels
+    names:
+      0: road
+      1: sidewalk
+      2: building
+      3: wall
+      4: fence
+      5: pole
+      6: traffic light
+      7: traffic sign
+      8: vegetation
+      9: terrain
+      10: sky
+      11: person
+      12: rider
+      13: car
+      14: truck
+      15: bus
+      16: train
+      17: motorcycle
+      18: bicycle
+    
+    # Map source label IDs to train IDs; ignore_label is converted to 255.
+    label_mapping:
+      -1: ignore_label
+      0: ignore_label
+      1: ignore_label
+      2: ignore_label
+      3: ignore_label
+      4: ignore_label
+      5: ignore_label
+      6: ignore_label
+      7: 0
+      8: 1
+      9: ignore_label
+      10: ignore_label
+      11: 2
+      12: 3
+      13: 4
+      14: ignore_label
+      15: ignore_label
+      16: ignore_label
+      17: 5
+      18: ignore_label
+      19: 6
+      20: 7
+      21: 8
+      22: 9
+      23: 10
+      24: 11
+      25: 12
+      26: 13
+      27: 14
+      28: 15
+      29: ignore_label
+      30: ignore_label
+      31: 16
+      32: 17
+      33: 18
+    
+    # Download URL (optional)
+    download: https://github.com/ultralytics/assets/releases/download/v0.0.0/cityscapes8.zip
+
+소스 마스크 ID가 연속적인 학습 클래스 ID와 일치하지 않는 경우 `label_mapping`을 사용하십시오. Cityscapes와 ADE20K에는 원래 레이블 ID를 YOLO 시맨틱 세그멘테이션 학습 ID로 변환하고 사용하지 않는 레이블을 무시하는 매핑이 포함되어 있습니다.
+
+## Link to this section사용법#
+
+Python 또는 CLI를 사용하여 YOLO26 시맨틱 세그멘테이션 모델을 학습합니다:
+
+예시
+    
+    
+    from ultralytics import YOLO
+    
+    # Load a pretrained semantic segmentation model
+    model = YOLO("yolo26n-sem.pt")
+    
+    # Train on the Cityscapes8 semantic segmentation dataset
+    results = model.train(data="cityscapes8.yaml", epochs=100, imgsz=1024)
+
+## Link to this section지원되는 데이터셋#
+
+Ultralytics는 다음 데이터셋에 대한 시맨틱 세그멘테이션 데이터셋 YAML 파일을 제공합니다:
+
+  * [Cityscapes](/ko/datasets/semantic/cityscapes): 19개의 학습 클래스가 있는 도심 거리 시맨틱 세그멘테이션 데이터셋입니다.
+  * [Cityscapes8](/ko/datasets/semantic/cityscapes8): 빠른 테스트 및 CI 확인을 위한 8개 이미지의 Cityscapes 하위 집합입니다.
+  * [ADE20K](/ko/datasets/semantic/ade20k): 150개의 시맨틱 클래스가 포함된 장면 파싱 데이터셋입니다.
+
+
+
+## Link to this section자체 데이터셋 추가#
+
+### Link to this section옵션 A — PNG 마스크#
+
+  1. `images/train` 및 `images/val`과 같은 분할 폴더 아래에 이미지를 저장하십시오.
+  2. `masks/train` 및 `masks/val`과 같이 미러링된 마스크 폴더 아래에 이미지당 하나의 단일 채널 마스크를 저장하십시오.
+  3. 마스크 픽셀 값이 클래스 ID인지 확인하십시오. 무시해야 할 픽셀에는 `255`를 사용하십시오.
+  4. `path`, `train`, `val`, `masks_dir`, `names`를 포함하는 데이터셋 YAML을 생성하십시오.
+  5. 마스크 ID를 연속적인 학습 ID로 변환해야 하는 경우에만 `label_mapping`을 추가하십시오.
+
+
+    
+    
+    path: path/to/my-semantic-dataset
+    train: images/train
+    val: images/val
+    masks_dir: masks
+    
+    names:
+        0: background
+        1: road
+        2: building
+
+### Link to this section옵션 B — 다각형 레이블#
+
+  1. Lay out images and `.txt` polygon files exactly as for [instance segmentation](/ko/datasets/segment).
+  2. `path`, `train`, `val`, `names`를 포함하는 데이터셋 YAML을 생성하되, `masks_dir`은 **생략** 하십시오.
+  3. `names`에 "background" 항목을 추가하지 마십시오. 다중 클래스 데이터셋의 경우 로더가 이를 자동으로 추가하며, 단일 클래스 데이터셋의 경우 학습은 1개의 클래스로 유지됩니다. 선언한 클래스는 마스크에서 `1`이 되고 덮이지 않은 픽셀은 `0`이 됩니다.
+
+
+    
+    
+    path: path/to/my-polygon-dataset
+    train: images/train
+    val: images/val
+    
+    names:
+        0: person
+        1: car
+
+## Link to this sectionFAQ#
+
+### Link to this section시맨틱 세그멘테이션 마스크와 인스턴스 세그멘테이션 레이블의 차이점은 무엇인가요?#
+
+시맨틱 세그멘테이션 마스크는 덴스 픽셀 맵입니다. 각 픽셀은 클래스 ID를 저장하며, 학습 이미지당 하나의 마스크 이미지가 존재합니다. Ultralytics YOLO의 인스턴스 세그멘테이션 레이블은 다각형 좌표가 포함된 텍스트 파일을 사용하며, 객체 인스턴스당 한 행씩 구성됩니다.
+
+### Link to this section학습 중에 어떤 픽셀 값이 무시되나요?#
+
+픽셀 값 `255`가 무시 레이블로 사용됩니다. 이러한 픽셀은 손실 및 메트릭 계산 시 건너뛰며, 이는 빈 영역, 레이블이 지정되지 않은 픽셀 또는 학습 레이블 세트 외부의 클래스에 유용합니다.
+
+### Link to this section마스크 파일 이름이 이미지 파일 이름과 일치해야 하나요?#
+
+네. 각 시맨틱 마스크는 해당 이미지와 동일한 파일 스템을 가져야 합니다. 데이터셋 로더는 `images` 디렉토리 구성 요소를 `masks_dir`로 대체하고 일치하는 마스크 파일을 검색합니다.
+
+### Link to this section원래 데이터셋 레이블 ID를 직접 사용할 수 있나요?#
+
+네, `names` 클래스 ID와 이미 일치한다면 가능합니다. 소스 데이터셋이 비연속적인 ID를 사용하거나 무시해야 할 레이블을 포함하는 경우, `label_mapping` 섹션을 추가하여 소스 픽셀 값을 학습 ID로 변환하십시오.
+
+### Link to this section인스턴스 세그멘테이션 데이터셋을 사용하여 시맨틱 세그멘테이션을 학습할 수 있나요?#
+
+Yes. Instance segmentation datasets use Ultralytics YOLO polygon labels (one `.txt` per image with `<class-index> <x1> <y1> <x2> <y2> ...` rows), and the same files can be reused for semantic segmentation — just **omit** `masks_dir` from the dataset YAML. The loader converts polygons to per-image masks on the fly. For multi-class datasets (`N > 1`) an extra `background` class is appended and the model is built with `N + 1` output channels. For single-class datasets (`N == 1`) training stays at 1 class — the mask shows your declared class as `1` and uncovered pixels as `0`.
+
+기여자
+
+[](https://github.com/ultralytics/ultralytics/blob/main/docs/en/datasets/semantic/index.md)
+
+[GLglenn-jocher1](https://github.com/glenn-jocher)[LALaughing-q1](https://github.com/Laughing-q)
+
+생성됨 4주 전업데이트됨 2주 전
+
+## 댓글
+
+이 페이지
+
+AI로 탐색
