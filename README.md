@@ -290,6 +290,37 @@ pixi run eval --model yolo26s.pt --sahi --sahi-slice-height 640 --sahi-slice-wid
 
 ---
 
+### 4. DINO Benchmarking & Evaluation Examples
+
+Use the following commands to benchmark, train, and evaluate DINOv3 foundation models:
+
+#### Train and Benchmark (Train + Evaluate) DINO Models:
+```bash
+# Benchmark both DINOv3 model checkpoints using the lightly backend
+pixi run train --model facebook/dinov3-vitl16-pretrain-sat493m facebook/dinov3-vitl16-pretrain-lvd1689m --backend lightly
+
+# Explicitly target the D-FINE decoder head
+pixi run train --model facebook/dinov3-vitl16-pretrain-sat493m --backend lightly --decoder dfine
+
+# Explicitly target the RT-DETRv2 decoder head
+pixi run train --model facebook/dinov3-vitl16-pretrain-sat493m --backend lightly --decoder rtdetrv2
+```
+
+#### Run a Rapid Smoketest (Fast Trial):
+```bash
+# Run a quick training cycle (1 epoch, 5% of dataset) on a single seed
+pixi run train --model facebook/dinov3-vitl16-pretrain-sat493m --backend lightly --epochs 1 --fraction 0.05 --seed 42
+```
+
+#### Standalone Evaluation (Without Re-running Training):
+```bash
+# Evaluate an already trained DINO model checkpoint with a specific decoder head
+pixi run eval --model facebook/dinov3-vitl16-pretrain-sat493m --decoder rtdetrv2
+```
+
+---
+
+
 ### 🍰 How Dataset Subsetting & Fractions Work
 
 Training on massive geospatial/satellite datasets can be computationally intensive. The `--fraction` flag allows you to train and benchmark using only a subset of the dataset.
