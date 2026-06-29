@@ -790,6 +790,7 @@ def main() -> None:
 
             except Exception as e:
                 import traceback
+
                 print(
                     f"Error occurred during training of {run_name}: {e}",
                     file=sys.stderr,

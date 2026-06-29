@@ -153,4 +153,159 @@ Under the `lightly-train` LTDETR framework, you can select which decoder head to
   * **Refinement**: Refines the shapes and borders of the boxes by iteratively shifting the peak coordinates of the distribution.
   * **Best For**: High-resolution geospatial, satellite, or aerial detection where high localization precision is critical (improves strict metrics like AP75 and AP_small).
 
+---
+
+## ⚡ CLI Command-Line Reference & Flags
+
+This section documents the various command-line options (`--flags`) available for executing baseline benchmarks, single training runs, and standalone evaluations.
+
+### 1. Baseline Benchmark Suite ([run_baseline_benchmark.py](file:///C:/Users/emilb/_trainer_lightly/run_baseline_benchmark.py))
+The baseline benchmark script is designed to automate the orchestration, training, and evaluation of all standard baseline models across multiple seeds.
+
+#### Included Models & Settings:
+The benchmark suite is a robust verification process running a total of **18 full training and evaluation runs** (6 models × 3 seeds) using the stock configurations defined in [config.py](file:///C:/Users/emilb/_trainer_lightly/config.py):
+
+* **Included Models & Backends**:
+  * **Ultralytics Backend (CNN & Hybrid detectors)**:
+    * [yolo11s.pt](file:///C:/Users/emilb/_trainer_lightly/yolo11s.pt) (Stock YOLO11-Small)
+    * [yolo26s.pt](file:///C:/Users/emilb/_trainer_lightly/yolo26s.pt) (Geospatial-optimized YOLO26-Small)
+    * `yolo12s.pt` (Ultralytics YOLOv12-Small)
+    * [rtdetr-l.pt](file:///C:/Users/emilb/_trainer_lightly/rtdetr-l.pt) (Real-Time DEtection TRansformer Large, continuous bbox regression)
+  * **LightlyTrain Backend (Vision Transformer Backbones + STA Detail Fusion)**:
+    * `facebook/dinov3-vitl16-pretrain-sat493m` (ViT-L/16 backbone, self-supervised pretraining on 493M satellite patches, mapped to STA detail fusion + LTDETR neck/head)
+    * `facebook/dinov3-vitl16-pretrain-lvd1689m` (ViT-L/16 backbone, self-supervised pretraining on 1.68B general vision patches, mapped to STA detail fusion + LTDETR neck/head)
+* **Replication Seeds**:
+  * Each model is trained and validated across 3 independent seeds: `42`, `100`, and `999` to evaluate variance and performance stability.
+* **Default Hyperparameters**:
+  * **Epochs**: `1` (defined by `PipelineConfig.prod_epochs`)
+  * **Image Size**: `640 x 640`
+  * **Batch Size**: `2`
+  * **Workers**: `0`
+  * **Device**: `0` (GPU index 0, with automatic CPU retry fallback)
+  * **AMP**: `False`
+  * **LTDETR Decoder**: `"rtdetrv2"` (attached to DINOv3 backbones)
+  * **Data Fraction**: `1.0` (uses 100% of the dataset)
+* **LightlyTrain Optimizer Settings**:
+  * **Optimizer**: AdamW / MuSGD (defaults to learning rate `0.001` and weight decay `0.0001`)
+  * **Scheduler**: `"flat-cosine"`
+  * **Warmup steps / flat steps**: Set to `0` automatically when epochs < 2000 (stock benchmark run) to ensure proper learning rate decay scheduling on small epochs.
+* **Aggregated Output & Visualizations**:
+  * Checkpoints are stored in `runs/baseline/`.
+  * Metric JSON reports are compiled in `evaluation_results/baseline/` via `pycocotools`.
+  * Results are aggregated and plotted using [plot_results.py](file:///C:/Users/emilb/_trainer_lightly/plot_results.py), computing Standard Error of the Mean (SEM) for AP50, AP75, AP_small, AP_medium, and AP_large metrics.
+
+#### Available Flags:
+| Flag | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--epochs` | `int` | `None` | Override the number of training epochs per run. |
+| `--batch` | `int` | `None` | Override the batch size. |
+| `--device` | `str` | `None` | Override PyTorch device (e.g., `0` or `cpu`). |
+| `--fraction` | `float` | `None` | Override the dataset fraction (e.g., `0.1` for 10% of data). |
+| `--workers` | `int` | `None` | Override dataloader workers. |
+| `--imgsz` | `int` | `None` | Override input image size. |
+
+> [!NOTE]
+> All benchmark flags are optional and forward their overrides directly to each underlying training run command. If a baseline benchmark command fails on the target GPU/default device, it automatically executes a CPU fallback run (using `--device cpu` and setting `CUDA_VISIBLE_DEVICES=""`) to guarantee execution completion.
+
+#### Example Usage:
+```bash
+# Run the entire benchmark suite with stock settings
+pixi run train-baseline
+
+# Run the benchmark suite on a 10% subset of the dataset with 5 epochs override
+pixi run train-baseline --fraction 0.1 --epochs 5
+```
+
+---
+
+### 2. Single Training Runs ([run_training.py](file:///C:/Users/emilb/_trainer_lightly/run_training.py))
+Use the training script to execute a single model training process or a set of custom models.
+
+#### Available Flags:
+| Flag | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--model` | `str` | `None` | Specify one or more models to train (space-separated, e.g., `yolo11s.pt yolo26s.pt`). If omitted, trains all configured models in [config.py](file:///C:/Users/emilb/_trainer_lightly/config.py). |
+| `--seed` | `int` | `None` | Run training with a single specific random seed. If omitted, trains across all configured seeds. |
+| `--epochs` | `int` | `None` | Override the number of epochs to train for. |
+| `--batch` | `int` | `None` | Override the batch size. |
+| `--device` | `str` | `None` | Specify the training device (e.g. `0` or `cpu`). |
+| `--imgsz` | `int` | `None` | Override the model input image size. |
+| `--workers` | `int` | `None` | Override the number of dataloader worker processes. |
+| `--fraction` | `float` | `None` | Override the fraction of the dataset to train on (e.g., `0.01` for 1% of data). |
+| `--runs-dir` | `str` | `None` | Override directory where training checkpoints are saved. |
+| `--wandb-dir` | `str` | `None` | Override the Weights & Biases log directory. |
+| `--eval-results-dir`| `str` | `None` | Override directory where evaluation COCO metric JSONs are stored. |
+| `--aug-sweep-id` | `str` | `None` | Specify a W&B sweep ID to load optimal Phase 1 data augmentations. |
+| `--hpo-sweep-id` | `str` | `None` | Specify a W&B sweep ID to load optimal Phase 2 HPO hyperparameters. |
+| `--amp` | `str` | `None` | Enable or disable Automatic Mixed Precision (`True` or `False`). |
+| `--distill` | `flag` | (off) | If specified, runs teacher-student DINOv3 distillation pretraining before training. |
+| `--backend` | `str` | `"lightly"` | Backend for training: `"ultralytics"` or `"lightly"`. |
+| `--decoder` | `str` | `None` | Choose the LTDETR decoder head type: `"rtdetrv2"` or `"dfine"`. |
+
+#### Example Usage:
+```bash
+# Train a single yolo26s.pt model with seed 42 using the lightly_train backend
+pixi run train --model yolo26s.pt --seed 42 --backend lightly
+
+# Train a custom DINOv3 model using a 5% data fraction and D-FINE decoder head
+pixi run train --model facebook/dinov3-vitl16-pretrain-sat493m --fraction 0.05 --decoder dfine
+```
+
+---
+
+### 3. Standalone Evaluation Runs ([run_evaluation.py](file:///C:/Users/emilb/_trainer_lightly/run_evaluation.py))
+Use the evaluation script to validate your trained checkpoints and get strict COCO metrics.
+
+#### Available Flags:
+| Flag | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--model` | `str` | `None` | Specify the model variant to evaluate (e.g. `yolo11s.pt`). |
+| `--seed` | `int` | `None` | Specify the seed checkpoint to evaluate. |
+| `--split` | `str` | `"test"` | Dataset split to evaluate on (`"train"`, `"val"`, `"test"`). |
+| `--batch` | `int` | `None` | Override the batch size. |
+| `--device` | `str` | `None` | Specify device (`0`, `cpu`). |
+| `--imgsz` | `int` | `None` | Override image size. |
+| `--workers` | `int` | `None` | Override number of dataloader workers. |
+| `--runs-dir` | `str` | `None` | Override runs directory where model weights are loaded. |
+| `--aug-sweep-id` | `str` | `None` | W&B sweep ID for Phase 1 (augmentation tuning). |
+| `--hpo-sweep-id` | `str` | `None` | W&B sweep ID for Phase 2 (HPO). |
+| `--sahi` | `flag` | (off) | Explicitly enable Slicing Aided Hyper Inference (SAHI) evaluation. |
+| `--no-sahi` | `flag` | (off) | Explicitly disable Slicing Aided Hyper Inference (SAHI) evaluation. |
+| `--sahi-slice-height`| `int` | `None` | SAHI tile slice height in pixels. |
+| `--sahi-slice-width` | `int` | `None` | SAHI tile slice width in pixels. |
+| `--sahi-overlap` | `float` | `None` | Overlap ratio (e.g. `0.2` for 20% overlap). |
+| `--dataset` | `str` | `None` | Path to a separate dataset YAML file (overrides [config.py](file:///C:/Users/emilb/_trainer_lightly/config.py)). |
+| `--decoder` | `str` | `None` | Decoder head of LTDETR models to evaluate: `"rtdetrv2"` or `"dfine"`. |
+
+#### Example Usage:
+```bash
+# Evaluate yolo11s.pt checkpoint with seed 42 on the test split
+pixi run eval --model yolo11s.pt --seed 42
+
+# Evaluate with SAHI enabled, custom tile size, and custom overlap
+pixi run eval --model yolo26s.pt --sahi --sahi-slice-height 640 --sahi-slice-width 640 --sahi-overlap 0.25
+```
+
+---
+
+### 🍰 How Dataset Subsetting & Fractions Work
+
+Training on massive geospatial/satellite datasets can be computationally intensive. The `--fraction` flag allows you to train and benchmark using only a subset of the dataset.
+
+#### Execution Flow:
+1. **Validation & Directory Setup**: If the `--fraction` parameter is less than `1.0` (e.g., `0.05` for 5% of the dataset), the training script creates a temporary subset directory at `runs/temp_subset`.
+2. **Deterministic Sampling**: To avoid file ordering bias, a dedicated random sampler (locked to seed `42`) selects the specified fraction of images from each split (`train`, `val`, `test`):
+   ```python
+   import random
+   rng = random.Random(42)
+   selected_images = rng.sample(images, num_select)
+   ```
+3. **Data Copying**: The script copies the selected images and their corresponding label files (`.txt`) to the target directories.
+4. **Temporary Config**: A temporary dataset configuration file `dataset.yaml` is dynamically generated, referencing these subsetted paths.
+5. **Execution**: The backend (Ultralytics or LightlyTrain) is invoked pointing to this temporary `dataset.yaml`.
+
+> [!WARNING]
+> The `--fraction` flag is supported only in training pipelines ([run_training.py](file:///C:/Users/emilb/_trainer_lightly/run_training.py) and forwarded via [run_baseline_benchmark.py](file:///C:/Users/emilb/_trainer_lightly/run_baseline_benchmark.py)). It is **not** supported by [run_evaluation.py](file:///C:/Users/emilb/_trainer_lightly/run_evaluation.py), which always performs evaluation on the full specified dataset split to ensure consistent, comparable metrics.
+
+
 
