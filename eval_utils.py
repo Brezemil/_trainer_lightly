@@ -303,7 +303,7 @@ def evaluate_model_coco(
                 model_type=sahi_model_type,
                 model=model,
                 model_path=model_path_str,
-                confidence_threshold=0.05,
+                confidence_threshold=0.001,
                 device=sahi_device,
             )
 
@@ -485,13 +485,13 @@ def evaluate_model_coco(
                 if sahi_enabled:
                     res = eval_model.predict_sahi(
                         image=img_path,
-                        threshold=0.05,
+                        threshold=0.001,
                         overlap=sahi_overlap_height_ratio,
                         nms_iou_threshold=sahi_postprocess_match_threshold,
                         global_local_iou_threshold=sahi_global_local_iou_threshold,
                     )
                 else:
-                    res = eval_model.predict(img_path, threshold=0.05)
+                    res = eval_model.predict(img_path, threshold=0.001)
 
                 bboxes = res.get("bboxes")
                 labels = res.get("labels")
