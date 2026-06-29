@@ -323,7 +323,9 @@ def main() -> None:
 
         # 4. Strict COCO Evaluation
         eval_batch_size = (
-            8 if (batch_size == "auto" or batch_size == -1) else batch_size
+            cfg.eval_fallback_batch_size
+            if (batch_size == "auto" or batch_size == -1)
+            else batch_size
         )
         metrics = evaluate_model_coco(
             model_path_or_model=eval_model,

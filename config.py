@@ -97,6 +97,14 @@ class PipelineConfig:
       - 8 (For large transformer/DINOv3 models to prevent Out-Of-Memory errors)
     """
 
+    eval_fallback_batch_size: int = 2
+    """Fallback batch size used during strict evaluation when the main training
+    batch size is configured as auto-tuning ('auto' or -1). 
+    Helps prevent CUDA Out-Of-Memory (OOM) errors during evaluation on lower-VRAM GPUs
+    (e.g., 16 GB cards) when running high-resolution models.
+    Default: 2.
+    """
+
     workers: int = 0
     """Number of CPU dataloader subprocess worker threads for loading/augmenting data.
     Default: 0 (Required on Windows to prevent multi-processing spawn overhead).
