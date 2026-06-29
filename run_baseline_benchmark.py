@@ -143,6 +143,8 @@ def main():
     ]
     print("\n>>> Running baseline for LightlyTrain custom DINOv3 backbones...")
     for model in lightly_models:
+        # Run 2A: RT-DETRv2 decoder head combination
+        print(f"\n>>> Executing RT-DETRv2 head variant baseline runs for {model}...")
         for seed in seeds:
             run_training_with_fallback(
                 [
@@ -156,6 +158,33 @@ def main():
                     str(seed),
                     "--backend",
                     "lightly",
+                    "--decoder",
+                    "rtdetrv2",
+                    "--runs-dir",
+                    baseline_runs_dir,
+                    "--eval-results-dir",
+                    baseline_eval_dir,
+                ]
+                + forward_args
+            )
+
+        # Run 2B: D-FINE decoder head combination
+        print(f"\n>>> Executing D-FINE head variant baseline runs for {model}...")
+        for seed in seeds:
+            run_training_with_fallback(
+                [
+                    "pixi",
+                    "run",
+                    "python",
+                    "run_training.py",
+                    "--model",
+                    model,
+                    "--seed",
+                    str(seed),
+                    "--backend",
+                    "lightly",
+                    "--decoder",
+                    "dfine",
                     "--runs-dir",
                     baseline_runs_dir,
                     "--eval-results-dir",

@@ -14,7 +14,7 @@ class PipelineConfig:
     # =========================================================================
     # Weights & Biases (W&B) Core Setup
     # =========================================================================
-    entity: str = "brezemil"
+    entity: str = "brezo-boku-vienna-org"
     """W&B entity name (user or organization account) under which runs are logged.
     Default: 'brezemil' (Standard workspace account).
     """

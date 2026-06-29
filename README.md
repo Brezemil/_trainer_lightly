@@ -163,7 +163,7 @@ This section documents the various command-line options (`--flags`) available fo
 The baseline benchmark script is designed to automate the orchestration, training, and evaluation of all standard baseline models across multiple seeds.
 
 #### Included Models & Settings:
-The benchmark suite is a robust verification process running a total of **18 full training and evaluation runs** (6 models × 3 seeds) using the stock configurations defined in [config.py](file:///C:/Users/emilb/_trainer_lightly/config.py):
+The benchmark suite is a robust verification process running a total of **24 full training and evaluation runs** (8 model configurations × 3 seeds) using the stock configurations defined in [config.py](file:///C:/Users/emilb/_trainer_lightly/config.py):
 
 * **Included Models & Backends**:
   * **Ultralytics Backend (CNN & Hybrid detectors)**:
@@ -172,8 +172,10 @@ The benchmark suite is a robust verification process running a total of **18 ful
     * `yolo12s.pt` (Ultralytics YOLOv12-Small)
     * [rtdetr-l.pt](file:///C:/Users/emilb/_trainer_lightly/rtdetr-l.pt) (Real-Time DEtection TRansformer Large, continuous bbox regression)
   * **LightlyTrain Backend (Vision Transformer Backbones + STA Detail Fusion)**:
-    * `facebook/dinov3-vitl16-pretrain-sat493m` (ViT-L/16 backbone, self-supervised pretraining on 493M satellite patches, mapped to STA detail fusion + LTDETR neck/head)
-    * `facebook/dinov3-vitl16-pretrain-lvd1689m` (ViT-L/16 backbone, self-supervised pretraining on 1.68B general vision patches, mapped to STA detail fusion + LTDETR neck/head)
+    * `facebook/dinov3-vitl16-pretrain-sat493m` + **RT-DETRv2 Head** (ViT-L/16 backbone, 493M satellite patches, continuous coordinates regression)
+    * `facebook/dinov3-vitl16-pretrain-sat493m` + **D-FINE Head** (Discrete Fine-grained Distribution Refinement, treats bbox coordinates as discrete probability distributions)
+    * `facebook/dinov3-vitl16-pretrain-lvd1689m` + **RT-DETRv2 Head** (ViT-L/16 backbone, 1.68B general vision patches, continuous coordinates regression)
+    * `facebook/dinov3-vitl16-pretrain-lvd1689m` + **D-FINE Head** (Discrete Fine-grained Distribution Refinement, treats bbox coordinates as discrete probability distributions)
 * **Replication Seeds**:
   * Each model is trained and validated across 3 independent seeds: `42`, `100`, and `999` to evaluate variance and performance stability.
 * **Default Hyperparameters**:
@@ -183,7 +185,7 @@ The benchmark suite is a robust verification process running a total of **18 ful
   * **Workers**: `0`
   * **Device**: `0` (GPU index 0, with automatic CPU retry fallback)
   * **AMP**: `False`
-  * **LTDETR Decoder**: `"rtdetrv2"` (attached to DINOv3 backbones)
+  * **LTDETR Decoder**: Both `"rtdetrv2"` and `"dfine"` heads are evaluated for the DINOv3 backbones.
   * **Data Fraction**: `1.0` (uses 100% of the dataset)
 * **LightlyTrain Optimizer Settings**:
   * **Optimizer**: AdamW / MuSGD (defaults to learning rate `0.001` and weight decay `0.0001`)
@@ -191,7 +193,7 @@ The benchmark suite is a robust verification process running a total of **18 ful
   * **Warmup steps / flat steps**: Set to `0` automatically when epochs < 2000 (stock benchmark run) to ensure proper learning rate decay scheduling on small epochs.
 * **Aggregated Output & Visualizations**:
   * Checkpoints are stored in `runs/baseline/`.
-  * Metric JSON reports are compiled in `evaluation_results/baseline/` via `pycocotools`.
+  * Metric JSON reports are compiled in `evaluation_results/baseline/` via `pycocotools` (suffixed with `_rtdetrv2` or `_dfine` to make the choice of head clear in files and W&B logs).
   * Results are aggregated and plotted using [plot_results.py](file:///C:/Users/emilb/_trainer_lightly/plot_results.py), computing Standard Error of the Mean (SEM) for AP50, AP75, AP_small, AP_medium, and AP_large metrics.
 
 #### Available Flags:
