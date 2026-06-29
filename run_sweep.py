@@ -101,6 +101,11 @@ def main() -> None:
     epochs = cfg.sweep_epochs
     batch_size = cfg.batch_size
     device = cfg.device
+
+    # For lightly backend, batch_size=-1 (auto-batching) is not supported.
+    # We fall back to "auto" which is supported by lightly_train.
+    if backend == "lightly" and batch_size == -1:
+        batch_size = "auto"
     workers = cfg.workers
     fraction = cfg.fraction
     amp = cfg.amp
@@ -317,6 +322,9 @@ def main() -> None:
             eval_model = lightly_train.load_model(best_ckpt)
 
         # 4. Strict COCO Evaluation
+        eval_batch_size = (
+            8 if (batch_size == "auto" or batch_size == -1) else batch_size
+        )
         metrics = evaluate_model_coco(
             model_path_or_model=eval_model,
             dataset_yaml_path=cfg.dataset_path,
@@ -324,7 +332,7 @@ def main() -> None:
             eval_results_dir=cfg.eval_results_dir,
             run_name=f"sweep_run_{run.id}",
             device=device,
-            batch_size=batch_size,
+            batch_size=eval_batch_size,
             imgsz=imgsz,
             workers=workers,
         )

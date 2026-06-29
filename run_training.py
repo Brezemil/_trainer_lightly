@@ -282,6 +282,11 @@ def main() -> None:
     epochs = args.epochs if args.epochs is not None else cfg.prod_epochs
     batch_size = args.batch if args.batch is not None else cfg.batch_size
     device = args.device if args.device is not None else cfg.device
+
+    # For lightly backend, batch_size=-1 (auto-batching) is not supported.
+    # We fall back to "auto" which is supported by lightly_train.
+    if args.backend == "lightly" and batch_size == -1:
+        batch_size = "auto"
     imgsz = args.imgsz if args.imgsz is not None else cfg.image_size
     workers = args.workers if args.workers is not None else cfg.workers
     fraction = args.fraction if args.fraction is not None else cfg.fraction
@@ -749,6 +754,9 @@ def main() -> None:
                     eval_model = lt.load_model(best_ckpt)
 
                 # 4. Strict Evaluation
+                eval_batch_size = (
+                    8 if (batch_size == "auto" or batch_size == -1) else batch_size
+                )
                 try:
                     metrics = evaluate_model_coco(
                         model_path_or_model=eval_model,
@@ -757,7 +765,7 @@ def main() -> None:
                         eval_results_dir=eval_results_dir,
                         run_name=run_name,
                         device=device,
-                        batch_size=batch_size,
+                        batch_size=eval_batch_size,
                         imgsz=imgsz,
                         workers=workers,
                     )
@@ -774,7 +782,7 @@ def main() -> None:
                             eval_results_dir=eval_results_dir,
                             run_name=run_name,
                             device="cpu",
-                            batch_size=batch_size,
+                            batch_size=eval_batch_size,
                             imgsz=imgsz,
                             workers=workers,
                         )
