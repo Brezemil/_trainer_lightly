@@ -78,11 +78,38 @@ def parse_args():
         default=None,
         help="List of tags to assign to the Weights & Biases runs.",
     )
+    # Model selection flags
+    parser.add_argument("--yolo12s", action="store_true", help="Run YOLOv12s baseline.")
+    parser.add_argument("--yolo26s", action="store_true", help="Run YOLO26s baseline.")
+    parser.add_argument("--yolo11s", action="store_true", help="Run YOLO11s baseline.")
+    parser.add_argument(
+        "--rtdetr-l", action="store_true", help="Run RT-DETR-L baseline."
+    )
+    parser.add_argument(
+        "--dinov3-l",
+        action="store_true",
+        help="Run LightlyTrain DINOv3 ViT-L models (with D-FINE & RT-DETRv2 heads).",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+
+    # Determine which models to run
+    run_yolo12s = args.yolo12s
+    run_yolo26s = args.yolo26s
+    run_yolo11s = args.yolo11s
+    run_rtdetr_l = getattr(args, "rtdetr_l", False)
+    run_dinov3_l = args.dinov3_l
+
+    # If no specific flags are selected, run ALL of them by default
+    if not (run_yolo12s or run_yolo26s or run_yolo11s or run_rtdetr_l or run_dinov3_l):
+        run_yolo12s = True
+        run_yolo26s = True
+        run_yolo11s = True
+        run_rtdetr_l = True
+        run_dinov3_l = True
 
     # Arguments to forward to run_training.py
     forward_args = []
@@ -119,88 +146,106 @@ def main():
     seeds = [42, 100, 999]
 
     # 1. Train and evaluate YOLO12s, YOLO11s, YOLO26s, RT-DETR-L (Ultralytics backend)
-    ultralytics_models = ["yolo11s.pt", "yolo26s.pt", "yolo12s.pt", "rtdetr-l.pt"]
-    print(
-        "\n>>> Running standard settings baseline for YOLO11s, YOLO26s, YOLOv12s, and RT-DETR-L..."
-    )
-    for model in ultralytics_models:
-        for seed in seeds:
-            run_training_with_fallback(
-                [
-                    "pixi",
-                    "run",
-                    "python",
-                    "run_training.py",
-                    "--model",
-                    model,
-                    "--seed",
-                    str(seed),
-                    "--backend",
-                    "ultralytics",
-                    "--runs-dir",
-                    baseline_runs_dir,
-                    "--eval-results-dir",
-                    baseline_eval_dir,
-                ]
-                + forward_args
-            )
+    ultralytics_models = []
+    if run_yolo11s:
+        ultralytics_models.append("yolo11s.pt")
+    if run_yolo26s:
+        ultralytics_models.append("yolo26s.pt")
+    if run_yolo12s:
+        ultralytics_models.append("yolo12s.pt")
+    if run_rtdetr_l:
+        ultralytics_models.append("rtdetr-l.pt")
+
+    if ultralytics_models:
+        print(
+            f"\n>>> Running standard settings baseline for selected Ultralytics models: {ultralytics_models}..."
+        )
+        for model in ultralytics_models:
+            for seed in seeds:
+                run_training_with_fallback(
+                    [
+                        "pixi",
+                        "run",
+                        "python",
+                        "run_training.py",
+                        "--model",
+                        model,
+                        "--seed",
+                        str(seed),
+                        "--backend",
+                        "ultralytics",
+                        "--runs-dir",
+                        baseline_runs_dir,
+                        "--eval-results-dir",
+                        baseline_eval_dir,
+                    ]
+                    + forward_args
+                )
 
     # 2. Train and evaluate LightlyTrain DINOv3 backbones (sat493m and lvd1689m)
-    lightly_models = [
-        "facebook/dinov3-vitl16-pretrain-sat493m",
-        "facebook/dinov3-vitl16-pretrain-lvd1689m",
-    ]
-    print("\n>>> Running baseline for LightlyTrain custom DINOv3 backbones...")
-    for model in lightly_models:
-        # Run 2A: RT-DETRv2 decoder head combination
-        print(f"\n>>> Executing RT-DETRv2 head variant baseline runs for {model}...")
-        for seed in seeds:
-            run_training_with_fallback(
-                [
-                    "pixi",
-                    "run",
-                    "python",
-                    "run_training.py",
-                    "--model",
-                    model,
-                    "--seed",
-                    str(seed),
-                    "--backend",
-                    "lightly",
-                    "--decoder",
-                    "rtdetrv2",
-                    "--runs-dir",
-                    baseline_runs_dir,
-                    "--eval-results-dir",
-                    baseline_eval_dir,
-                ]
-                + forward_args
-            )
+    lightly_models = []
+    if run_dinov3_l:
+        lightly_models = [
+            "facebook/dinov3-vitl16-pretrain-sat493m",
+            "facebook/dinov3-vitl16-pretrain-lvd1689m",
+        ]
 
-        # Run 2B: D-FINE decoder head combination
-        print(f"\n>>> Executing D-FINE head variant baseline runs for {model}...")
-        for seed in seeds:
-            run_training_with_fallback(
-                [
-                    "pixi",
-                    "run",
-                    "python",
-                    "run_training.py",
-                    "--model",
-                    model,
-                    "--seed",
-                    str(seed),
-                    "--backend",
-                    "lightly",
-                    "--decoder",
-                    "dfine",
-                    "--runs-dir",
-                    baseline_runs_dir,
-                    "--eval-results-dir",
-                    baseline_eval_dir,
-                ]
-                + forward_args
+    if lightly_models:
+        print(
+            f"\n>>> Running baseline for selected LightlyTrain custom DINOv3 backbones: {lightly_models}..."
+        )
+        for model in lightly_models:
+            # Run 2A: RT-DETRv2 decoder head combination
+            print(
+                f"\n>>> Executing RT-DETRv2 head variant baseline runs for {model}..."
             )
+            for seed in seeds:
+                run_training_with_fallback(
+                    [
+                        "pixi",
+                        "run",
+                        "python",
+                        "run_training.py",
+                        "--model",
+                        model,
+                        "--seed",
+                        str(seed),
+                        "--backend",
+                        "lightly",
+                        "--decoder",
+                        "rtdetrv2",
+                        "--runs-dir",
+                        baseline_runs_dir,
+                        "--eval-results-dir",
+                        baseline_eval_dir,
+                    ]
+                    + forward_args
+                )
+
+            # Run 2B: D-FINE decoder head combination
+            print(f"\n>>> Executing D-FINE head variant baseline runs for {model}...")
+            for seed in seeds:
+                run_training_with_fallback(
+                    [
+                        "pixi",
+                        "run",
+                        "python",
+                        "run_training.py",
+                        "--model",
+                        model,
+                        "--seed",
+                        str(seed),
+                        "--backend",
+                        "lightly",
+                        "--decoder",
+                        "dfine",
+                        "--runs-dir",
+                        baseline_runs_dir,
+                        "--eval-results-dir",
+                        baseline_eval_dir,
+                    ]
+                    + forward_args
+                )
 
     # 3. Aggregate results and plot comparison charts
     print("\n>>> Generating aggregated charts and markdown summaries...")

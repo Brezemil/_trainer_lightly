@@ -206,6 +206,11 @@ The benchmark suite is a robust verification process running a total of **24 ful
 | `--workers` | `int` | `None` | Override dataloader workers. |
 | `--imgsz` | `int` | `None` | Override input image size. |
 | `--tags` | `str` | `None` | List of space-separated tags to assign to the Weights & Biases runs (forwarded to each training run). |
+| `--yolo12s` | `bool` | `False` | Limit baseline runs to YOLOv12s. |
+| `--yolo26s` | `bool` | `False` | Limit baseline runs to YOLO26s. |
+| `--yolo11s` | `bool` | `False` | Limit baseline runs to YOLO11s. |
+| `--rtdetr-l` | `bool` | `False` | Limit baseline runs to RT-DETR-L. |
+| `--dinov3-l` | `bool` | `False` | Limit baseline runs to DINOv3 ViT-L models (with D-FINE & RT-DETRv2 heads). |
 
 > [!NOTE]
 > All benchmark flags are optional and forward their overrides directly to each underlying training run command. If a baseline benchmark command fails on the target GPU/default device, it automatically executes a CPU fallback run (using `--device cpu` and setting `CUDA_VISIBLE_DEVICES=""`) to guarantee execution completion.
@@ -217,6 +222,11 @@ pixi run train-baseline
 
 # Run the benchmark suite on a 10% subset of the dataset with 5 epochs override
 pixi run train-baseline --fraction 0.1 --epochs 5
+
+# Run a baseline benchmark for only YOLO12s, YOLO26s, YOLO11s, and RT-DETR-L.
+# The evaluation results are automatically computed using pycocotools and 
+# uploaded directly to Weights & Biases under the project workspace.
+pixi run train-baseline --yolo12s --yolo26s --yolo11s --rtdetr-l --tags baseline-cnn-only
 ```
 
 ---

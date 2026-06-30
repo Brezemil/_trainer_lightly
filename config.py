@@ -19,7 +19,7 @@ class PipelineConfig:
     Default: 'brezemil' (Standard workspace account).
     """
 
-    project: str = "_lightly_train_baseline" #_smoketests or _lightly_train_baseline
+    project: str = "_lightly_train_baseline"  # _smoketests or _lightly_train_baseline
     """W&B project name to group related experiment runs and sweeps.
     Default: '_trainer' (Central training workspace project).
     """
