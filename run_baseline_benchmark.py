@@ -71,6 +71,13 @@ def parse_args():
         "--workers", type=int, default=None, help="Override dataloader workers."
     )
     parser.add_argument("--imgsz", type=int, default=None, help="Override image size.")
+    parser.add_argument(
+        "--tags",
+        type=str,
+        nargs="+",
+        default=None,
+        help="List of tags to assign to the Weights & Biases runs.",
+    )
     return parser.parse_args()
 
 
@@ -91,6 +98,8 @@ def main():
         forward_args.extend(["--workers", str(args.workers)])
     if args.imgsz is not None:
         forward_args.extend(["--imgsz", str(args.imgsz)])
+    if args.tags is not None:
+        forward_args.extend(["--tags"] + args.tags)
 
     project_root = os.path.dirname(os.path.abspath(__file__))
 

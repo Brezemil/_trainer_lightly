@@ -205,6 +205,7 @@ The benchmark suite is a robust verification process running a total of **24 ful
 | `--fraction` | `float` | `None` | Override the dataset fraction (e.g., `0.1` for 10% of data). |
 | `--workers` | `int` | `None` | Override dataloader workers. |
 | `--imgsz` | `int` | `None` | Override input image size. |
+| `--tags` | `str` | `None` | List of space-separated tags to assign to the Weights & Biases runs (forwarded to each training run). |
 
 > [!NOTE]
 > All benchmark flags are optional and forward their overrides directly to each underlying training run command. If a baseline benchmark command fails on the target GPU/default device, it automatically executes a CPU fallback run (using `--device cpu` and setting `CUDA_VISIBLE_DEVICES=""`) to guarantee execution completion.
@@ -243,6 +244,7 @@ Use the training script to execute a single model training process or a set of c
 | `--distill` | `flag` | (off) | If specified, runs teacher-student DINOv3 distillation pretraining before training. |
 | `--backend` | `str` | `"lightly"` | Backend for training: `"ultralytics"` or `"lightly"`. |
 | `--decoder` | `str` | `None` | Choose the LTDETR decoder head type: `"rtdetrv2"` or `"dfine"`. |
+| `--tags` | `str` | `None` | List of space-separated tags to assign to the Weights & Biases run. |
 
 #### Example Usage:
 ```bash
@@ -278,6 +280,8 @@ Use the evaluation script to validate your trained checkpoints and get strict CO
 | `--sahi-overlap` | `float` | `None` | Overlap ratio (e.g. `0.2` for 20% overlap). |
 | `--dataset` | `str` | `None` | Path to a separate dataset YAML file (overrides [config.py](file:///C:/Users/emilb/_trainer_lightly/config.py)). |
 | `--decoder` | `str` | `None` | Decoder head of LTDETR models to evaluate: `"rtdetrv2"` or `"dfine"`. |
+| `--upload-wandb` | `flag` | (off) | Upload strict COCO evaluation results back to the original training run in Weights & Biases. |
+| `--tags` | `str` | `None` | List of space-separated tags to append to the resumed Weights & Biases run. |
 
 #### Example Usage:
 ```bash
@@ -286,6 +290,12 @@ pixi run eval --model yolo11s.pt --seed 42
 
 # Evaluate with SAHI enabled, custom tile size, and custom overlap
 pixi run eval --model yolo26s.pt --sahi --sahi-slice-height 640 --sahi-slice-width 640 --sahi-overlap 0.25
+
+# Evaluate and upload results back to the original W&B training run
+pixi run eval --model yolo12s.pt --seed 42 --upload-wandb
+
+# Evaluate, upload results, and append tags to the resumed W&B run
+pixi run eval --model yolo12s.pt --seed 42 --upload-wandb --tags sahi_eval test_split
 ```
 
 ---

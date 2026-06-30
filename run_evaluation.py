@@ -101,6 +101,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Specify the decoder head of LTDETR models to evaluate (rtdetrv2 or dfine). Defaults to configuration setting.",
     )
+    parser.add_argument(
+        "--upload-wandb",
+        action="store_true",
+        help="Upload evaluation results back to the original training run in Weights & Biases.",
+    )
+    parser.add_argument(
+        "--tags",
+        type=str,
+        nargs="+",
+        default=None,
+        help="List of tags to append to the resumed Weights & Biases run.",
+    )
     return parser.parse_args()
 
 
@@ -219,7 +231,7 @@ def main() -> None:
 
             print(f"\nEvaluating found checkpoint: {checkpoint_path}")
             try:
-                evaluate_model_coco(
+                metrics = evaluate_model_coco(
                     model_path_or_model=checkpoint_path,
                     dataset_yaml_path=dataset_yaml_path,
                     split=split,
@@ -236,6 +248,62 @@ def main() -> None:
                     sahi_overlap_width_ratio=sahi_overlap,
                 )
                 evaluated_count += 1
+
+                if args.upload_wandb:
+                    import wandb
+
+                    print(
+                        f"Searching for original W&B run named '{run_name}' in project {cfg.entity}/{cfg.project}..."
+                    )
+                    try:
+                        api = wandb.Api()
+                        runs = api.runs(
+                            path=f"{cfg.entity}/{cfg.project}",
+                            filters={"display_name": run_name},
+                        )
+                        if len(runs) > 0:
+                            run_id = runs[0].id
+                            print(
+                                f"Found run ID {run_id}. Resuming run to log evaluation metrics..."
+                            )
+                            # Initialize run in resume mode
+                            if args.tags:
+                                run = wandb.init(
+                                    project=cfg.project,
+                                    entity=cfg.entity,
+                                    id=run_id,
+                                    resume="must",
+                                )
+                                run.tags = (
+                                    list(run.tags) if run.tags is not None else []
+                                ) + args.tags
+                            else:
+                                wandb.init(
+                                    project=cfg.project,
+                                    entity=cfg.entity,
+                                    id=run_id,
+                                    resume="must",
+                                )
+                            # Log metrics to W&B
+                            wandb.log(
+                                {
+                                    f"metrics/{k}": v
+                                    for k, v in metrics["metrics"].items()
+                                }
+                            )
+                            wandb.finish()
+                            print(
+                                f"Successfully uploaded metrics to W&B run {run_name} ({run_id})"
+                            )
+                        else:
+                            print(
+                                f"[WARNING] No active W&B run found with name '{run_name}' in project {cfg.entity}/{cfg.project}. Cannot upload metrics."
+                            )
+                    except Exception as wandb_err:
+                        print(
+                            f"[WARNING] Failed to upload metrics to W&B: {wandb_err}",
+                            file=sys.stderr,
+                        )
             except Exception as e:
                 print(f"Error evaluating {run_name}: {e}", file=sys.stderr)
             finally:

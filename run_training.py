@@ -121,7 +121,14 @@ def parse_args() -> argparse.Namespace:
         type=str,
         choices=["rtdetrv2", "dfine"],
         default=None,
-        help="Specify the decoder head for LTDETR models (rtdetrv2 or dfine). Defaults to configuration setting.",
+        help="Specify the decoder head of LTDETR models (rtdetrv2 or dfine). Defaults to configuration setting.",
+    )
+    parser.add_argument(
+        "--tags",
+        type=str,
+        nargs="+",
+        default=None,
+        help="List of tags to assign to the Weights & Biases run.",
     )
     return parser.parse_args()
 
@@ -484,6 +491,7 @@ def main() -> None:
                 dir=wandb_dir,
                 config=wb_run_config,
                 reinit=True,
+                tags=args.tags,
             )
 
             # 3. Train Model
