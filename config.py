@@ -32,7 +32,9 @@ class PipelineConfig:
     Default: 'yolo26s.pt' (Geospatial-optimized YOLO26 architecture).
     """
 
-    dataset_path: str = r"C:\Users\emilb\_data\_smoketest\dataset.yaml"
+    dataset_path: str = (
+        r"C:\Users\emilb\Documents\GitHub\sliced_split_dataset_culled\dataset.yaml"
+    )
     """Path to the dataset.yaml file defining the data splits and class mapping.
     Default: 'C:\\Users\\emilb\\_data\\_smoketest\\dataset.yaml' (smoketest dataset).
     Production Standard: Replace with absolute path to full dataset YAML config.
@@ -56,7 +58,11 @@ class PipelineConfig:
     # =========================================================================
     # Global Training Constraints & Hyperparameters
     # =========================================================================
+<<<<<<< Updated upstream
     image_size: int = 160
+=======
+    image_size: int = 160  # 1024
+>>>>>>> Stashed changes
     """Model input image resolution (height and width in pixels).
     Standard Values:
       - 640 (Standard YOLO and RT-DETR default)
@@ -121,6 +127,11 @@ class PipelineConfig:
     """Enable or disable Automatic Mixed Precision (AMP) training.
     Default: False (Baseline comparability).
     Production Standard: True (Speeds up training and reduces VRAM using FP16/BF16 mixed precision).
+    """
+
+    backbone_freeze: bool = True
+    """Freeze the DINOv2 or DINOv3 backbone weights during fine-tuning.
+    Default: True (Standard setting to significantly reduce VRAM footprint and prevent overfitting).
     """
 
     # =========================================================================

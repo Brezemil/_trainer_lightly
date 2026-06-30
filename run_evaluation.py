@@ -5,6 +5,7 @@ This script runs strict COCO evaluation (via pycocotools) on the test split for 
 It checks for checkpoints at runs/{run_name}/weights/best.pt or runs/{run_name}/exported_models/exported_best.pt.
 """
 
+import pyarrow  # noqa: F401
 import argparse
 import os
 import sys

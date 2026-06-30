@@ -5,6 +5,7 @@ This script executes training runs for YOLO11, YOLO26, and RT-DETR at stock sett
 supporting both lightly_train and ultralytics backends, as well as distillation pretraining.
 """
 
+import pyarrow  # noqa: F401
 import argparse
 import sys
 import os
@@ -129,6 +130,12 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=None,
         help="List of tags to assign to the Weights & Biases run.",
+    )
+    parser.add_argument(
+        "--backbone-freeze",
+        type=str,
+        default=None,
+        help="Override the backbone_freeze setting (True/False).",
     )
     return parser.parse_args()
 
@@ -317,6 +324,10 @@ def main() -> None:
     amp = cfg.amp
     if args.amp is not None:
         amp = args.amp.lower() in ("true", "1", "yes")
+
+    backbone_freeze = cfg.backbone_freeze
+    if args.backbone_freeze is not None:
+        backbone_freeze = args.backbone_freeze.lower() in ("true", "1", "yes")
 
     # Resolve relative paths
     if not os.path.isabs(runs_dir):
@@ -602,7 +613,14 @@ def main() -> None:
                     # --- lightly_train Training Backend ---
                     # Resolve lightly-train model mapping (support custom Hugging Face backbones)
                     if model_name.startswith("facebook/"):
-                        lightly_model_name = "dinov3/vitl16-ltdetr"
+                        if "vits16" in model_name:
+                            lightly_model_name = "dinov3/vits16-ltdetr"
+                        elif "vitb16" in model_name:
+                            lightly_model_name = "dinov3/vitb16-ltdetr"
+                        elif "vitt16" in model_name:
+                            lightly_model_name = "dinov3/vitt16-ltdetr"
+                        else:
+                            lightly_model_name = "dinov3/vitl16-ltdetr"
                         hf_weights = get_huggingface_backbone(model_name)
                     else:
                         lightly_model_name = LIGHTLY_BASELINE_MAP.get(
@@ -629,7 +647,10 @@ def main() -> None:
                         "weight_decay": 0.0001,
                         "scheduler_name": "flat-cosine",
                         "decoder_name": decoder_name,
+                        "backbone_freeze": backbone_freeze,
                     }
+                    if "sat493m" in model_name:
+                        model_args["backbone_args"] = {"is_sat493m_weights": True}
                     if epochs < 2000:
                         model_args["lr_warmup_steps"] = 0
                         model_args["ema_warmup_steps"] = 0

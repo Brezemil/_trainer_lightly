@@ -5,6 +5,7 @@ This script coordinates both HPO Phase 1 (Augmentation tuning) and Phase 2 (Lear
 runs using Weights & Biases (W&B) and Albumentations for both Ultralytics and lightly_train.
 """
 
+import pyarrow  # noqa: F401
 import wandb
 import os
 import sys

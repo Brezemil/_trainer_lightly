@@ -1,3 +1,4 @@
+import pyarrow  # noqa: F401
 import os
 import json
 import glob
@@ -271,6 +272,7 @@ def evaluate_model_coco(
     }
 
     pred_file = os.path.join(eval_results_dir, f"{run_name}_coco_predictions.json")
+    os.makedirs(os.path.dirname(pred_file), exist_ok=True)
 
     # 3. Retrieve predictions
     mapped_preds = []
@@ -738,6 +740,9 @@ def get_huggingface_backbone(model_id: str) -> str:
 
         new_state_dict["norm.weight"] = state_dict["norm.weight"]
         new_state_dict["norm.bias"] = state_dict["norm.bias"]
+        if "sat493m" in model_id:
+            new_state_dict["local_cls_norm.weight"] = state_dict["norm.weight"].clone()
+            new_state_dict["local_cls_norm.bias"] = state_dict["norm.bias"].clone()
 
         layers = set()
         for k in state_dict.keys():
@@ -809,19 +814,32 @@ def get_huggingface_backbone(model_id: str) -> str:
                 [q_b, k_b, v_b], dim=0
             )
 
-        # Copy remaining/constant keys (like rope_embed.periods) from a default vitl16 backbone model
+        # Copy remaining/constant keys (like rope_embed.periods) from a default backbone model of matching size
         try:
             from lightly_train._models.dinov3.dinov3_src.hub.backbones import (
+                dinov3_vitt16,
+                dinov3_vits16,
+                dinov3_vitb16,
                 dinov3_vitl16,
             )
 
-            temp_model = dinov3_vitl16(pretrained=False)
+            if "vits16" in model_id:
+                temp_model = dinov3_vits16(pretrained=False)
+            elif "vitb16" in model_id:
+                temp_model = dinov3_vitb16(pretrained=False)
+            elif "vitt16" in model_id:
+                temp_model = dinov3_vitt16(pretrained=False)
+            else:
+                temp_model = dinov3_vitl16(pretrained=False)
+
             temp_sd = temp_model.state_dict()
             for k, v in temp_sd.items():
                 if k not in new_state_dict:
                     new_state_dict[k] = v
         except Exception as e:
-            print(f"Warning: could not load default vitl16 to copy remaining keys: {e}")
+            print(
+                f"Warning: could not load default template model to copy remaining keys: {e}"
+            )
 
         torch.save(new_state_dict, pt_path)
         print(f"Conversion complete. Weights saved to {pt_path}")
