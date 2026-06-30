@@ -165,17 +165,19 @@ The baseline benchmark script is designed to automate the orchestration, trainin
 #### Included Models & Settings:
 The benchmark suite is a robust verification process running a total of **24 full training and evaluation runs** (8 model configurations × 3 seeds) using the stock configurations defined in [config.py](file:///C:/Users/emilb/_trainer_lightly/config.py):
 
-* **Included Models & Backends**:
-  * **Ultralytics Backend (CNN & Hybrid detectors)**:
-    * [yolo11s.pt](file:///C:/Users/emilb/_trainer_lightly/yolo11s.pt) (Stock YOLO11-Small)
-    * [yolo26s.pt](file:///C:/Users/emilb/_trainer_lightly/yolo26s.pt) (Geospatial-optimized YOLO26-Small)
-    * `yolo12s.pt` (Ultralytics YOLOv12-Small)
-    * [rtdetr-l.pt](file:///C:/Users/emilb/_trainer_lightly/rtdetr-l.pt) (Real-Time DEtection TRansformer Large, continuous bbox regression)
-  * **LightlyTrain Backend (Vision Transformer Backbones + STA Detail Fusion)**:
-    * `facebook/dinov3-vitl16-pretrain-sat493m` + **RT-DETRv2 Head** (ViT-L/16 backbone, 493M satellite patches, continuous coordinates regression)
-    * `facebook/dinov3-vitl16-pretrain-sat493m` + **D-FINE Head** (Discrete Fine-grained Distribution Refinement, treats bbox coordinates as discrete probability distributions)
-    * `facebook/dinov3-vitl16-pretrain-lvd1689m` + **RT-DETRv2 Head** (ViT-L/16 backbone, 1.68B general vision patches, continuous coordinates regression)
-    * `facebook/dinov3-vitl16-pretrain-lvd1689m` + **D-FINE Head** (Discrete Fine-grained Distribution Refinement, treats bbox coordinates as discrete probability distributions)
+* **Model Backend Mapping Reference**:
+
+| Model Flag / Identifier | Active Backend | Backbone Architecture | Decoder / Head Options |
+| :--- | :--- | :--- | :--- |
+| `--yolo11s` / `yolo11s.pt` | **Ultralytics** | YOLO11-Small (CNN) | Default Ultralytics Detect Head |
+| `--yolo26s` / `yolo26s.pt` | **Ultralytics** | YOLO26-Small (Geospatial CNN) | Default Ultralytics Detect Head |
+| `--yolo12s` / `yolo12s.pt` | **Ultralytics** | YOLOv12-Small (CNN) | Default Ultralytics Detect Head |
+| `--rtdetr-l` / `rtdetr-l.pt` | **Ultralytics** | HGNetv2-L (Hybrid Backbone) | RT-DETR Transformer Decoder |
+| `--dinov3-l` / `dinov3-l` | **LightlyTrain** | DINOv3 ViT-L/16 (Transformer) | RT-DETRv2 Decoder / D-FINE Decoder |
+
+* **LightlyTrain Backbone Sub-Variants**:
+  * `facebook/dinov3-vitl16-pretrain-sat493m` (ViT-L/16 pretrained on 493M satellite patches)
+  * `facebook/dinov3-vitl16-pretrain-lvd1689m` (ViT-L/16 pretrained on 1.68B general vision patches)
 * **Replication Seeds**:
   * Each model is trained and validated across 3 independent seeds: `42`, `100`, and `999` to evaluate variance and performance stability.
 * **Default Hyperparameters**:
@@ -206,11 +208,11 @@ The benchmark suite is a robust verification process running a total of **24 ful
 | `--workers` | `int` | `None` | Override dataloader workers. |
 | `--imgsz` | `int` | `None` | Override input image size. |
 | `--tags` | `str` | `None` | List of space-separated tags to assign to the Weights & Biases runs (forwarded to each training run). |
-| `--yolo12s` | `bool` | `False` | Limit baseline runs to YOLOv12s. |
-| `--yolo26s` | `bool` | `False` | Limit baseline runs to YOLO26s. |
-| `--yolo11s` | `bool` | `False` | Limit baseline runs to YOLO11s. |
-| `--rtdetr-l` | `bool` | `False` | Limit baseline runs to RT-DETR-L. |
-| `--dinov3-l` | `bool` | `False` | Limit baseline runs to DINOv3 ViT-L models (with D-FINE & RT-DETRv2 heads). |
+| `--yolo12s` | `bool` | `False` | Limit baseline runs to YOLOv12s (using Ultralytics backend). |
+| `--yolo26s` | `bool` | `False` | Limit baseline runs to YOLO26s (using Ultralytics backend). |
+| `--yolo11s` | `bool` | `False` | Limit baseline runs to YOLO11s (using Ultralytics backend). |
+| `--rtdetr-l` | `bool` | `False` | Limit baseline runs to RT-DETR-L (using Ultralytics backend). |
+| `--dinov3-l` | `bool` | `False` | Limit baseline runs to DINOv3 ViT-L models (using LightlyTrain backend). |
 
 > [!NOTE]
 > All benchmark flags are optional and forward their overrides directly to each underlying training run command. If a baseline benchmark command fails on the target GPU/default device, it automatically executes a CPU fallback run (using `--device cpu` and setting `CUDA_VISIBLE_DEVICES=""`) to guarantee execution completion.
