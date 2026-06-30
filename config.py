@@ -19,7 +19,7 @@ class PipelineConfig:
     Default: 'brezemil' (Standard workspace account).
     """
 
-    project: str = "_lightly_train_baseline"  # _smoketests or _lightly_train_baseline
+    project: str = "_smoketests"  # _smoketests or _lightly_train_baseline
     """W&B project name to group related experiment runs and sweeps.
     Default: '_trainer' (Central training workspace project).
     """
@@ -56,7 +56,7 @@ class PipelineConfig:
     # =========================================================================
     # Global Training Constraints & Hyperparameters
     # =========================================================================
-    image_size: int = 1024
+    image_size: int = 160
     """Model input image resolution (height and width in pixels).
     Standard Values:
       - 640 (Standard YOLO and RT-DETR default)
