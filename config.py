@@ -56,7 +56,7 @@ class PipelineConfig:
     # =========================================================================
     # Global Training Constraints & Hyperparameters
     # =========================================================================
-    image_size: int = 640
+    image_size: int = 1024
     """Model input image resolution (height and width in pixels).
     Standard Values:
       - 640 (Standard YOLO and RT-DETR default)
@@ -64,19 +64,19 @@ class PipelineConfig:
         but increases VRAM usage)
     """
 
-    max_sweep_runs: int = 1
+    max_sweep_runs: int = 50
     """Maximum number of random search trials for W&B Sweep Agents to run.
     Default: 1 (Minimal smoketest limit).
     Production Standard: 20 to 50 runs to ensure sufficient parameter search space coverage.
     """
 
-    sweep_epochs: int = 1
+    sweep_epochs: int = 100
     """Number of training epochs to execute for each sweep trial run.
     Default: 1 (Minimal smoketest limit).
     Production Standard: 10 to 30 epochs for rapid HPO, allowing early convergence indicator.
     """
 
-    prod_epochs: int = 1
+    prod_epochs: int = 300
     """Number of training epochs to execute for the final baseline or tuned production runs.
     Default: 1 (Smoketest limit).
     Production Standard: 100 to 300 epochs (full convergence of training).
@@ -117,7 +117,7 @@ class PipelineConfig:
     Smoketest Standard: 0.05 to 0.1 (Speeds up pipeline validation testing).
     """
 
-    amp: bool = False
+    amp: bool = True
     """Enable or disable Automatic Mixed Precision (AMP) training.
     Default: False (Baseline comparability).
     Production Standard: True (Speeds up training and reduces VRAM using FP16/BF16 mixed precision).
