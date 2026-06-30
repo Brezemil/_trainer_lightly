@@ -14,12 +14,12 @@ class PipelineConfig:
     # =========================================================================
     # Weights & Biases (W&B) Core Setup
     # =========================================================================
-    entity: str = "brezo-boku-vienna-org"
+    entity: str = "brezo-boku-vienna"
     """W&B entity name (user or organization account) under which runs are logged.
     Default: 'brezemil' (Standard workspace account).
     """
 
-    project: str = "_trainer"
+    project: str = "_lightly_train_baseline" #_smoketests or _lightly_train_baseline
     """W&B project name to group related experiment runs and sweeps.
     Default: '_trainer' (Central training workspace project).
     """
@@ -89,7 +89,7 @@ class PipelineConfig:
       - -1 or 'cpu' (CPU training fallback)
     """
 
-    batch_size: int = 2
+    batch_size: int = -1
     """Number of images processed per training step (global batch size).
     Default: 2 (VRAM smoketest default).
     Production Standard:
@@ -126,7 +126,7 @@ class PipelineConfig:
     # =========================================================================
     # Stock Training Settings & Directories
     # =========================================================================
-    models: tuple = ("yolo11n.pt", "yolo26n.pt", "rtdetr-l.pt")
+    models: tuple = ("yolo11s.pt", "yolo26s.pt", "rtdetr-l.pt")
     """Baseline models list to execute inside the baseline benchmark suite run.
     Standard values: yolo11n.pt, yolo26n.pt, rtdetr-l.pt (standard comparison across backends).
     """
