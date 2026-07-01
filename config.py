@@ -58,11 +58,7 @@ class PipelineConfig:
     # =========================================================================
     # Global Training Constraints & Hyperparameters
     # =========================================================================
-<<<<<<< Updated upstream
-    image_size: int = 160
-=======
     image_size: int = 160  # 1024
->>>>>>> Stashed changes
     """Model input image resolution (height and width in pixels).
     Standard Values:
       - 640 (Standard YOLO and RT-DETR default)

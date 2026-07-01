@@ -591,6 +591,11 @@ def main() -> None:
                                 f"\n[WARNING] CUDA OOM occurred training {run_name}. Retrying on CPU...",
                                 file=sys.stderr,
                             )
+                            if wandb.run is not None:
+                                try:
+                                    wandb.finish(exit_code=1)
+                                except Exception:
+                                    pass
                             del model
                             gc.collect()
                             if torch.cuda.is_available():
@@ -622,6 +627,13 @@ def main() -> None:
                         else:
                             lightly_model_name = "dinov3/vitl16-ltdetr"
                         hf_weights = get_huggingface_backbone(model_name)
+                    elif model_name.startswith("dinov3/"):
+                        # If a model name is passed like dinov3/vits16 or dinov3/vits16-ltdetr
+                        if "-ltdetr" in model_name:
+                            lightly_model_name = model_name
+                        else:
+                            lightly_model_name = f"{model_name}-ltdetr"
+                        hf_weights = None
                     else:
                         lightly_model_name = LIGHTLY_BASELINE_MAP.get(
                             model_name,
@@ -714,9 +726,9 @@ def main() -> None:
                         data_dict = yaml.safe_load(f)
                     data_dict["format"] = "yolo"
 
-                    # Run lightly train
                     if cfg.entity:
                         os.environ["WANDB_ENTITY"] = cfg.entity
+                    retry_on_cpu = False
                     try:
                         lightly_train.train_object_detection(
                             out=out_path,
@@ -742,32 +754,40 @@ def main() -> None:
                                 f"\n[WARNING] CUDA OOM occurred training {run_name}. Retrying on CPU...",
                                 file=sys.stderr,
                             )
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-                            gc.collect()
-                            if torch.cuda.is_available():
-                                torch.cuda.empty_cache()
-
-                            lightly_train.train_object_detection(
-                                out=out_path,
-                                model=lightly_model_name,
-                                data=data_dict,
-                                steps=epochs,
-                                batch_size=batch_size,
-                                num_workers=workers,
-                                devices="auto",
-                                accelerator="cpu",
-                                precision="32-true",
-                                seed=seed,
-                                overwrite=True,
-                                model_args=model_args,
-                                transform_args=transform_args,
-                                logger_args={
-                                    "wandb": {"project": cfg.project, "name": run_name}
-                                },
-                            )
+                            if wandb.run is not None:
+                                try:
+                                    wandb.finish(exit_code=1)
+                                except Exception:
+                                    pass
+                            retry_on_cpu = True
                         else:
                             raise e
+
+                    if retry_on_cpu:
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+
+                        lightly_train.train_object_detection(
+                            out=out_path,
+                            model=lightly_model_name,
+                            data=data_dict,
+                            steps=epochs,
+                            batch_size=batch_size,
+                            num_workers=workers,
+                            devices="auto",
+                            accelerator="cpu",
+                            precision="32-true",
+                            seed=seed,
+                            overwrite=True,
+                            model_args=model_args,
+                            transform_args=transform_args,
+                            logger_args={
+                                "wandb": {"project": cfg.project, "name": run_name}
+                            },
+                        )
 
                     # Load best checkpoint for validation evaluation
                     best_ckpt = os.path.join(

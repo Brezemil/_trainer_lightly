@@ -90,6 +90,17 @@ def parse_args():
         action="store_true",
         help="Run LightlyTrain DINOv3 ViT-L models (with D-FINE & RT-DETRv2 heads).",
     )
+    parser.add_argument(
+        "--dinov3-sat",
+        action="store_true",
+        help="Run LightlyTrain custom DINOv3 ViT-L satellite-pretrained backbone (sat493m) only.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Run with a single specific random seed (e.g. 42 for a quick smoketest).",
+    )
     return parser.parse_args()
 
 
@@ -102,9 +113,17 @@ def main():
     run_yolo11s = args.yolo11s
     run_rtdetr_l = getattr(args, "rtdetr_l", False)
     run_dinov3_l = args.dinov3_l
+    run_dinov3_sat = args.dinov3_sat
 
     # If no specific flags are selected, run ALL of them by default
-    if not (run_yolo12s or run_yolo26s or run_yolo11s or run_rtdetr_l or run_dinov3_l):
+    if not (
+        run_yolo12s
+        or run_yolo26s
+        or run_yolo11s
+        or run_rtdetr_l
+        or run_dinov3_l
+        or run_dinov3_sat
+    ):
         run_yolo12s = True
         run_yolo26s = True
         run_yolo11s = True
@@ -143,7 +162,7 @@ def main():
     print(f"COCO Metrics Folder: {baseline_eval_dir}")
     print("=" * 70)
 
-    seeds = [42, 100, 999]
+    seeds = [args.seed] if args.seed is not None else [42, 100, 999]
 
     # 1. Train and evaluate YOLO12s, YOLO11s, YOLO26s, RT-DETR-L (Ultralytics backend)
     ultralytics_models = []
@@ -188,6 +207,10 @@ def main():
         lightly_models = [
             "facebook/dinov3-vitl16-pretrain-sat493m",
             "facebook/dinov3-vitl16-pretrain-lvd1689m",
+        ]
+    elif run_dinov3_sat:
+        lightly_models = [
+            "facebook/dinov3-vitl16-pretrain-sat493m",
         ]
 
     if lightly_models:

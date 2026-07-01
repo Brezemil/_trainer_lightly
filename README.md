@@ -213,6 +213,8 @@ The benchmark suite is a robust verification process running a total of **24 ful
 | `--yolo11s` | `bool` | `False` | Limit baseline runs to YOLO11s (using Ultralytics backend). |
 | `--rtdetr-l` | `bool` | `False` | Limit baseline runs to RT-DETR-L (using Ultralytics backend). |
 | `--dinov3-l` | `bool` | `False` | Limit baseline runs to DINOv3 ViT-L models (using LightlyTrain backend). |
+| `--dinov3-sat`| `bool` | `False` | Limit baseline runs to only the custom DINOv3 ViT-L satellite-pretrained backbone (`sat493m`). |
+| `--seed` | `int` | `None` | Override the seeds array to train/evaluate using only a single random seed (e.g. for a quick baseline smoketest). |
 
 > [!NOTE]
 > All benchmark flags are optional and forward their overrides directly to each underlying training run command. If a baseline benchmark command fails on the target GPU/default device, it automatically executes a CPU fallback run (using `--device cpu` and setting `CUDA_VISIBLE_DEVICES=""`) to guarantee execution completion.
@@ -224,6 +226,12 @@ pixi run train-baseline
 
 # Run the benchmark suite on a 10% subset of the dataset with 5 epochs override
 pixi run train-baseline --fraction 0.1 --epochs 5
+
+# Run a quick baseline benchmark smoketest with just one seed (seed 42), 1 epoch, and 5% data fraction
+pixi run train-baseline --seed 42 --epochs 1 --fraction 0.05
+
+# Run only your custom DINO satellite backbone baseline (across 3 seeds)
+pixi run train-baseline --dinov3-sat
 
 # Run a baseline benchmark for only YOLO12s, YOLO26s, YOLO11s, and RT-DETR-L.
 # The evaluation results are automatically computed using pycocotools and 
@@ -326,6 +334,12 @@ pixi run train --model facebook/dinov3-vitl16-pretrain-sat493m --backend lightly
 
 # Explicitly target the RT-DETRv2 decoder head
 pixi run train --model facebook/dinov3-vitl16-pretrain-sat493m --backend lightly --decoder rtdetrv2
+
+# Train a smaller DINOv3 variant (e.g., ViT-S/16) directly via the lightly backend
+pixi run train --model dinov3/vits16-ltdetr-coco --backend lightly
+
+# Train a tiny DINOv3 variant (e.g., ViT-T/16) directly via the lightly backend
+pixi run train --model dinov3/vitt16-ltdetr-coco --backend lightly
 ```
 
 #### Run a Rapid Smoketest (Fast Trial):

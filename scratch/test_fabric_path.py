@@ -1,8 +1,6 @@
 import os
-import io
 import torch
 import lightning_fabric
-import ultralytics
 
 print("Initializing Fabric...")
 fabric = lightning_fabric.Fabric(accelerator="cpu", precision="bf16-mixed")
@@ -15,6 +13,7 @@ os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
 try:
     fabric.save(ckpt_path, state)
     print("Success saving to long path!")
-except Exception as e:
+except Exception:
     import traceback
+
     traceback.print_exc()
