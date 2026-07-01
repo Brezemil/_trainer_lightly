@@ -101,6 +101,12 @@ def parse_args():
         default=None,
         help="Run with a single specific random seed (e.g. 42 for a quick smoketest).",
     )
+    parser.add_argument(
+        "--dino-epochs",
+        type=int,
+        default=None,
+        help="Override the number of training epochs specifically for DINO-based models.",
+    )
     return parser.parse_args()
 
 
@@ -146,6 +152,24 @@ def main():
         forward_args.extend(["--imgsz", str(args.imgsz)])
     if args.tags is not None:
         forward_args.extend(["--tags"] + args.tags)
+
+    # Arguments specific to DINO-based models
+    dino_forward_args = []
+    dino_epochs_val = args.dino_epochs if args.dino_epochs is not None else args.epochs
+    if dino_epochs_val is not None:
+        dino_forward_args.extend(["--epochs", str(dino_epochs_val)])
+    if args.batch is not None:
+        dino_forward_args.extend(["--batch", str(args.batch)])
+    if args.device is not None:
+        dino_forward_args.extend(["--device", str(args.device)])
+    if args.fraction is not None:
+        dino_forward_args.extend(["--fraction", str(args.fraction)])
+    if args.workers is not None:
+        dino_forward_args.extend(["--workers", str(args.workers)])
+    if args.imgsz is not None:
+        dino_forward_args.extend(["--imgsz", str(args.imgsz)])
+    if args.tags is not None:
+        dino_forward_args.extend(["--tags"] + args.tags)
 
     project_root = os.path.dirname(os.path.abspath(__file__))
 
@@ -242,7 +266,7 @@ def main():
                         "--eval-results-dir",
                         baseline_eval_dir,
                     ]
-                    + forward_args
+                    + dino_forward_args
                 )
 
             # Run 2B: D-FINE decoder head combination
@@ -267,7 +291,7 @@ def main():
                         "--eval-results-dir",
                         baseline_eval_dir,
                     ]
-                    + forward_args
+                    + dino_forward_args
                 )
 
     # 3. Aggregate results and plot comparison charts

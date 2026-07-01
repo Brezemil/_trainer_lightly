@@ -215,6 +215,7 @@ The benchmark suite is a robust verification process running a total of **24 ful
 | `--dinov3-l` | `bool` | `False` | Limit baseline runs to DINOv3 ViT-L models (using LightlyTrain backend). |
 | `--dinov3-sat`| `bool` | `False` | Limit baseline runs to only the custom DINOv3 ViT-L satellite-pretrained backbone (`sat493m`). |
 | `--seed` | `int` | `None` | Override the seeds array to train/evaluate using only a single random seed (e.g. for a quick baseline smoketest). |
+| `--dino-epochs` | `int` | `None` | Override the number of training epochs specifically for DINO-based models. |
 
 > [!NOTE]
 > All benchmark flags are optional and forward their overrides directly to each underlying training run command. If a baseline benchmark command fails on the target GPU/default device, it automatically executes a CPU fallback run (using `--device cpu` and setting `CUDA_VISIBLE_DEVICES=""`) to guarantee execution completion.
@@ -226,6 +227,9 @@ pixi run train-baseline
 
 # Run the benchmark suite on a 10% subset of the dataset with 5 epochs override
 pixi run train-baseline --fraction 0.1 --epochs 5
+
+# Run the entire benchmark suite, but override DINO models to train for 80 epochs specifically
+pixi run train-baseline --dino-epochs 80
 
 # Run a quick baseline benchmark smoketest with just one seed (seed 42), 1 epoch, and 5% data fraction
 pixi run train-baseline --seed 42 --epochs 1 --fraction 0.05
@@ -377,4 +381,10 @@ Training on massive geospatial/satellite datasets can be computationally intensi
 > The `--fraction` flag is supported only in training pipelines ([run_training.py](file:///C:/Users/emilb/_trainer_lightly/run_training.py) and forwarded via [run_baseline_benchmark.py](file:///C:/Users/emilb/_trainer_lightly/run_baseline_benchmark.py)). It is **not** supported by [run_evaluation.py](file:///C:/Users/emilb/_trainer_lightly/run_evaluation.py), which always performs evaluation on the full specified dataset split to ensure consistent, comparable metrics.
 
 
+### TL:DR - Important Commands
 
+Quick smoketest before training for real:
+pixi run train-baseline --yolo12s --yolo26s --yolo11s --rtdetr-l --dinov3-l --dinov3-sat --epochs 2 --dino-epochs 2 --fraction 0.01 --imgsz 320 --seed 42 --tags ampTrue smoketest 
+
+real baseline training:
+pixi run train-baseline --yolo12s --yolo26s --yolo11s --rtdetr-l --dinov3-l --dinov3-sat --dino-epochs 100 --tags ampTrue baseline fullset

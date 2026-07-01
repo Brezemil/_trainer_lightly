@@ -18,8 +18,8 @@ from config import PipelineConfig
 
 def load_metrics(eval_dir: str) -> List[Dict[str, Any]]:
     """Loads all COCO metrics JSON files from the evaluation results directory."""
-    pattern = os.path.join(eval_dir, "*_coco_metrics.json")
-    files = glob.glob(pattern)
+    pattern = os.path.join(eval_dir, "**", "*_coco_metrics.json")
+    files = glob.glob(pattern, recursive=True)
 
     results = []
     for filepath in files:

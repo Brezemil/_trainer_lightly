@@ -58,7 +58,7 @@ class PipelineConfig:
     # =========================================================================
     # Global Training Constraints & Hyperparameters
     # =========================================================================
-    image_size: int = 160  # 1024
+    image_size: int = 1024
     """Model input image resolution (height and width in pixels).
     Standard Values:
       - 640 (Standard YOLO and RT-DETR default)
@@ -91,7 +91,7 @@ class PipelineConfig:
       - -1 or 'cpu' (CPU training fallback)
     """
 
-    batch_size: int = -1
+    batch_size: int = 2
     """Number of images processed per training step (global batch size).
     Default: 2 (VRAM smoketest default).
     Production Standard:
