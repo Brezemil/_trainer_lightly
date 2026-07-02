@@ -239,7 +239,7 @@ def main() -> None:
                 elif "vitt16" in model_variant:
                     lightly_model_name = "dinov3/vitt16-ltdetr"
                 elif "sat493m" in model_variant:
-                    lightly_model_name = "dinov3/vitl16-sat493m-ltdetr"
+                    lightly_model_name = "dinov3/vitl16-ltdetr"
                 else:
                     lightly_model_name = "dinov3/vitl16-ltdetr"
                 hf_weights = get_huggingface_backbone(model_variant)
@@ -336,7 +336,9 @@ def main() -> None:
                     out_run_dir, "exported_models", "exported_last.pt"
                 )
 
-            eval_model = lightly_train.load_model(best_ckpt)
+            from eval_utils import safe_load_model
+
+            eval_model = safe_load_model(best_ckpt)
 
         # 4. Strict COCO Evaluation
         eval_batch_size = (

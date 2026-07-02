@@ -140,6 +140,35 @@ def generate_coco_gt(dataset_yaml_path: str, split: str, save_path: str) -> str:
     return save_path
 
 
+def safe_load_model(
+    model_path: Any,
+    device: Any = None,
+) -> Any:
+    """Safely loads a lightly_train model from checkpoint, fixing custom backbone config issues (e.g. DINOv3 SAT-493M)."""
+    import torch
+    from lightly_train._task_models.task_model_helpers import (
+        _resolve_device,
+        init_model_from_checkpoint,
+    )
+
+    device = _resolve_device(device)
+    ckpt = torch.load(model_path, weights_only=False, map_location=device)
+
+    # Bugfix: If it's a DINOv3 SAT-493M checkpoint, ensure backbone_args.is_sat493m_weights is set to True.
+    # This prevents RuntimeError: Unexpected key(s) in state_dict: "backbone.dinov3.local_cls_norm.weight"...
+    if "sat493m" in str(model_path).lower():
+        if "model_init_args" in ckpt:
+            if (
+                "backbone_args" not in ckpt["model_init_args"]
+                or ckpt["model_init_args"]["backbone_args"] is None
+            ):
+                ckpt["model_init_args"]["backbone_args"] = {}
+            ckpt["model_init_args"]["backbone_args"]["is_sat493m_weights"] = True
+
+    model_instance = init_model_from_checkpoint(checkpoint=ckpt, device=device)
+    return model_instance
+
+
 def evaluate_model_coco(
     model_path_or_model: Any,
     dataset_yaml_path: str,
@@ -212,9 +241,7 @@ def evaluate_model_coco(
             "exported_best.pt" in model_path_or_model
             or "exported_last.pt" in model_path_or_model
         ):
-            import lightly_train
-
-            model = lightly_train.load_model(model_path_or_model)
+            model = safe_load_model(model_path_or_model, device=device)
             is_yolo_fw = False
         elif "yolo" in model_name.lower() or "rtdetr" in model_name.lower():
             if "rtdetr" in model_name.lower() and "dinov3" not in model_path_or_model:
@@ -228,10 +255,8 @@ def evaluate_model_coco(
             is_yolo_fw = True
         else:
             # Try loading with lightly
-            import lightly_train
-
             try:
-                model = lightly_train.load_model(model_path_or_model)
+                model = safe_load_model(model_path_or_model, device=device)
                 is_yolo_fw = False
             except Exception:
                 from ultralytics import YOLO

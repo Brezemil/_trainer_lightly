@@ -648,7 +648,7 @@ def main() -> None:
                         elif "vitt16" in model_name:
                             lightly_model_name = "dinov3/vitt16-ltdetr"
                         elif "sat493m" in model_name:
-                            lightly_model_name = "dinov3/vitl16-sat493m-ltdetr"
+                            lightly_model_name = "dinov3/vitl16-ltdetr"
                         else:
                             lightly_model_name = "dinov3/vitl16-ltdetr"
                         hf_weights = get_huggingface_backbone(model_name)
@@ -834,9 +834,9 @@ def main() -> None:
                             out_path, "exported_models", "exported_last.pt"
                         )
 
-                    import lightly_train as lt
+                    from eval_utils import safe_load_model
 
-                    eval_model = lt.load_model(best_ckpt)
+                    eval_model = safe_load_model(best_ckpt)
 
                 # 4. Strict Evaluation
                 eval_batch_size = (
