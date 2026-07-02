@@ -156,6 +156,8 @@ def safe_load_model(
 
     # Bugfix: If it's a DINOv3 SAT-493M checkpoint, ensure backbone_args.is_sat493m_weights is set to True.
     # This prevents RuntimeError: Unexpected key(s) in state_dict: "backbone.dinov3.local_cls_norm.weight"...
+    patched = False
+    original_init = None
     if "sat493m" in str(model_path).lower():
         if "model_init_args" in ckpt:
             if (
@@ -166,7 +168,40 @@ def safe_load_model(
             ckpt["model_init_args"]["backbone_args"]["is_sat493m_weights"] = True
             ckpt["model_init_args"]["backbone_args"]["weights"] = "sat493m"
 
-    model_instance = init_model_from_checkpoint(checkpoint=ckpt, device=device)
+        # Monkeypatch DinoVisionTransformer.__init__ to force untie_global_and_local_cls_norm=True
+        # when loading a SAT-493M backbone checkpoint (since load_weights=False overrides weights to None).
+        try:
+            from lightly_train._models.dinov3.dinov3_src.models.vision_transformer import (
+                DinoVisionTransformer,
+            )
+
+            original_init = DinoVisionTransformer.__init__
+
+            def patched_init(self, *args, **kwargs):
+                if (
+                    kwargs.get("is_sat493m_weights")
+                    or "sat493m" in str(kwargs.get("weights", "")).lower()
+                ):
+                    kwargs["untie_global_and_local_cls_norm"] = True
+                original_init(self, *args, **kwargs)
+
+            DinoVisionTransformer.__init__ = patched_init
+            patched = True
+        except Exception as e:
+            print(f"Warning: Failed to patch DinoVisionTransformer for SAT-493M: {e}")
+
+    try:
+        model_instance = init_model_from_checkpoint(checkpoint=ckpt, device=device)
+    finally:
+        if patched and original_init is not None:
+            try:
+                from lightly_train._models.dinov3.dinov3_src.models.vision_transformer import (
+                    DinoVisionTransformer,
+                )
+
+                DinoVisionTransformer.__init__ = original_init
+            except Exception:
+                pass
     return model_instance
 
 
