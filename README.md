@@ -384,6 +384,7 @@ Training on massive geospatial/satellite datasets can be computationally intensi
 ### TL:DR - Important Commands
 Final AMP check
 pixi run train-baseline --yolo11s --seed 42 --tags ampFalse culledset
+pixi run eval --model yolo11s.pt --seed 42 --upload-wandb #broken of run eval
 
 Quick smoketest before training for real:
 pixi run train-baseline --yolo12n --yolo26n --yolo11n --yolo12s --yolo26s --yolo11s --rtdetr-l --dinov3-l --dinov3-sat --epochs 2 --dino-epochs 2 --fraction 0.01 --imgsz 320 --seed 42 --tags ampTrue smoketest 
