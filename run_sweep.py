@@ -232,7 +232,16 @@ def main() -> None:
             import lightly_train
 
             if model_variant.startswith("facebook/"):
-                lightly_model_name = "dinov3/vitl16-ltdetr"
+                if "vits16" in model_variant:
+                    lightly_model_name = "dinov3/vits16-ltdetr"
+                elif "vitb16" in model_variant:
+                    lightly_model_name = "dinov3/vitb16-ltdetr"
+                elif "vitt16" in model_variant:
+                    lightly_model_name = "dinov3/vitt16-ltdetr"
+                elif "sat493m" in model_variant:
+                    lightly_model_name = "dinov3/vitl16-sat493m-ltdetr"
+                else:
+                    lightly_model_name = "dinov3/vitl16-ltdetr"
                 hf_weights = get_huggingface_backbone(model_variant)
             else:
                 lightly_model_name = LIGHTLY_BASELINE_MAP.get(
@@ -264,6 +273,8 @@ def main() -> None:
                 model_args["scheduler_no_aug_steps"] = 0
             if hf_weights:
                 model_args["backbone_weights"] = hf_weights
+            if "sat493m" in model_variant:
+                model_args["backbone_args"] = {"is_sat493m_weights": True}
 
             transform_args = {
                 "image_size": (imgsz, imgsz),

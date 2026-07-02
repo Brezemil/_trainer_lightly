@@ -647,6 +647,8 @@ def main() -> None:
                             lightly_model_name = "dinov3/vitb16-ltdetr"
                         elif "vitt16" in model_name:
                             lightly_model_name = "dinov3/vitt16-ltdetr"
+                        elif "sat493m" in model_name:
+                            lightly_model_name = "dinov3/vitl16-sat493m-ltdetr"
                         else:
                             lightly_model_name = "dinov3/vitl16-ltdetr"
                         hf_weights = get_huggingface_backbone(model_name)
