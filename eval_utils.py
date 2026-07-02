@@ -140,6 +140,71 @@ def generate_coco_gt(dataset_yaml_path: str, split: str, save_path: str) -> str:
     return save_path
 
 
+def safe_load_model(
+    model_path: Any,
+    device: Any = None,
+) -> Any:
+    """Safely loads a lightly_train model from checkpoint, fixing custom backbone config issues (e.g. DINOv3 SAT-493M)."""
+    import torch
+    from lightly_train._task_models.task_model_helpers import (
+        _resolve_device,
+        init_model_from_checkpoint,
+    )
+
+    device = _resolve_device(device)
+    ckpt = torch.load(model_path, weights_only=False, map_location=device)
+
+    # Bugfix: If it's a DINOv3 SAT-493M checkpoint, ensure backbone_args.is_sat493m_weights is set to True.
+    # This prevents RuntimeError: Unexpected key(s) in state_dict: "backbone.dinov3.local_cls_norm.weight"...
+    patched = False
+    original_init = None
+    if "sat493m" in str(model_path).lower():
+        if "model_init_args" in ckpt:
+            if (
+                "backbone_args" not in ckpt["model_init_args"]
+                or ckpt["model_init_args"]["backbone_args"] is None
+            ):
+                ckpt["model_init_args"]["backbone_args"] = {}
+            ckpt["model_init_args"]["backbone_args"]["is_sat493m_weights"] = True
+            ckpt["model_init_args"]["backbone_args"]["weights"] = "sat493m"
+
+        # Monkeypatch DinoVisionTransformer.__init__ to force untie_global_and_local_cls_norm=True
+        # when loading a SAT-493M backbone checkpoint (since load_weights=False overrides weights to None).
+        try:
+            from lightly_train._models.dinov3.dinov3_src.models.vision_transformer import (
+                DinoVisionTransformer,
+            )
+
+            original_init = DinoVisionTransformer.__init__
+
+            def patched_init(self, *args, **kwargs):
+                if (
+                    kwargs.get("is_sat493m_weights")
+                    or "sat493m" in str(kwargs.get("weights", "")).lower()
+                ):
+                    kwargs["untie_global_and_local_cls_norm"] = True
+                original_init(self, *args, **kwargs)
+
+            DinoVisionTransformer.__init__ = patched_init
+            patched = True
+        except Exception as e:
+            print(f"Warning: Failed to patch DinoVisionTransformer for SAT-493M: {e}")
+
+    try:
+        model_instance = init_model_from_checkpoint(checkpoint=ckpt, device=device)
+    finally:
+        if patched and original_init is not None:
+            try:
+                from lightly_train._models.dinov3.dinov3_src.models.vision_transformer import (
+                    DinoVisionTransformer,
+                )
+
+                DinoVisionTransformer.__init__ = original_init
+            except Exception:
+                pass
+    return model_instance
+
+
 def evaluate_model_coco(
     model_path_or_model: Any,
     dataset_yaml_path: str,
@@ -212,9 +277,7 @@ def evaluate_model_coco(
             "exported_best.pt" in model_path_or_model
             or "exported_last.pt" in model_path_or_model
         ):
-            import lightly_train
-
-            model = lightly_train.load_model(model_path_or_model)
+            model = safe_load_model(model_path_or_model, device=device)
             is_yolo_fw = False
         elif "yolo" in model_name.lower() or "rtdetr" in model_name.lower():
             if "rtdetr" in model_name.lower() and "dinov3" not in model_path_or_model:
@@ -228,10 +291,8 @@ def evaluate_model_coco(
             is_yolo_fw = True
         else:
             # Try loading with lightly
-            import lightly_train
-
             try:
-                model = lightly_train.load_model(model_path_or_model)
+                model = safe_load_model(model_path_or_model, device=device)
                 is_yolo_fw = False
             except Exception:
                 from ultralytics import YOLO
@@ -531,6 +592,8 @@ def evaluate_model_coco(
     if len(mapped_preds) == 0:
         print("Warning: No predictions found, creating dummy evaluator results.")
         stats = [0.0] * 12
+        ap30 = 0.0
+        ap40 = 0.0
     else:
         coco_dt = coco_gt.loadRes(pred_file)
         coco_eval = COCOeval(coco_gt, coco_dt, iouType="bbox")
@@ -538,6 +601,31 @@ def evaluate_model_coco(
         coco_eval.accumulate()
         coco_eval.summarize()
         stats = list(coco_eval.stats)
+
+        # Compute AP30 and AP40 using custom evaluator
+        import numpy as np
+
+        coco_eval_custom = COCOeval(coco_gt, coco_dt, iouType="bbox")
+        coco_eval_custom.params.iouThrs = np.array([0.3, 0.4])
+        coco_eval_custom.evaluate()
+        coco_eval_custom.accumulate()
+        precision = coco_eval_custom.eval["precision"]
+
+        # dims: [iouThrs, recThrs, cls, areas, maxDets]
+        # area range 'all' index 0, maxDets 100 index 2
+        s_30 = precision[0, :, :, 0, 2]
+        s_40 = precision[1, :, :, 0, 2]
+
+        ap30 = float(np.mean(s_30[s_30 > -1])) if len(s_30[s_30 > -1]) > 0 else 0.0
+        ap40 = float(np.mean(s_40[s_40 > -1])) if len(s_40[s_40 > -1]) > 0 else 0.0
+
+        # Display the custom metrics
+        print(
+            f" Average Precision  (AP) @[ IoU=0.30      | area=   all | maxDets=100 ] = {ap30:.3f}"
+        )
+        print(
+            f" Average Precision  (AP) @[ IoU=0.40      | area=   all | maxDets=100 ] = {ap40:.3f}"
+        )
 
     # Save metrics JSON in original format
     metrics = {
@@ -550,6 +638,8 @@ def evaluate_model_coco(
             "AP": stats[0],
             "AP50": stats[1],
             "AP75": stats[2],
+            "AP30": ap30,
+            "AP40": ap40,
             "AP_small": stats[3],
             "AP_medium": stats[4],
             "AP_large": stats[5],
@@ -665,8 +755,18 @@ def get_huggingface_backbone(model_id: str) -> str:
     pt_path = os.path.join(cache_dir, f"{repo_clean}.pt")
 
     if os.path.exists(pt_path):
-        print(f"Loaded converted PyTorch weights from cache: {pt_path}")
-        return pt_path
+        try:
+            # Check if cached checkpoint is complete (e.g., has local_cls_norm keys for sat493m)
+            sd_check = torch.load(pt_path, map_location="cpu", weights_only=True)
+            if "sat493m" in model_id and "local_cls_norm.weight" not in sd_check:
+                print(
+                    f"Cached weights at {pt_path} are missing required keys for sat493m. Re-converting..."
+                )
+            else:
+                print(f"Loaded converted PyTorch weights from cache: {pt_path}")
+                return pt_path
+        except Exception as e:
+            print(f"Error loading cached weights: {e}. Re-converting...")
 
     print(f"Downloading {model_id} from Hugging Face...")
     safetensors_path = os.path.join(cache_dir, f"{repo_clean}.safetensors")

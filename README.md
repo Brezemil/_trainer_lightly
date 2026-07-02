@@ -382,9 +382,22 @@ Training on massive geospatial/satellite datasets can be computationally intensi
 
 
 ### TL:DR - Important Commands
+Final AMP check
+pixi run train-baseline --yolo11s --seed 42 --tags ampFalse culledset
 
 Quick smoketest before training for real:
-pixi run train-baseline --yolo12s --yolo26s --yolo11s --rtdetr-l --dinov3-l --dinov3-sat --epochs 2 --dino-epochs 2 --fraction 0.01 --imgsz 320 --seed 42 --tags ampTrue smoketest 
+pixi run train-baseline --yolo12n --yolo26n --yolo11n --yolo12s --yolo26s --yolo11s --rtdetr-l --dinov3-l --dinov3-sat --epochs 2 --dino-epochs 2 --fraction 0.01 --imgsz 320 --seed 42 --tags ampTrue smoketest 
 
-real baseline training:
-pixi run train-baseline --yolo12s --yolo26s --yolo11s --rtdetr-l --dinov3-l --dinov3-sat --dino-epochs 100 --tags ampTrue baseline fullset
+Dino Smoketest:
+pixi run train-baseline --dinov3-l --dinov3-sat --dino-epochs 1 --imgsz 320 --seed 42 --tags ampTrue smoketest 
+
+real baseline training with nano:
+pixi run train-baseline --yolo12n --yolo12s --yolo26s --yolo26n --yolo11s --yolo11n --rtdetr-l --dinov3-l --dinov3-sat --tags ampTrue baseline fullset
+
+real baseline training without nano:
+pixi run train-baseline --yolo12s --yolo26s --yolo11s --rtdetr-l --dinov3-l --dinov3-sat --tags ampTrue baseline fullset
+
+quick runs on culledset/fullset:
+pixi run train-baseline --yolo12n --yolo26n --yolo11n --tags ampTrue baseline culledset
+
+

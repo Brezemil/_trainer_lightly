@@ -60,9 +60,11 @@ def group_and_aggregate(
             model_base = run_name
 
         if model_base not in grouped_data:
-            grouped_data[model_base] = {metric: [] for metric in r["metrics"].keys()}
+            grouped_data[model_base] = {}
 
         for metric_name, val in r["metrics"].items():
+            if metric_name not in grouped_data[model_base]:
+                grouped_data[model_base][metric_name] = []
             grouped_data[model_base][metric_name].append(val)
 
     # Calculate stats
@@ -430,13 +432,22 @@ def generate_markdown_summary(
         "This table aggregates the strict pycocotools AP/AR metrics computed on the test split.",
         "Scores are reported as **Mean ± Standard Error of the Mean (SEM)** across the configured seeds.",
         "",
-        "| Model Variant | Runs | mAP@0.50:0.95 | mAP@0.50 | mAP@0.75 | AP (Small) | AP (Medium) | AP (Large) | AR@100 |",
-        "| :--- | :---: | :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
+        "| Model Variant | Runs | mAP@0.50:0.95 | mAP@0.30 | mAP@0.40 | mAP@0.50 | mAP@0.75 | AP (Small) | AP (Medium) | AP (Large) | AR@100 |",
+        "| :--- | :---: | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |",
     ]
 
     for m in models:
         count = stats[m]["AP"]["count"]
         ap = f"{stats[m]['AP']['mean']:.5f} ± {stats[m]['AP']['sem']:.5f}"
+
+        ap30 = "N/A"
+        if "AP30" in stats[m] and stats[m]["AP30"]["count"] > 0:
+            ap30 = f"{stats[m]['AP30']['mean']:.5f} ± {stats[m]['AP30']['sem']:.5f}"
+
+        ap40 = "N/A"
+        if "AP40" in stats[m] and stats[m]["AP40"]["count"] > 0:
+            ap40 = f"{stats[m]['AP40']['mean']:.5f} ± {stats[m]['AP40']['sem']:.5f}"
+
         ap50 = f"{stats[m]['AP50']['mean']:.5f} ± {stats[m]['AP50']['sem']:.5f}"
         ap75 = f"{stats[m]['AP75']['mean']:.5f} ± {stats[m]['AP75']['sem']:.5f}"
         ap_s = f"{stats[m]['AP_small']['mean']:.5f} ± {stats[m]['AP_small']['sem']:.5f}"
@@ -449,7 +460,7 @@ def generate_markdown_summary(
         )
 
         lines.append(
-            f"| {m} | {count} | {ap} | {ap50} | {ap75} | {ap_s} | {ap_m} | {ap_l} | {ar100} |"
+            f"| {m} | {count} | {ap} | {ap30} | {ap40} | {ap50} | {ap75} | {ap_s} | {ap_m} | {ap_l} | {ar100} |"
         )
 
     summary_path = os.path.join(save_dir, "evaluation_summary.md")

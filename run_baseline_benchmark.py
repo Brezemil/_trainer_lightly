@@ -68,6 +68,12 @@ def parse_args():
         "--fraction", type=float, default=None, help="Override dataset fraction."
     )
     parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        help="Override dataset.yaml configuration file path.",
+    )
+    parser.add_argument(
         "--workers", type=int, default=None, help="Override dataloader workers."
     )
     parser.add_argument("--imgsz", type=int, default=None, help="Override image size.")
@@ -79,8 +85,11 @@ def parse_args():
         help="List of tags to assign to the Weights & Biases runs.",
     )
     # Model selection flags
+    parser.add_argument("--yolo12n", action="store_true", help="Run YOLOv12n baseline.")
     parser.add_argument("--yolo12s", action="store_true", help="Run YOLOv12s baseline.")
+    parser.add_argument("--yolo26n", action="store_true", help="Run YOLO26n baseline.")
     parser.add_argument("--yolo26s", action="store_true", help="Run YOLO26s baseline.")
+    parser.add_argument("--yolo11n", action="store_true", help="Run YOLO11n baseline.")
     parser.add_argument("--yolo11s", action="store_true", help="Run YOLO11s baseline.")
     parser.add_argument(
         "--rtdetr-l", action="store_true", help="Run RT-DETR-L baseline."
@@ -107,6 +116,12 @@ def parse_args():
         default=None,
         help="Override the number of training epochs specifically for DINO-based models.",
     )
+    parser.add_argument(
+        "--amp",
+        type=str,
+        default=None,
+        help="Enable/disable Automatic Mixed Precision (AMP) (True/False).",
+    )
     return parser.parse_args()
 
 
@@ -114,8 +129,11 @@ def main():
     args = parse_args()
 
     # Determine which models to run
+    run_yolo12n = args.yolo12n
     run_yolo12s = args.yolo12s
+    run_yolo26n = args.yolo26n
     run_yolo26s = args.yolo26s
+    run_yolo11n = args.yolo11n
     run_yolo11s = args.yolo11s
     run_rtdetr_l = getattr(args, "rtdetr_l", False)
     run_dinov3_l = args.dinov3_l
@@ -123,8 +141,11 @@ def main():
 
     # If no specific flags are selected, run ALL of them by default
     if not (
-        run_yolo12s
+        run_yolo12n
+        or run_yolo12s
+        or run_yolo26n
         or run_yolo26s
+        or run_yolo11n
         or run_yolo11s
         or run_rtdetr_l
         or run_dinov3_l
@@ -152,6 +173,10 @@ def main():
         forward_args.extend(["--imgsz", str(args.imgsz)])
     if args.tags is not None:
         forward_args.extend(["--tags"] + args.tags)
+    if args.amp is not None:
+        forward_args.extend(["--amp", args.amp])
+    if args.dataset is not None:
+        forward_args.extend(["--dataset", args.dataset])
 
     # Arguments specific to DINO-based models
     dino_forward_args = []
@@ -170,6 +195,10 @@ def main():
         dino_forward_args.extend(["--imgsz", str(args.imgsz)])
     if args.tags is not None:
         dino_forward_args.extend(["--tags"] + args.tags)
+    if args.amp is not None:
+        dino_forward_args.extend(["--amp", args.amp])
+    if args.dataset is not None:
+        dino_forward_args.extend(["--dataset", args.dataset])
 
     project_root = os.path.dirname(os.path.abspath(__file__))
 
@@ -190,10 +219,16 @@ def main():
 
     # 1. Train and evaluate YOLO12s, YOLO11s, YOLO26s, RT-DETR-L (Ultralytics backend)
     ultralytics_models = []
+    if run_yolo11n:
+        ultralytics_models.append("yolo11n.pt")
     if run_yolo11s:
         ultralytics_models.append("yolo11s.pt")
+    if run_yolo26n:
+        ultralytics_models.append("yolo26n.pt")
     if run_yolo26s:
         ultralytics_models.append("yolo26s.pt")
+    if run_yolo12n:
+        ultralytics_models.append("yolo12n.pt")
     if run_yolo12s:
         ultralytics_models.append("yolo12s.pt")
     if run_rtdetr_l:

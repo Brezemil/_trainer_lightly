@@ -100,7 +100,10 @@ def main() -> None:
     # 1. Setup shared/fixed arguments
     imgsz = cfg.image_size
     epochs = cfg.sweep_epochs
-    batch_size = cfg.batch_size
+
+    # Resolve model-specific batch size and patience
+    _, model_patience, model_batch_size = cfg.get_model_params(model_variant, backend)
+    batch_size = model_batch_size
     device = cfg.device
 
     # For lightly backend, batch_size=-1 (auto-batching) is not supported.
@@ -172,6 +175,8 @@ def main() -> None:
                 "exist_ok": True,
                 "amp": amp,
             }
+            if model_patience is not None:
+                train_kwargs["patience"] = model_patience
             if cfg.fixed_loss:
                 train_kwargs.update(cfg.fixed_loss)
 
@@ -227,7 +232,16 @@ def main() -> None:
             import lightly_train
 
             if model_variant.startswith("facebook/"):
-                lightly_model_name = "dinov3/vitl16-ltdetr"
+                if "vits16" in model_variant:
+                    lightly_model_name = "dinov3/vits16-ltdetr"
+                elif "vitb16" in model_variant:
+                    lightly_model_name = "dinov3/vitb16-ltdetr"
+                elif "vitt16" in model_variant:
+                    lightly_model_name = "dinov3/vitt16-ltdetr"
+                elif "sat493m" in model_variant:
+                    lightly_model_name = "dinov3/vitl16-ltdetr"
+                else:
+                    lightly_model_name = "dinov3/vitl16-ltdetr"
                 hf_weights = get_huggingface_backbone(model_variant)
             else:
                 lightly_model_name = LIGHTLY_BASELINE_MAP.get(
@@ -259,6 +273,8 @@ def main() -> None:
                 model_args["scheduler_no_aug_steps"] = 0
             if hf_weights:
                 model_args["backbone_weights"] = hf_weights
+            if "sat493m" in model_variant:
+                model_args["backbone_args"] = {"is_sat493m_weights": True}
 
             transform_args = {
                 "image_size": (imgsz, imgsz),
@@ -320,7 +336,9 @@ def main() -> None:
                     out_run_dir, "exported_models", "exported_last.pt"
                 )
 
-            eval_model = lightly_train.load_model(best_ckpt)
+            from eval_utils import safe_load_model
+
+            eval_model = safe_load_model(best_ckpt)
 
         # 4. Strict COCO Evaluation
         eval_batch_size = (
