@@ -79,7 +79,13 @@ def parse_args() -> argparse.Namespace:
         "--fraction",
         type=float,
         default=None,
-        help="Override the fraction of dataset to train on (e.g. 0.01 for 1%% of data).",
+        help="Override the fraction of dataset to train on (e.g. 0.01 for 1% of data).",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        help="Override the dataset.yaml configuration file path.",
     )
     parser.add_argument(
         "--runs-dir",
@@ -370,17 +376,16 @@ def main() -> None:
             )
 
     # 1. Dataset fraction management
+    dataset_path = args.dataset if args.dataset is not None else cfg.dataset_path
     temp_subset_dir = ""
     if fraction < 1.0:
         temp_subset_dir = os.path.join(runs_dir, "temp_subset")
-        dataset_path = prepare_subset_dataset(
-            cfg.dataset_path, fraction, temp_subset_dir
-        )
+        dataset_path = prepare_subset_dataset(dataset_path, fraction, temp_subset_dir)
         print(
             f"Created temporary subset dataset at {dataset_path} containing {fraction * 100}% of files."
         )
     else:
-        dataset_path = cfg.dataset_path
+        dataset_path = args.dataset if args.dataset is not None else cfg.dataset_path
 
     # Warn if deimv2 is referenced
     for m in models_to_train:

@@ -68,6 +68,12 @@ def parse_args():
         "--fraction", type=float, default=None, help="Override dataset fraction."
     )
     parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        help="Override dataset.yaml configuration file path.",
+    )
+    parser.add_argument(
         "--workers", type=int, default=None, help="Override dataloader workers."
     )
     parser.add_argument("--imgsz", type=int, default=None, help="Override image size.")
@@ -169,6 +175,8 @@ def main():
         forward_args.extend(["--tags"] + args.tags)
     if args.amp is not None:
         forward_args.extend(["--amp", args.amp])
+    if args.dataset is not None:
+        forward_args.extend(["--dataset", args.dataset])
 
     # Arguments specific to DINO-based models
     dino_forward_args = []
@@ -189,6 +197,8 @@ def main():
         dino_forward_args.extend(["--tags"] + args.tags)
     if args.amp is not None:
         dino_forward_args.extend(["--amp", args.amp])
+    if args.dataset is not None:
+        dino_forward_args.extend(["--dataset", args.dataset])
 
     project_root = os.path.dirname(os.path.abspath(__file__))
 
