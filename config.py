@@ -19,7 +19,7 @@ class PipelineConfig:
     Default: 'brezemil' (Standard workspace account).
     """
 
-    project: str = "_smoketests"  # _smoketests or _lightly_train_baseline
+    project: str = "_lightly_train_baseline"  # _smoketests or _lightly_train_baseline
     """W&B project name to group related experiment runs and sweeps.
     Default: '_trainer' (Central training workspace project).
     """
@@ -91,7 +91,7 @@ class PipelineConfig:
       - -1 or 'cpu' (CPU training fallback)
     """
 
-    batch_size: int = 2
+    batch_size: int = 4
     """Number of images processed per training step (global batch size).
     Default: 2 (VRAM smoketest default).
     Production Standard:
@@ -119,7 +119,7 @@ class PipelineConfig:
     Smoketest Standard: 0.05 to 0.1 (Speeds up pipeline validation testing).
     """
 
-    amp: bool = True
+    amp: bool = False
     """Enable or disable Automatic Mixed Precision (AMP) training.
     Default: False (Baseline comparability).
     Production Standard: True (Speeds up training and reduces VRAM using FP16/BF16 mixed precision).
