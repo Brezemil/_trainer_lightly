@@ -531,6 +531,8 @@ def evaluate_model_coco(
     if len(mapped_preds) == 0:
         print("Warning: No predictions found, creating dummy evaluator results.")
         stats = [0.0] * 12
+        ap30 = 0.0
+        ap40 = 0.0
     else:
         coco_dt = coco_gt.loadRes(pred_file)
         coco_eval = COCOeval(coco_gt, coco_dt, iouType="bbox")
@@ -538,6 +540,31 @@ def evaluate_model_coco(
         coco_eval.accumulate()
         coco_eval.summarize()
         stats = list(coco_eval.stats)
+
+        # Compute AP30 and AP40 using custom evaluator
+        import numpy as np
+
+        coco_eval_custom = COCOeval(coco_gt, coco_dt, iouType="bbox")
+        coco_eval_custom.params.iouThrs = np.array([0.3, 0.4])
+        coco_eval_custom.evaluate()
+        coco_eval_custom.accumulate()
+        precision = coco_eval_custom.eval["precision"]
+
+        # dims: [iouThrs, recThrs, cls, areas, maxDets]
+        # area range 'all' index 0, maxDets 100 index 2
+        s_30 = precision[0, :, :, 0, 2]
+        s_40 = precision[1, :, :, 0, 2]
+
+        ap30 = float(np.mean(s_30[s_30 > -1])) if len(s_30[s_30 > -1]) > 0 else 0.0
+        ap40 = float(np.mean(s_40[s_40 > -1])) if len(s_40[s_40 > -1]) > 0 else 0.0
+
+        # Display the custom metrics
+        print(
+            f" Average Precision  (AP) @[ IoU=0.30      | area=   all | maxDets=100 ] = {ap30:.3f}"
+        )
+        print(
+            f" Average Precision  (AP) @[ IoU=0.40      | area=   all | maxDets=100 ] = {ap40:.3f}"
+        )
 
     # Save metrics JSON in original format
     metrics = {
@@ -550,6 +577,8 @@ def evaluate_model_coco(
             "AP": stats[0],
             "AP50": stats[1],
             "AP75": stats[2],
+            "AP30": ap30,
+            "AP40": ap40,
             "AP_small": stats[3],
             "AP_medium": stats[4],
             "AP_large": stats[5],
