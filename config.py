@@ -84,6 +84,36 @@ class PipelineConfig:
     Production Standard: 100 to 300 epochs (full convergence of training).
     """
 
+    # -------------------------------------------------------------------------
+    # Model-Specific Configuration (YOLO, RT-DETR, DINO)
+    # -------------------------------------------------------------------------
+    yolo_epochs: int = 300
+    """Default training epochs for YOLO-based models."""
+
+    yolo_patience: int = 100
+    """Default training patience (early stopping) for YOLO-based models."""
+
+    yolo_batch_size: int = 16
+    """Default batch size for YOLO-based models."""
+
+    rtdetr_epochs: int = 300
+    """Default training epochs for RT-DETR models."""
+
+    rtdetr_patience: int = 100
+    """Default training patience (early stopping) for RT-DETR models."""
+
+    rtdetr_batch_size: int = 4
+    """Default batch size for RT-DETR models."""
+
+    dino_epochs: int = 118314
+    """Default training steps (acting as epochs) for DINO-based models in lightly_train."""
+
+    dino_patience: int | None = None
+    """Default training patience for DINO-based models (None because lightly_train does not support early stopping)."""
+
+    dino_batch_size: int = 2
+    """Default batch size for DINO-based models."""
+
     device: int = 0
     """Target GPU device index to execute PyTorch training on.
     Standard Values:
@@ -119,7 +149,7 @@ class PipelineConfig:
     Smoketest Standard: 0.05 to 0.1 (Speeds up pipeline validation testing).
     """
 
-    amp: bool = False
+    amp: bool = True
     """Enable or disable Automatic Mixed Precision (AMP) training.
     Default: False (Baseline comparability).
     Production Standard: True (Speeds up training and reduces VRAM using FP16/BF16 mixed precision).
@@ -243,6 +273,32 @@ class PipelineConfig:
             self.eval_results_dir = os.path.abspath(
                 os.path.join(root_dir, self.eval_results_dir)
             )
+
+    @staticmethod
+    def get_model_type(model_name: str, backend: str | None = None) -> str:
+        """Classify the model type into 'yolo', 'rtdetr', or 'dino' based on model name and backend."""
+        name_lower = model_name.lower()
+        if "yolo" in name_lower:
+            return "yolo"
+        elif "rtdetr" in name_lower:
+            if backend == "lightly":
+                return "dino"
+            return "rtdetr"
+        elif "dino" in name_lower or name_lower.startswith("facebook/"):
+            return "dino"
+        return "yolo"  # default fallback
+
+    def get_model_params(
+        self, model_name: str, backend: str | None = None
+    ) -> tuple[int, int | None, int]:
+        """Returns (epochs, patience, batch_size) for the given model and backend."""
+        m_type = self.get_model_type(model_name, backend)
+        if m_type == "yolo":
+            return self.yolo_epochs, self.yolo_patience, self.yolo_batch_size
+        elif m_type == "rtdetr":
+            return self.rtdetr_epochs, self.rtdetr_patience, self.rtdetr_batch_size
+        else:  # dino
+            return self.dino_epochs, self.dino_patience, self.dino_batch_size
 
     @staticmethod
     def get_best_sweep_config(sweep_id: str, project: str, entity: str) -> dict:

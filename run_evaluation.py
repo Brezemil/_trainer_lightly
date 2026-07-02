@@ -127,7 +127,6 @@ def main() -> None:
     seeds_to_use = [args.seed] if args.seed is not None else list(cfg.seeds)
 
     split = args.split
-    batch_size = args.batch if args.batch is not None else cfg.batch_size
     device = args.device if args.device is not None else cfg.device
     imgsz = args.imgsz if args.imgsz is not None else cfg.image_size
     workers = args.workers if args.workers is not None else cfg.workers
@@ -196,6 +195,10 @@ def main() -> None:
     missing_count = 0
 
     for model_name in models_to_eval:
+        # Resolve model-specific batch size dynamically if not overridden
+        _, _, model_batch_size = cfg.get_model_params(model_name)
+        batch_size = args.batch if args.batch is not None else model_batch_size
+
         for seed in seeds_to_use:
             model_base = model_name.replace(".pt", "")
 

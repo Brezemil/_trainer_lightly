@@ -100,7 +100,10 @@ def main() -> None:
     # 1. Setup shared/fixed arguments
     imgsz = cfg.image_size
     epochs = cfg.sweep_epochs
-    batch_size = cfg.batch_size
+
+    # Resolve model-specific batch size and patience
+    _, model_patience, model_batch_size = cfg.get_model_params(model_variant, backend)
+    batch_size = model_batch_size
     device = cfg.device
 
     # For lightly backend, batch_size=-1 (auto-batching) is not supported.
@@ -172,6 +175,8 @@ def main() -> None:
                 "exist_ok": True,
                 "amp": amp,
             }
+            if model_patience is not None:
+                train_kwargs["patience"] = model_patience
             if cfg.fixed_loss:
                 train_kwargs.update(cfg.fixed_loss)
 

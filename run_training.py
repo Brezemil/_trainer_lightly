@@ -58,6 +58,12 @@ def parse_args() -> argparse.Namespace:
         "--batch", type=int, default=None, help="Override the batch size."
     )
     parser.add_argument(
+        "--patience",
+        type=int,
+        default=None,
+        help="Override the early stopping patience (for YOLO/RT-DETR).",
+    )
+    parser.add_argument(
         "--device", type=str, default=None, help="Override the device (e.g., 0 or cpu)."
     )
     parser.add_argument(
@@ -293,14 +299,9 @@ def main() -> None:
     else:
         seeds_to_use = list(cfg.seeds)
 
-    epochs = args.epochs if args.epochs is not None else cfg.prod_epochs
-    batch_size = args.batch if args.batch is not None else cfg.batch_size
+    epochs_display = str(args.epochs) if args.epochs is not None else "Model-Specific"
+    batch_size_display = str(args.batch) if args.batch is not None else "Model-Specific"
     device = args.device if args.device is not None else cfg.device
-
-    # For lightly backend, batch_size=-1 (auto-batching) is not supported.
-    # We fall back to "auto" which is supported by lightly_train.
-    if args.backend == "lightly" and batch_size == -1:
-        batch_size = "auto"
     imgsz = args.imgsz if args.imgsz is not None else cfg.image_size
     workers = args.workers if args.workers is not None else cfg.workers
     fraction = args.fraction if args.fraction is not None else cfg.fraction
@@ -396,8 +397,8 @@ def main() -> None:
         print(f"Decoder Head: {decoder_name}")
     print(f"Models: {models_to_train}")
     print(f"Seeds: {seeds_to_use}")
-    print(f"Epochs: {epochs}")
-    print(f"Batch Size: {batch_size}")
+    print(f"Epochs: {epochs_display}")
+    print(f"Batch Size: {batch_size_display}")
     print(f"Image Size: {imgsz}")
     print(f"Device: {device}")
     print(f"Workers: {workers}")
@@ -417,6 +418,19 @@ def main() -> None:
 
     for model_name in models_to_train:
         model_base = model_name.replace(".pt", "")
+
+        # Resolve model-specific defaults if not overridden by command line arguments
+        model_epochs, model_patience, model_batch_size = cfg.get_model_params(
+            model_name, args.backend
+        )
+        epochs = args.epochs if args.epochs is not None else model_epochs
+        batch_size = args.batch if args.batch is not None else model_batch_size
+        patience = args.patience if args.patience is not None else model_patience
+
+        # For lightly backend, batch_size=-1 (auto-batching) is not supported.
+        # We fall back to "auto" which is supported by lightly_train.
+        if args.backend == "lightly" and batch_size == -1:
+            batch_size = "auto"
 
         # 2. Distillation Pretraining (If enabled and using lightly backend)
         distilled_weights = None
@@ -491,6 +505,8 @@ def main() -> None:
                 "dataset": dataset_path,
                 "backend": args.backend,
             }
+            if patience is not None:
+                wb_run_config["patience"] = patience
             if args.backend == "lightly":
                 wb_run_config["decoder_name"] = decoder_name
 
@@ -532,6 +548,8 @@ def main() -> None:
                         "exist_ok": True,
                         "amp": amp,
                     }
+                    if patience is not None:
+                        train_kwargs["patience"] = patience
 
                     if (aug_sweep_id or hpo_sweep_id) and cfg.fixed_loss:
                         train_kwargs.update(cfg.fixed_loss)
@@ -730,6 +748,17 @@ def main() -> None:
                         os.environ["WANDB_ENTITY"] = cfg.entity
                     retry_on_cpu = False
                     try:
+                        # Use bf16-mixed if GPU supports it to avoid numerical degradation of fp16
+                        precision_mode = "32-true"
+                        if amp:
+                            if (
+                                torch.cuda.is_available()
+                                and torch.cuda.is_bf16_supported()
+                            ):
+                                precision_mode = "bf16-mixed"
+                            else:
+                                precision_mode = "16-mixed"
+
                         lightly_train.train_object_detection(
                             out=out_path,
                             model=lightly_model_name,
@@ -739,7 +768,7 @@ def main() -> None:
                             num_workers=workers,
                             devices=device_arg,
                             accelerator=accel,
-                            precision="16-mixed" if amp else "32-true",
+                            precision=precision_mode,
                             seed=seed,
                             overwrite=True,
                             model_args=model_args,

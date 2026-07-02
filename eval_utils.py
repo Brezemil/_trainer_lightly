@@ -694,8 +694,18 @@ def get_huggingface_backbone(model_id: str) -> str:
     pt_path = os.path.join(cache_dir, f"{repo_clean}.pt")
 
     if os.path.exists(pt_path):
-        print(f"Loaded converted PyTorch weights from cache: {pt_path}")
-        return pt_path
+        try:
+            # Check if cached checkpoint is complete (e.g., has local_cls_norm keys for sat493m)
+            sd_check = torch.load(pt_path, map_location="cpu", weights_only=True)
+            if "sat493m" in model_id and "local_cls_norm.weight" not in sd_check:
+                print(
+                    f"Cached weights at {pt_path} are missing required keys for sat493m. Re-converting..."
+                )
+            else:
+                print(f"Loaded converted PyTorch weights from cache: {pt_path}")
+                return pt_path
+        except Exception as e:
+            print(f"Error loading cached weights: {e}. Re-converting...")
 
     print(f"Downloading {model_id} from Hugging Face...")
     safetensors_path = os.path.join(cache_dir, f"{repo_clean}.safetensors")
