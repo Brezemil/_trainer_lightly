@@ -164,6 +164,7 @@ def safe_load_model(
             ):
                 ckpt["model_init_args"]["backbone_args"] = {}
             ckpt["model_init_args"]["backbone_args"]["is_sat493m_weights"] = True
+            ckpt["model_init_args"]["backbone_args"]["weights"] = "sat493m"
 
     model_instance = init_model_from_checkpoint(checkpoint=ckpt, device=device)
     return model_instance
