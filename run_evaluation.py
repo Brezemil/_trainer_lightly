@@ -196,35 +196,68 @@ def main() -> None:
 
     for model_name in models_to_eval:
         # Resolve model-specific batch size dynamically if not overridden
-        _, _, model_batch_size = cfg.get_model_params(model_name)
+        model_variant_name = (
+            os.path.basename(model_name) if os.path.isfile(model_name) else model_name
+        )
+        _, _, model_batch_size = cfg.get_model_params(model_variant_name)
         batch_size = args.batch if args.batch is not None else model_batch_size
 
         for seed in seeds_to_use:
-            model_base = model_name.replace(".pt", "")
-
-            # Try with decoder suffix first
-            run_name_with_dec = f"{model_base}_seed_{seed}{suffix}_{decoder_name}"
-            checkpoint_path = os.path.join(
-                runs_dir, run_name_with_dec, "weights", "best.pt"
-            )
-            if not os.path.exists(checkpoint_path):
-                checkpoint_path = os.path.join(
-                    runs_dir, run_name_with_dec, "exported_models", "exported_best.pt"
+            if os.path.isfile(model_name):
+                checkpoint_path = os.path.abspath(model_name)
+                # Extract run name from parent directory name (e.g., runs/yolo11s_seed_42/weights/best.pt -> yolo11s_seed_42)
+                run_name = os.path.basename(
+                    os.path.dirname(os.path.dirname(checkpoint_path))
                 )
+                if not run_name or run_name in ("weights", "exported_models"):
+                    run_name = os.path.basename(os.path.dirname(checkpoint_path))
+            else:
+                model_base = model_name.replace(".pt", "").replace("facebook/", "")
 
-            if not os.path.exists(checkpoint_path):
-                # Fallback to without decoder suffix (in case it is a YOLO model or older run)
-                run_name_no_dec = f"{model_base}_seed_{seed}{suffix}"
+                # Try with decoder suffix first
+                run_name_with_dec = f"{model_base}_seed_{seed}{suffix}_{decoder_name}"
                 checkpoint_path = os.path.join(
-                    runs_dir, run_name_no_dec, "weights", "best.pt"
+                    runs_dir, run_name_with_dec, "weights", "best.pt"
                 )
                 if not os.path.exists(checkpoint_path):
                     checkpoint_path = os.path.join(
-                        runs_dir, run_name_no_dec, "exported_models", "exported_best.pt"
+                        runs_dir,
+                        run_name_with_dec,
+                        "exported_models",
+                        "exported_best.pt",
                     )
-                run_name = run_name_no_dec
-            else:
-                run_name = run_name_with_dec
+
+                if not os.path.exists(checkpoint_path):
+                    # Fallback to without decoder suffix (in case it is a YOLO model or older run)
+                    run_name_no_dec = f"{model_base}_seed_{seed}{suffix}"
+                    checkpoint_path = os.path.join(
+                        runs_dir, run_name_no_dec, "weights", "best.pt"
+                    )
+                    if not os.path.exists(checkpoint_path):
+                        checkpoint_path = os.path.join(
+                            runs_dir,
+                            run_name_no_dec,
+                            "exported_models",
+                            "exported_best.pt",
+                        )
+                    run_name = run_name_no_dec
+                else:
+                    run_name = run_name_with_dec
+
+                # Final fallback to raw unsuffixed run name if it still doesn't exist
+                if not os.path.exists(checkpoint_path):
+                    run_name_raw = f"{model_base}_seed_{seed}"
+                    checkpoint_path = os.path.join(
+                        runs_dir, run_name_raw, "weights", "best.pt"
+                    )
+                    if not os.path.exists(checkpoint_path):
+                        checkpoint_path = os.path.join(
+                            runs_dir,
+                            run_name_raw,
+                            "exported_models",
+                            "exported_best.pt",
+                        )
+                    run_name = run_name_raw
 
             if not os.path.exists(checkpoint_path):
                 print(
