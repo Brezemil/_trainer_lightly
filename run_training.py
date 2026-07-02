@@ -5,10 +5,19 @@ This script executes training runs for YOLO11, YOLO26, and RT-DETR at stock sett
 supporting both lightly_train and ultralytics backends, as well as distillation pretraining.
 """
 
+# ruff: noqa: E402
 import pyarrow  # noqa: F401
 import argparse
 import sys
 import os
+
+# Set up local temp directory to avoid Windows System Temp cleanup issues with W&B staging
+workspace_dir = os.path.abspath(os.path.dirname(__file__))
+local_tmp_dir = os.path.join(workspace_dir, ".tmp")
+os.makedirs(local_tmp_dir, exist_ok=True)
+os.environ["TMP"] = local_tmp_dir
+os.environ["TEMP"] = local_tmp_dir
+
 import gc
 import shutil
 import torch
@@ -290,6 +299,22 @@ def main() -> None:
     args = parse_args()
     cfg = PipelineConfig()
 
+    # Automatically enable Tensor Cores on capable GPUs
+    if torch.cuda.is_available():
+        try:
+            device_id = torch.cuda.current_device()
+            major, minor = torch.cuda.get_device_capability(device_id)
+            if major >= 7:
+                torch.set_float32_matmul_precision("high")
+                print(
+                    f"\n[INFO] CUDA Compute Capability {major}.{minor} detected. "
+                    "Tensor Cores are available. Enabled float32_matmul_precision='high'."
+                )
+        except Exception as e:
+            print(
+                f"\n[WARNING] Failed to query CUDA capability / set float32 precision: {e}"
+            )
+
     # Enable W&B integration in Ultralytics settings
     settings.update({"wandb": True})
 
@@ -343,6 +368,31 @@ def main() -> None:
         wandb_dir = os.path.abspath(wandb_dir)
     if not os.path.isabs(eval_results_dir):
         eval_results_dir = os.path.abspath(eval_results_dir)
+
+    # Clean up large training checkpoints (*.ckpt) in runs_dir to free up space
+    if os.path.exists(runs_dir):
+        print(
+            f"\nScanning '{runs_dir}' to clean up existing training checkpoints and free up disk space..."
+        )
+        reclaimed_bytes = 0
+        for root, dirs, files in os.walk(runs_dir):
+            if os.path.basename(root) == "checkpoints":
+                for file in files:
+                    if file.endswith(".ckpt"):
+                        file_path = os.path.join(root, file)
+                        try:
+                            file_size = os.path.getsize(file_path)
+                            os.remove(file_path)
+                            reclaimed_bytes += file_size
+                            print(
+                                f"[CLEANUP] Deleted checkpoint: {file_path} ({file_size / (1024**3):.2f} GB)"
+                            )
+                        except Exception as e:
+                            print(f"[WARNING] Failed to delete {file_path}: {e}")
+        if reclaimed_bytes > 0:
+            print(
+                f"[CLEANUP] Successfully reclaimed {reclaimed_bytes / (1024**3):.2f} GB of disk space!\n"
+            )
 
     # Fetch best sweep configurations
     best_aug_config = None
@@ -837,6 +887,19 @@ def main() -> None:
                     from eval_utils import safe_load_model
 
                     eval_model = safe_load_model(best_ckpt)
+
+                    # Clean up large training checkpoints (.ckpt files) to conserve space
+                    ckpt_dir = os.path.join(out_path, "checkpoints")
+                    if os.path.exists(ckpt_dir):
+                        try:
+                            shutil.rmtree(ckpt_dir)
+                            print(
+                                f"[CLEANUP] Successfully removed checkpoints directory to conserve disk space: {ckpt_dir}"
+                            )
+                        except Exception as e:
+                            print(
+                                f"[WARNING] Failed to clean up checkpoints directory: {e}"
+                            )
 
                 # 4. Strict Evaluation
                 eval_batch_size = (
