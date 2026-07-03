@@ -151,6 +151,8 @@ def safe_load_model(
         init_model_from_checkpoint,
     )
 
+    if isinstance(device, int) or (isinstance(device, str) and device.isdigit()):
+        device = f"cuda:{device}"
     device = _resolve_device(device)
     ckpt = torch.load(model_path, weights_only=False, map_location=device)
 
@@ -178,8 +180,20 @@ def safe_load_model(
             original_init = DinoVisionTransformer.__init__
 
             def patched_init(self, *args, **kwargs):
+                import inspect
+
+                is_sat = False
+                frame = inspect.currentframe()
+                while frame:
+                    if frame.f_code.co_name.startswith("dinov3_"):
+                        if frame.f_locals.get("is_sat493m_weights"):
+                            is_sat = True
+                            break
+                    frame = frame.f_back
+
                 if (
-                    kwargs.get("is_sat493m_weights")
+                    is_sat
+                    or kwargs.get("is_sat493m_weights")
                     or "sat493m" in str(kwargs.get("weights", "")).lower()
                 ):
                     kwargs["untie_global_and_local_cls_norm"] = True

@@ -211,6 +211,7 @@ Use this when writing code that configures Sliced Aided Hyper Inference (tiled i
 - **Hardware Acceleration:** Ensure code uses proper PyTorch accelerators (`cuda`, `mps`, or `cpu`) as specified. Refer to `performance__hardware_recommendations.md`.
 - **Avoid Resource Leaks:** When calling `lightly_train.load_model(...)`, ensure GPU memory cleanup or use context-managed blocks to prevent OOM.
 - **Config Rigor:** Match the expected schema for dataset mapping dictionaries (must contain correct `train`, `val`, and `test` data keys).
+- **DINOv3 SAT-493M Checkpoint Loading:** When loading DINOv3 SAT-493M checkpoints for evaluation using `safe_load_model`, `load_weights` is set to `False`, which overrides `weights` to `None`. This prevents the backbone from initializing `local_cls_norm`, causing a `RuntimeError` due to unexpected keys. To bypass this, `DinoVisionTransformer.__init__` is dynamically monkeypatched inside `safe_load_model` to force `untie_global_and_local_cls_norm = True` when `is_sat493m_weights` is True, then cleanly reverted in a `finally` block.
 
 ### 5B. Ultralytics
 

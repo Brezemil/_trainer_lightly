@@ -74,6 +74,18 @@ def parse_args():
         help="Override dataset.yaml configuration file path.",
     )
     parser.add_argument(
+        "--runs-dir",
+        type=str,
+        default=None,
+        help="Override the directory where training checkpoints are saved.",
+    )
+    parser.add_argument(
+        "--eval-results-dir",
+        type=str,
+        default=None,
+        help="Override the directory where evaluation results are saved.",
+    )
+    parser.add_argument(
         "--workers", type=int, default=None, help="Override dataloader workers."
     )
     parser.add_argument("--imgsz", type=int, default=None, help="Override image size.")
@@ -203,8 +215,16 @@ def main():
     project_root = os.path.dirname(os.path.abspath(__file__))
 
     # Distinctive baseline folders
-    baseline_runs_dir = os.path.join(project_root, "runs", "baseline")
-    baseline_eval_dir = os.path.join(project_root, "evaluation_results", "baseline")
+    baseline_runs_dir = (
+        args.runs_dir
+        if args.runs_dir is not None
+        else os.path.join(project_root, "runs", "baseline")
+    )
+    baseline_eval_dir = (
+        args.eval_results_dir
+        if args.eval_results_dir is not None
+        else os.path.join(project_root, "evaluation_results", "baseline")
+    )
 
     os.makedirs(baseline_runs_dir, exist_ok=True)
     os.makedirs(baseline_eval_dir, exist_ok=True)
