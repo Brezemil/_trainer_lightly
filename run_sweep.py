@@ -5,9 +5,20 @@ This script coordinates both HPO Phase 1 (Augmentation tuning) and Phase 2 (Lear
 runs using Weights & Biases (W&B) and Albumentations for both Ultralytics and lightly_train.
 """
 
+# ruff: noqa: E402
+import os
+import tempfile
+
+# Set up local temp directory to avoid Windows System Temp cleanup issues with W&B staging
+workspace_dir = os.path.abspath(os.path.dirname(__file__))
+local_tmp_dir = os.path.join(workspace_dir, ".tmp")
+os.makedirs(local_tmp_dir, exist_ok=True)
+os.environ["TMP"] = local_tmp_dir
+os.environ["TEMP"] = local_tmp_dir
+tempfile.tempdir = local_tmp_dir
+
 import pyarrow  # noqa: F401
 import wandb
-import os
 import sys
 import gc
 import torch
