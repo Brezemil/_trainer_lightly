@@ -19,7 +19,7 @@ class PipelineConfig:
     Default: 'brezemil' (Standard workspace account).
     """
 
-    project: str = "_lightly_train_baseline"  # _smoketests or _lightly_train_baseline
+    project: str = "_baseline"  # _smoketests or _lightly_train_baseline or _baseline
     """W&B project name to group related experiment runs and sweeps.
     Default: '_trainer' (Central training workspace project).
     """
@@ -33,7 +33,7 @@ class PipelineConfig:
     """
 
     dataset_path: str = (
-        r"C:\Users\emilb\Documents\GitHub\sliced_split_dataset_culled\dataset.yaml"
+        r"C:\Users\emil_brezovsky\Documents\GitHub\_dataset_ail\dataset.yaml"
     )
     """Path to the dataset.yaml file defining the data splits and class mapping.
     Default: 'C:\\Users\\emilb\\_data\\_smoketest\\dataset.yaml' (smoketest dataset).
@@ -105,8 +105,10 @@ class PipelineConfig:
     rtdetr_batch_size: int = 4
     """Default batch size for RT-DETR models."""
 
-    dino_epochs: int = 118314
-    """Default training steps (acting as epochs) for DINO-based models in lightly_train."""
+    dino_epochs: int = 50
+    """Default training epochs for DINO-based models in lightly_train.
+    The step-size is calculated automatically through this epoch input by checking the dataset.
+    """
 
     dino_patience: int | None = None
     """Default training patience for DINO-based models (None because lightly_train does not support early stopping)."""
@@ -137,7 +139,7 @@ class PipelineConfig:
     Default: 2.
     """
 
-    workers: int = 0
+    workers: int = 4
     """Number of CPU dataloader subprocess worker threads for loading/augmenting data.
     Default: 0 (Required on Windows to prevent multi-processing spawn overhead).
     Production Standard: 4 to 8 workers per GPU (usually set to CPU cores / num_gpus).

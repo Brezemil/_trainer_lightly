@@ -17,9 +17,18 @@ os.environ["TMP"] = local_tmp_dir
 os.environ["TEMP"] = local_tmp_dir
 tempfile.tempdir = local_tmp_dir
 
+# Set environment variables to prevent Windows PyTorch multiprocessing deadlock
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["WANDB_START_METHOD"] = "thread"
+
 import pyarrow  # noqa: F401
 import argparse
 import sys
+
+# Import PIL before torchvision or lightly_train to resolve DLL dependency conflict on Windows
+from PIL import Image  # noqa: F401
 
 import gc
 import shutil
@@ -161,6 +170,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override the backbone_freeze setting (True/False).",
     )
+    parser.add_argument(
+        "--wandb-offline",
+        action="store_true",
+        help="Run Weights & Biases in offline mode to prevent network-related deadlocks.",
+    )
+    parser.add_argument(
+        "--raw-steps",
+        action="store_true",
+        help="Disable DINO steps rounding to the next full 1,000 steps, running the exact epoch count.",
+    )
     return parser.parse_args()
 
 
@@ -300,6 +319,8 @@ def set_reproducibility(seed: int) -> None:
 
 def main() -> None:
     args = parse_args()
+    if args.wandb_offline:
+        os.environ["WANDB_MODE"] = "offline"
     cfg = PipelineConfig()
 
     # Automatically enable Tensor Cores on capable GPUs
@@ -432,7 +453,9 @@ def main() -> None:
     dataset_path = args.dataset if args.dataset is not None else cfg.dataset_path
     temp_subset_dir = ""
     if fraction < 1.0:
-        temp_subset_dir = os.path.join(runs_dir, "temp_subset")
+        import uuid
+
+        temp_subset_dir = os.path.join(runs_dir, f"temp_subset_{uuid.uuid4().hex[:8]}")
         dataset_path = prepare_subset_dataset(dataset_path, fraction, temp_subset_dir)
         print(
             f"Created temporary subset dataset at {dataset_path} containing {fraction * 100}% of files."
@@ -490,6 +513,71 @@ def main() -> None:
         if args.backend == "lightly" and batch_size == -1:
             batch_size = "auto"
 
+        # Calculate steps dynamically for lightly backend
+        if args.backend == "lightly":
+            import math
+
+            with open(dataset_path, "r") as f:
+                data_yaml = yaml.safe_load(f)
+
+            # Resolve absolute path for training images
+            base_path = data_yaml.get("path", "")
+            if not os.path.isabs(base_path):
+                base_path = os.path.abspath(
+                    os.path.join(os.path.dirname(dataset_path), base_path)
+                )
+            train_rel = data_yaml.get("train", "")
+            if not os.path.isabs(train_rel):
+                train_img_dir = os.path.join(base_path, train_rel)
+            else:
+                train_img_dir = train_rel
+
+            num_train_images = 3500  # Fallback default
+            if os.path.exists(train_img_dir):
+                valid_extensions = {
+                    ".jpg",
+                    ".jpeg",
+                    ".png",
+                    ".ppm",
+                    ".bmp",
+                    ".pgm",
+                    ".tif",
+                    ".tiff",
+                    ".webp",
+                }
+                num_train_images = sum(
+                    1
+                    for file in os.listdir(train_img_dir)
+                    if os.path.splitext(file)[1].lower() in valid_extensions
+                )
+
+            calc_batch_size = 16 if batch_size in ("auto", -1) else int(batch_size)
+            # For lightly_train object detection, default target batch size is 32.
+            # It uses gradient accumulation max(1, 32 // calc_batch_size) to reach 32.
+            effective_batch_size = (
+                max(32, calc_batch_size) if calc_batch_size >= 32 else 32
+            )
+            steps_raw = math.ceil(epochs * (num_train_images / effective_batch_size))
+            if args.raw_steps:
+                dino_steps = steps_raw
+            else:
+                dino_steps = math.ceil(steps_raw / 1000) * 1000
+
+            print("\n" + "=" * 60)
+            print(" DINO DYNAMIC STEP CALCULATION")
+            print("-" * 60)
+            print(f" Target Epochs:         {epochs}")
+            print(f" Training Images (N):   {num_train_images}")
+            print(f" Global Batch Size (B):  {calc_batch_size}")
+            print(f" Effective Batch Size:  {effective_batch_size} (via Accumulation)")
+            print(
+                f" Steps per Epoch:       {math.ceil(num_train_images / effective_batch_size)}"
+            )
+            print(f" Total Steps:           {dino_steps}")
+            print("=" * 60 + "\n")
+        else:
+            dino_steps = epochs
+
         # 2. Distillation Pretraining (If enabled and using lightly backend)
         distilled_weights = None
         if args.distill and args.backend == "lightly":
@@ -516,7 +604,7 @@ def main() -> None:
                     teacher_name="dinov3/vitl16",
                     train_img_dir=train_img_dir,
                     out_dir=distill_out_dir,
-                    steps=epochs,
+                    steps=dino_steps,
                     seed=42,
                 )
             except Exception as e:
@@ -741,7 +829,7 @@ def main() -> None:
                     }
                     if "sat493m" in model_name:
                         model_args["backbone_args"] = {"is_sat493m_weights": True}
-                    if epochs < 2000:
+                    if dino_steps < 2000:
                         model_args["lr_warmup_steps"] = 0
                         model_args["ema_warmup_steps"] = 0
                         model_args["scheduler_flat_steps"] = 0
@@ -823,7 +911,7 @@ def main() -> None:
                             out=out_path,
                             model=lightly_model_name,
                             data=data_dict,
-                            steps=epochs,
+                            steps=dino_steps,
                             batch_size=batch_size,
                             num_workers=workers,
                             devices=device_arg,
@@ -863,7 +951,7 @@ def main() -> None:
                             out=out_path,
                             model=lightly_model_name,
                             data=data_dict,
-                            steps=epochs,
+                            steps=dino_steps,
                             batch_size=batch_size,
                             num_workers=workers,
                             devices="auto",
@@ -957,6 +1045,7 @@ def main() -> None:
                     file=sys.stderr,
                 )
                 traceback.print_exc()
+                sys.exit(1)
             finally:
                 wandb.finish()
 

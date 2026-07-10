@@ -208,6 +208,8 @@ The benchmark suite is a robust verification process running a total of **24 ful
 | `--workers` | `int` | `None` | Override dataloader workers. |
 | `--imgsz` | `int` | `None` | Override input image size. |
 | `--tags` | `str` | `None` | List of space-separated tags to assign to the Weights & Biases runs (forwarded to each training run). |
+| `--wandb-offline`| `bool` | `False` | Run Weights & Biases in offline mode to prevent network-related deadlocks. |
+| `--raw-steps` | `bool` | `False` | Disable DINO steps rounding to the next full 1,000 steps, running the exact epoch count. |
 | `--yolo12s` | `bool` | `False` | Limit baseline runs to YOLOv12s (using Ultralytics backend). |
 | `--yolo26s` | `bool` | `False` | Limit baseline runs to YOLO26s (using Ultralytics backend). |
 | `--yolo11s` | `bool` | `False` | Limit baseline runs to YOLO11s (using Ultralytics backend). |
@@ -269,6 +271,8 @@ Use the training script to execute a single model training process or a set of c
 | `--backend` | `str` | `"lightly"` | Backend for training: `"ultralytics"` or `"lightly"`. |
 | `--decoder` | `str` | `None` | Choose the LTDETR decoder head type: `"rtdetrv2"` or `"dfine"`. |
 | `--tags` | `str` | `None` | List of space-separated tags to assign to the Weights & Biases run. |
+| `--wandb-offline`| `flag` | (off) | Run Weights & Biases in offline mode to prevent network-related deadlocks. |
+| `--raw-steps` | `flag` | (off) | Disable DINO steps rounding to the next full 1,000 steps, running the exact epoch count. |
 
 #### Example Usage:
 ```bash
@@ -400,4 +404,38 @@ pixi run train-baseline --yolo12s --yolo26s --yolo11s --rtdetr-l --dinov3-l --di
 quick runs on culledset/fullset:
 pixi run train-baseline --yolo12n --yolo26n --yolo11n --tags ampTrue baseline culledset
 
+  This is the parameter/compute-equivalent match to a YOLO-S model (backbone is ~5.7M parameters).
 
+  • To Train + Benchmark (with automatic local logging; use `--wandb-offline` to prevent Windows deadlocks):
+    pixi run train --model dinov3/vitt16 --backend lightly --decoder dfine --workers 0 --batch 16 --wandb-offline
+
+  • To run a standalone post-training evaluation & upload to W&B:
+    pixi run eval --model dinov3/vitt16 --decoder dfine --upload-wandb
+  
+  • Chain commands together for both heads (Powershell):
+    pixi run train --model dinov3/vitt16 --backend lightly --decoder dfine --workers 0 --batch 16 --wandb-offline --seed 42; pixi run train --model dinov3/vitt16 --backend lightly --decoder rtdetrv2 --workers 0 --batch 16 --wandb-offline --seed 42
+
+  • Train with an unfrozen backbone (need more epochs)
+    pixi run train --model dinov3/vitt16 --backend lightly --decoder dfine --workers 0 --batch 16 --backbone-freeze False --epochs 100 --wandb-offline --tags ampTrue baseline fullset
+
+  • Sync offline runs back to W&B cloud afterward:
+    pixi run wandb sync runs/
+
+
+  ### Option A: The ViT-Small Variant ( dinov3/vits16 )
+
+  This is the name-equivalent small model (backbone is ~22M parameters).
+
+  • To Train + Benchmark (with automatic local logging):
+    pixi run train --model dinov3/vits16 --backend lightly --decoder dfine --workers 0 --batch 16 --wandb-offline
+
+  • To run a standalone post-training evaluation & upload to W&B:
+    pixi run eval --model dinov3/vits16 --decoder dfine --upload-wandb
+
+### Chain Commands in cmd:
+pixi run train --model dinov3/vitt16 --backend lightly --decoder dfine --workers 0 --batch 8 --backbone-freeze False --epochs 200 --seed 42 --wandb-offline --tags ampTrue baseline fullset && pixi run train --model dinov3/vitt16 --backend lightly --decoder rtdetrv2 --workers 0 --batch 8 --backbone-freeze False --epochs 200 --seed 42 --wandb-offline --tags ampTrue baseline fullset
+
+Important - if testing multiple epochs against each other - do not forget to append the epoch so the best.pt is not overwritten in the run folder!
+
+### sync an offline run:
+wandb sync wandb\wandb\offline-run-20260709_220007-6pzguweh

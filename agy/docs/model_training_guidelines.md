@@ -65,3 +65,4 @@ DINOv3-based ViT-L models are massive foundation architectures. Since training i
   * [settings__train_settings.md](file:///C:/Users/emilb/_trainer_lightly/agy/docs/lightly_train/settings__train_settings.md#L105): Outlines automatic learning rate scaling per batch size.
   * [dinov3.md](file:///C:/Users/emilb/_trainer_lightly/agy/docs/dinov3.md#L1275-L1276): Establishes the 12-epoch downstream COCO validation baseline schedule.
   * [instance_segmentation.md](file:///C:/Users/emilb/_trainer_lightly/agy/docs/lightly_train/instance_segmentation.md#L32): Calibrates step training limits (90K steps = 12 epochs at batch size 16).
+  * [epoch_settings_analysis.md](file:///C:/Users/emil_brezovsky/Documents/GitHub/_trainer_lightly/agy/docs/epoch_settings_analysis.md): Detailed breakdown of epoch settings and DINO's `118314` step derivation.

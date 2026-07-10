@@ -8,7 +8,16 @@ This script executes:
 4. Beautiful plotting and aggregation of the results into a distinctive baseline folder.
 """
 
+# Import PIL before torchvision or lightly_train to resolve DLL dependency conflict on Windows
+from PIL import Image  # noqa: F401
 import os
+
+# Set environment variables to prevent Windows PyTorch multiprocessing deadlock
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["WANDB_START_METHOD"] = "thread"
+
 import subprocess
 
 
@@ -134,6 +143,16 @@ def parse_args():
         default=None,
         help="Enable/disable Automatic Mixed Precision (AMP) (True/False).",
     )
+    parser.add_argument(
+        "--wandb-offline",
+        action="store_true",
+        help="Run Weights & Biases in offline mode to prevent network-related deadlocks.",
+    )
+    parser.add_argument(
+        "--raw-steps",
+        action="store_true",
+        help="Disable DINO steps rounding to the next full 1,000 steps, running the exact epoch count.",
+    )
     return parser.parse_args()
 
 
@@ -212,6 +231,13 @@ def main():
     if args.dataset is not None:
         dino_forward_args.extend(["--dataset", args.dataset])
 
+    if args.wandb_offline:
+        forward_args.append("--wandb-offline")
+        dino_forward_args.append("--wandb-offline")
+
+    if args.raw_steps:
+        dino_forward_args.append("--raw-steps")
+
     project_root = os.path.dirname(os.path.abspath(__file__))
 
     # Distinctive baseline folders
@@ -262,8 +288,6 @@ def main():
             for seed in seeds:
                 run_training_with_fallback(
                     [
-                        "pixi",
-                        "run",
                         "python",
                         "run_training.py",
                         "--model",
@@ -304,8 +328,6 @@ def main():
             for seed in seeds:
                 run_training_with_fallback(
                     [
-                        "pixi",
-                        "run",
                         "python",
                         "run_training.py",
                         "--model",
@@ -329,8 +351,6 @@ def main():
             for seed in seeds:
                 run_training_with_fallback(
                     [
-                        "pixi",
-                        "run",
                         "python",
                         "run_training.py",
                         "--model",
@@ -353,8 +373,6 @@ def main():
     print("\n>>> Generating aggregated charts and markdown summaries...")
     run_cmd(
         [
-            "pixi",
-            "run",
             "python",
             "plot_results.py",
             "--eval-dir",
