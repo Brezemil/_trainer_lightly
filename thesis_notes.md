@@ -94,22 +94,27 @@ When analyzing graphs on the Weights & Biases (W&B) dashboard, the horizontal ax
 * **W&B Step Indexing:** W&B increments its internal step index every time a payload is logged via `wandb.log()`. If non-step events (such as media logging, checkpoint exports, or post-training test evaluations) are logged without explicitly specifying the step variable (e.g., `step=opt_step`), W&B automatically increments the index. This can result in a slight rightward shift of the final metrics on the W&B dashboard compared to the physical optimization step $S_{\text{opt}} = 18,000$.
 
 ---
-
 ## 5. Decoder Performance Comparison & Validation Overfitting Analysis
 
-To evaluate the impact of decoder head architectures and step scheduling on generalization, we conduct a comparative analysis of three training configurations using the DINOv3 (ViT-T) student backbone:
-1. **D-FINE Decoder (17,354 raw steps):** Exact 100-epoch schedule.
-2. **D-FINE Decoder (18,000 rounded steps):** 100-epoch schedule rounded up to the next 1,000 steps (+646 steps).
-3. **RT-DETRv2 Decoder (18,000 rounded steps):** 100-epoch schedule rounded up to the next 1,000 steps.
+To evaluate the impact of decoder head architectures and step scheduling on generalization, we conduct a comparative analysis of six training configurations using the DINOv3 (ViT-T) student backbone:
+1. **DINOv3 + D-FINE (Raw 100e):** Exact 100-epoch schedule (17,354 steps).
+2. **DINOv3 + D-FINE (Rounded 200e):** 200-epoch schedule rounded up to 35,000 steps.
+3. **DINOv3 + D-FINE (Rounded 100e):** 100-epoch schedule rounded up to 18,000 steps (+646 steps).
+4. **DINOv3 + RT-DETRv2 (Rounded 100e):** 100-epoch schedule rounded up to 18,000 steps.
+5. **DINOv3 + D-FINE (Rounded 90e):** 90-epoch schedule rounded up to 16,000 steps.
+6. **DINOv3 + D-FINE (Rounded 80e):** 80-epoch schedule rounded up to 14,000 steps.
 
-### 5.1. Decoder Architecture Performance Comparison
-The validation and test set results are summarized below:
+### 5.1. Performance Comparison Across Training Schedules
+The validation and test set results (evaluated on the independent test split) are summarized below:
 
-| Model Configuration | Training Steps ($S_{\text{opt}}$) | Val mAP50 (Best) | Test mAP (Strict) | Test mAP50 (Strict) | Generalization Status |
-| :--- | :---: | :---: | :---: | :---: | :--- |
-| **DINOv3 + D-FINE (Raw)** | `17,354` | `0.6187` | **`0.239`** | **`0.495`** | **Optimal Generalization** |
-| **DINOv3 + D-FINE (Rounded)** | `18,000` | **`0.6277`** | `0.232` | `0.473` | Overfit to Validation Split |
-| **DINOv3 + RT-DETRv2 (Rounded)** | `18,000` | `0.6070` | `0.226` | `0.465` | Lower Localization Precision |
+| Run ID | Model & Decoder | Target Epochs | Steps ($S_{\text{opt}}$) | Val mAP50 (Best) | Test mAP (Strict) | Test mAP50 (Coarse) | Generalization Status |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **`wdjvply0`** | **DINOv3 + D-FINE (Raw)** | **100** | **`17,354`** | `0.6187` | **`0.241`** | **`0.495`** | 👑 **Optimal Generalization** |
+| `nsnbfqq7` | DINOv3 + D-FINE (Rounded) | 200 | `35,000` | `0.5987` | `0.222` | `0.451` | Severe Overfitting |
+| `ns3amnkg` | DINOv3 + D-FINE (Rounded) | 100 | `18,000` | `0.6277` | `0.232` | `0.473` | Validation Overfit (Rounded schedule) |
+| `6pzguweh` | DINOv3 + RT-DETRv2 (Rounded)| 100 | `18,000` | `0.6070` | `0.226` | `0.465` | Lower localization accuracy |
+| `ww499hbe` | DINOv3 + D-FINE (Rounded) | 90 | `16,000` | **`0.6319`** | `0.232` | `0.484` | Validation Overfit (90e rounded) |
+| `mbrsdnff` | DINOv3 + D-FINE (Rounded) | 80 | `14,000` | `0.6230` | `0.229` | `0.494` | High coarse accuracy, lower precision |
 
 ### 5.2. Analysis: D-FINE vs. RT-DETRv2
 At the 18,000 rounded step mark, the D-FINE decoder outperforms the RT-DETRv2 decoder by **+2.07%** mAP50 on the validation set, and **+0.8%** mAP50 / **+0.6%** mAP overall on the test set. 
@@ -117,9 +122,11 @@ At the 18,000 rounded step mark, the D-FINE decoder outperforms the RT-DETRv2 de
 * **Geospatial Adaptation:** Drone imagery of tree crowns contains highly irregular, overlapping, and soft boundary outlines. By predicting coordinate distributions and refining them iteratively, D-FINE resolves overlapping tree crown boundaries with higher spatial precision than RT-DETR, translating directly to higher IoU metrics and strict mAP scores.
 
 ### 5.3. Analysis: Validation Overfitting and Leakage
-A critical comparison lies between the raw D-FINE run (17,354 steps) and the rounded D-FINE run (18,000 steps):
-* **The Divergence:** The rounded run trained for only 646 additional optimization steps (+3.7% steps). This caused its **Validation mAP50 to increase** by **+0.9%** (from `0.6187` to `0.6277`), while its independent **Test mAP50 decreased** by **-2.2%** (from `0.495` to `0.473`).
-* **Interpretation:** This divergence is empirical proof of **validation set overfitting (leakage during model selection)**. Because the training pipeline saves the final model checkpoint (`exported_best.pt`) based on the lowest validation loss or highest validation mAP, the model utilized the extra steps to optimize its weights specifically to the sample configurations present in the validation split. This over-optimization degraded the model's generalized feature representation, reducing its performance on the unseen test set.
+A detailed comparison of D-FINE runs across different step boundaries reveals three core findings regarding generalization limits:
+
+1. **Validation Selection Drift (Validation Leakage):** The training pipeline automatically saves the final model checkpoint (`exported_best.pt`) based on the epoch that achieved the highest validation mAP. As training continues past `17,354` steps, the validation metrics continue to rise (reaching a peak of `0.6319` at step 15,999 in the 90e run, and `0.6277` at step 17,999 in the 100e rounded run). However, this peak validation performance is achieved by fitting the model's weights to the specific noise and sample layouts of the validation split. Consequently, the checkpoint selector chose a model that was over-tuned to the validation set, directly degrading its performance on the independent test split.
+2. **Longer Unaugmented Fine-Tuning Phase:** The pipeline disables data augmentations (Mosaic, Scale Jitter) during the final **12% of steps** to let the model clean up coordinates. In the rounded 100e run (18k steps), this unaugmented phase is longer (`2,160` steps) than in the raw 100e run (`2,082` steps). Training the active, unfrozen ViT backbone on clean, unaugmented images for more steps increases the rate of representation memorization, accelerating overfitting.
+3. **Coarse vs. Fine-Precision Localization Trade-off:** The 80-epoch run (14,000 steps) achieved a very high coarse test score of **`0.494` mAP50**, nearly matching the raw 100-epoch run (**`0.495`**). However, its strict overall test mAP was significantly lower (**`0.229`** vs. **`0.241`**). This demonstrates that while 80 epochs is sufficient for the model to learn coarse classification and general box coordinates, the extra epochs up to the raw 100-epoch mark are crucial for the cosine learning rate decay to settle, refining bounding box boundaries and maximizing high-IoU localization precision.
 
 ---
 

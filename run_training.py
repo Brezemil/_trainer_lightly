@@ -180,6 +180,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable DINO steps rounding to the next full 1,000 steps, running the exact epoch count.",
     )
+    parser.add_argument(
+        "--resume-interrupted",
+        action="store_true",
+        help="Resume training from an interrupted or crashed run.",
+    )
     return parser.parse_args()
 
 
@@ -394,7 +399,7 @@ def main() -> None:
         eval_results_dir = os.path.abspath(eval_results_dir)
 
     # Clean up large training checkpoints (*.ckpt) in runs_dir to free up space
-    if os.path.exists(runs_dir):
+    if os.path.exists(runs_dir) and not args.resume_interrupted:
         print(
             f"\nScanning '{runs_dir}' to clean up existing training checkpoints and free up disk space..."
         )
@@ -626,7 +631,7 @@ def main() -> None:
             if args.distill and distilled_weights:
                 suffix += "_distilled"
             if args.backend == "lightly":
-                suffix += f"_{decoder_name}"
+                suffix += f"_{decoder_name}_steps_{dino_steps}"
 
             run_name = f"{model_base}_seed_{seed}{suffix}"
             print(
@@ -918,7 +923,8 @@ def main() -> None:
                             accelerator=accel,
                             precision=precision_mode,
                             seed=seed,
-                            overwrite=True,
+                            overwrite=False if args.resume_interrupted else True,
+                            resume_interrupted=args.resume_interrupted,
                             model_args=model_args,
                             transform_args=transform_args,
                             logger_args={
@@ -958,7 +964,8 @@ def main() -> None:
                             accelerator="cpu",
                             precision="32-true",
                             seed=seed,
-                            overwrite=True,
+                            overwrite=False if args.resume_interrupted else True,
+                            resume_interrupted=args.resume_interrupted,
                             model_args=model_args,
                             transform_args=transform_args,
                             logger_args={
