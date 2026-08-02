@@ -687,8 +687,13 @@ def build_albumentations_pipeline(config_dict: Dict[str, Any], imgsz: int) -> Li
     import albumentations as A
 
     return [
-        A.RandomRotate90(p=config_dict.get("albu_rotate90_p", 0.0)),
-        A.Transpose(p=config_dict.get("albu_rotate90_p", 0.0)),
+        A.OneOf(
+            [
+                A.RandomRotate90(p=1.0),
+                A.Transpose(p=1.0),
+            ],
+            p=config_dict.get("albu_rotate90_p", 0.0),
+        ),
         A.HorizontalFlip(p=config_dict.get("albu_spatial_p", 0.0)),
         A.VerticalFlip(p=config_dict.get("albu_spatial_p", 0.0)),
         A.OneOf(
@@ -700,7 +705,7 @@ def build_albumentations_pipeline(config_dict: Dict[str, Any], imgsz: int) -> Li
         ),
         A.RandomResizedCrop(
             size=(imgsz, imgsz),
-            scale=(0.4, 1.0),
+            scale=(0.6, 1.0),
             ratio=(0.9, 1.1),
             p=config_dict.get("albu_crop_p", 0.0),
         ),
@@ -711,28 +716,19 @@ def build_albumentations_pipeline(config_dict: Dict[str, Any], imgsz: int) -> Li
             ],
             p=config_dict.get("albu_texture_p", 0.0),
         ),
-        A.OneOf(  # type: ignore
+        A.OneOf(
             [
                 A.ColorJitter(
                     brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=1.0
                 ),
                 A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=1.0),
-                A.RandomShadow(  # type: ignore
-                    shadow_roi=(0, 0, 1, 1),
-                    num_shadows_lower=1,  # type: ignore
-                    num_shadows_upper=2,  # type: ignore
-                    shadow_dimension=5,
-                    p=1.0,
-                ),
-                A.ToGray(p=0.1),
-                A.Solarize(threshold=128, p=0.05),  # type: ignore
             ],
             p=config_dict.get("albu_color_p", 0.0),
         ),
         A.CoarseDropout(
-            num_holes_range=(8, 12),
-            hole_height_range=(0.02, 0.05),
-            hole_width_range=(0.02, 0.05),
+            num_holes_range=(4, 8),
+            hole_height_range=(0.01, 0.03),
+            hole_width_range=(0.01, 0.03),
             p=config_dict.get("albu_dropout_p", 0.0),
         ),
         A.OneOf(

@@ -24,6 +24,44 @@ pixi run qa
   * Run Baseline Benchmark: `pixi run train-baseline`
   * Run Evaluation: `pixi run eval`
   * Run FiftyOne Curation: `pixi run visualize`
+  * Download W&B Online Logs: `pixi run download-wandb`
+  * Run Statistical Analysis & Plots: `pixi run analyze-benchmark`
+
+---
+
+## 📈 W&B Data Download & Statistical Benchmarking Analysis
+
+This workspace provides automated tools to download all online experiment runs, logs, and configurations from Weights & Biases (W&B) to the local disk and execute non-parametric statistical hypothesis testing, multi-threshold IoU evaluations (`mAP30`, `mAP40`, `mAP50`, `mAP50-95`), and Pareto efficiency plotting.
+
+### 1. Download All Online W&B Project Data
+To download all online run summaries, hyperparameter configurations, and log files from the W&B workspace (`brezo-boku-vienna/_baseline`) into `wandb_downloaded_logs/`, execute:
+
+```bash
+# Downloads all online run metrics, configs, and logs via Pixi task
+pixi run download-wandb
+
+# Alternatively, run directly via python
+python download_wandb_logs.py
+```
+
+### 2. Run Statistical Benchmarking Analysis & Plot Generation
+To compute descriptive statistics (Mean $\pm$ Std across random seeds `42`, `100`, `999`), execute the **Wilcoxon Signed-Rank Test**, **Paired t-tests**, and **Linear Mixed-Effects Models (LMM)**, and generate publication-quality figures, execute:
+
+```bash
+# Runs statistical tests, latency profiling, and plot generation via Pixi task
+pixi run analyze-benchmark
+
+# Alternatively, run directly via python
+python run_benchmark_analysis.py
+```
+
+#### Generated Outputs:
+* **JSON Report**: Saved to [`evaluation_results/benchmark_statistical_report.json`](file:///C:/Users/emil_brezovsky/Documents/GitHub/_trainer_lightly/evaluation_results/benchmark_statistical_report.json)
+* **Publication Figures (300 DPI)**: Saved to [`evaluation_results/plots/`](file:///C:/Users/emil_brezovsky/Documents/GitHub/_trainer_lightly/evaluation_results/plots/)
+  * `multi_iou_map_comparison.png`: Multi-threshold IoU performance (`mAP30`, `mAP40`, `mAP50`, `mAP50-95`)
+  * `pareto_frontier_params.png`: Accuracy (mAP) vs. Parameter Footprint (Millions)
+  * `pareto_frontier_latency.png`: Accuracy (mAP) vs. Inference Latency (ms @ 1024x1024) / Throughput (FPS)
+  * `model_family_boxplots.png`: Cross-seed variance distribution across model families and capacity scales
 
 ---
 
@@ -79,6 +117,55 @@ pixi run eval --sahi --dataset C:\path\to\alternative_dataset.yaml
 ```
 
 This updates the dataset annotations structure dynamically, generates the split's COCO ground truth, executes inference (optionally with SAHI), and computes strict COCO metrics (`AP`, `AP50`, `AP75`, `AP_small`, `AP_medium`, `AP_large`) via `pycocotools`.
+
+---
+
+## 🎛️ Hyperparameter Optimization (HPO) & Sweeps
+
+This workspace supports multi-stage Bayesian Hyperparameter Optimization using Weights & Biases (W&B) and Albumentations.
+
+### 1. Launching a New HPO Sweep
+
+To initiate a new Phase 1 Augmentation HPO sweep (150 trials for `YOLO12s` with Hyperband early stopping):
+
+```bash
+# Automatically creates the sweep and launches a local agent for 150 trials
+pixi run sweep
+```
+
+### 2. Continuing an Existing HPO Sweep or Adding More Trials
+
+If a sweep agent stops, or if you want to extend a sweep beyond the initial trial limit (e.g., adding 50 or 100 more trials to an existing sweep ID), **you do not need to delete or recreate the sweep**. Sweeps are hosted in the W&B cloud and can be resumed at any time:
+
+#### Method A: Attach a New Agent to an Existing Sweep ID
+Run `wandb agent` pointing to your W&B entity/project/sweep_id:
+
+```bash
+# Attach an agent to run N additional trials on an existing sweep
+pixi run wandb agent brezo-boku-vienna/_baseline/<SWEEP_ID> --count 50
+```
+*Example:*
+```bash
+pixi run wandb agent brezo-boku-vienna/_baseline/hdk8bkvg --count 50
+```
+
+#### Method B: Run Parallel Multi-GPU / Multi-Terminal Agents
+You can launch multiple agent processes across separate terminal windows or machines. All agents will pull trials concurrently from the same cloud sweep without conflict:
+
+```bash
+# Terminal 1
+pixi run wandb agent brezo-boku-vienna/_baseline/<SWEEP_ID>
+
+# Terminal 2 (Parallel Agent)
+pixi run wandb agent brezo-boku-vienna/_baseline/<SWEEP_ID>
+```
+
+#### Method C: Adjust Maximum Trial Limits in `config.py`
+In `config.py`, modify `max_sweep_runs`:
+```python
+max_sweep_runs: int = 150  # Set desired max trial count
+```
+Running `pixi run sweep` will automatically spawn agents up to `max_sweep_runs`.
 
 ---
 

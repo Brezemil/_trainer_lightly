@@ -21,6 +21,7 @@ tempfile.tempdir = local_tmp_dir
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["WANDB_START_METHOD"] = "thread"
 
 import pyarrow  # noqa: F401
@@ -131,18 +132,18 @@ def main() -> None:
     if backend == "lightly" and batch_size == -1:
         batch_size = "auto"
     workers = cfg.workers
-    fraction = cfg.fraction
+    fraction = float(wb_config.get("fraction", cfg.fraction))
     amp = cfg.amp
 
     # 2. Setup Phase 1 vs Phase 2 sweep parameters
     if phase == "augmentation":
-        # Phase 1: Tune augmentations. Keep learning hyperparameters locked to baseline values.
-        optimizer_name = "MuSGD"
-        lr0_val = 0.0054
-        lrf_val = 0.0495
-        momentum_val = 0.947
-        weight_decay_val = 0.00064
-        warmup_epochs_val = 0.98
+        # Phase 1: Tune augmentations. Lock learning parameters to standard baseline values (auto).
+        optimizer_name = "auto"
+        lr0_val = 0.01
+        lrf_val = 0.01
+        momentum_val = 0.937
+        weight_decay_val = 0.0005
+        warmup_epochs_val = 3.0
 
         # Read augmentations config from sweep config
         active_aug_config = wb_config
@@ -464,4 +465,27 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import os
+    import sys
+    import yaml
+    import wandb
+    from config import PipelineConfig
+
+    cfg = PipelineConfig()
+    # If run directly by the user (not inside an active wandb agent process), initialize the sweep automatically
+    if os.environ.get("WANDB_SWEEP_ID") is None and len(sys.argv) <= 1:
+        yaml_path = os.path.abspath("sweep_aug_yolo.yaml")
+        if os.path.exists(yaml_path):
+            with open(yaml_path, "r") as f:
+                sweep_config = yaml.safe_load(f)
+
+            sweep_id = wandb.sweep(sweep_config, project=cfg.project, entity=cfg.entity)
+            print("=" * 65)
+            print(f" Initiated W&B Sweep ID: {sweep_id}")
+            print(f" Executing {cfg.max_sweep_runs} Bayesian HPO trials for YOLO12s...")
+            print("=" * 65)
+            wandb.agent(sweep_id, function=main, count=cfg.max_sweep_runs)
+        else:
+            main()
+    else:
+        main()

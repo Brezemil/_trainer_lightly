@@ -27,9 +27,9 @@ class PipelineConfig:
     # =========================================================================
     # Model & Data Paths
     # =========================================================================
-    model_variant: str = "yolo26s.pt"
+    model_variant: str = "yolo12s.pt"
     """Target baseline model checkpoint filename to train/evaluate.
-    Default: 'yolo26s.pt' (Geospatial-optimized YOLO26 architecture).
+    Default: 'yolo12s.pt' (Area-Attention optimized YOLO12 Small architecture).
     """
 
     dataset_path: str = (
@@ -66,10 +66,9 @@ class PipelineConfig:
         but increases VRAM usage)
     """
 
-    max_sweep_runs: int = 50
-    """Maximum number of random search trials for W&B Sweep Agents to run.
-    Default: 1 (Minimal smoketest limit).
-    Production Standard: 20 to 50 runs to ensure sufficient parameter search space coverage.
+    max_sweep_runs: int = 150
+    """Maximum number of Bayesian search trials for W&B Sweep Agents to run.
+    Default: 150 (Deep parameter space exploration with Hyperband early stopping).
     """
 
     sweep_epochs: int = 100
@@ -93,8 +92,8 @@ class PipelineConfig:
     yolo_patience: int = 100
     """Default training patience (early stopping) for YOLO-based models."""
 
-    yolo_batch_size: int = 16
-    """Default batch size for YOLO-based models."""
+    yolo_batch_size: int = 8
+    """Default batch size for YOLO-based models (8 fits 100% inside 16GB VRAM at 1024x1024 without PCIe RAM paging)."""
 
     rtdetr_epochs: int = 300
     """Default training epochs for RT-DETR models."""
