@@ -66,9 +66,9 @@ class PipelineConfig:
         but increases VRAM usage)
     """
 
-    max_sweep_runs: int = 150
+    max_sweep_runs: int = 100
     """Maximum number of Bayesian search trials for W&B Sweep Agents to run.
-    Default: 150 (Deep parameter space exploration with Hyperband early stopping).
+    Default: 100 (Deep parameter space exploration with Hyperband early stopping).
     """
 
     sweep_epochs: int = 100

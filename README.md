@@ -169,6 +169,88 @@ Running `pixi run sweep` will automatically spawn agents up to `max_sweep_runs`.
 
 ---
 
+## 🧬 Knowledge Distillation & Teacher-Student Learning
+
+*Note: Knowledge Distillation and Teacher-Student Learning are interchangeable terms for the exact same paradigm.* A large, compute-heavy **Teacher Model** (e.g., Meta's 304M-parameter `dinov3/vitl16-sat493m` pretrained on 493 million satellite images) transfers its dense spatial feature representations to a lightweight, real-time **Student Model** (e.g., 9.3M-parameter `YOLO12s`).
+
+> [!TIP]
+> **16 GB GPU VRAM Budget, Resolution & Decoder Head Recommendations:**
+> * **Batch Size (`--batch_size 32` or `64`)**: `--batch_size 32` at $224\times224$ uses **~7.5 GB VRAM** (or `64` for **~10.5 GB VRAM**), fitting 100% inside physical GDDR7 VRAM on 16 GB GPUs (RTX 5080 / RTX 4080).
+> * **Image Resolution (`--imgsz 512` or `1024`)**: DINOv3 Vision Transformers use 2D Bilinear Positional Embedding Interpolation to extract patch tokens at any image size ($512\times512$ uses 1024 patch tokens at **~9.8 GB VRAM**; $1024\times1024$ uses 4096 patch tokens at **~14.2 GB VRAM** with `--batch_size 16`).
+> * **Decoder Head Selection (`--decoder dfine`)**: Selects the **D-FINE head** (Discrete Fine-grained Distribution Refinement), which outperforms RT-DETRv2 on dense tree canopy boundaries by treating bounding box coordinates as continuous probability distributions.
+> * **Epoch Budget (`--epochs 100` or `--epochs auto`)**: Official LightlyTrain documentation recommends **100 to 300+ epochs** (or passing `auto`), as distillation benefits significantly from longer training schedules.
+
+### 🔄 3-Stage Distillation, Fine-Tuning & Evaluation Architecture
+
+`run_distillation.py` automates a strict 3-stage execution pipeline with **isolated Weights & Biases (W&B) experiment tracking**:
+
+1. **Stage 1 — Feature Distillation Pretraining (`lightly_train.pretrain`)**:
+   - Distills feature representations from the DINOv3 teacher (`dinov3/vitl16-sat493m` or `dinov3/vitl16`) into student architectures (e.g. `yolo12s`, `yolo12n`, or `dinov3/vitt16`).
+   - Logged under a dedicated **Pretraining W&B Run**: `pretrain_distill_<teacher>_to_<student>` (Job Type: `pretrain`).
+2. **Stage 2 — Supervised Fine-Tuning (`YOLO.train` / `train_object_detection`)**:
+   - Loads the pretrained student weights (`exported_best.pt`) and trains the bounding box detection head on your labeled dataset (`dataset.yaml`).
+   - Logged under a separate **Fine-Tuning W&B Run**: `finetune_distill_<teacher>_to_<student>` (Job Type: `finetune`), linked via the same W&B group `distill_<teacher>_to_<student>`.
+3. **Stage 3 — Strict COCO Evaluation (`evaluate_model_coco`)**:
+   - Runs `pycocoeval` on the fine-tuned checkpoint (`best.pt`) against the validation split.
+   - Logs final evaluation metrics (`mAP50-95`, `mAP50`, `mAP30`, `AR100`) directly into the Fine-Tuning W&B run.
+
+> [!IMPORTANT]
+> **Data Leakage & Spatial Split Integrity:**
+> * **Zero Data Leakage**: Stage 1 distillation pretraining is strictly self-supervised (unsupervised feature learning without ground-truth bounding box annotations).
+> * `resolve_distillation_data_paths()` automatically extracts only `train/images` and optional extra unlabeled images (`--data`). **Validation (`val/images`) and Test (`test/images`) splits are strictly excluded from pretraining**, ensuring unbiased `pycocoeval` metric reporting.
+
+> [!NOTE]
+> **Student Architecture Support (including `yolo26s`, `yolo26n`, & `dinov3/vitt16`)**:
+> Distillation can target real-time YOLO students (`yolo12s`, `yolo12n`, `yolo26s`, `yolo26n`, `yolo11s`, `yolo11n`) or tiny vision transformers (`dinov3/vitt16` / DINOv3 ViT-T/16). Distillations using `dinov3/vitt16` transfer ViT-L/16 foundation representations into an efficient 5.7M-parameter ViT-T backbone.
+
+### 1. Full Pipeline Execution (300 Pretrain Epochs + 100 Fine-Tune Epochs)
+```bash
+pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student yolo12s --data C:\Users\emil_brezovsky\Documents\GitHub\sliced_unlabeled\images --epochs 300 --finetune-epochs 100 --batch_size 16 --imgsz 1024 --wandb-offline
+```
+
+### 2. Distill Satellite Teacher into `YOLO26s` (Recommended Next-Gen Student Setup)
+```bash
+pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student yolo26s --epochs 100 --finetune-epochs 100 --batch_size 32
+```
+
+### 3. Distill Satellite Teacher into `YOLO26n` (Nano Next-Gen Setup)
+```bash
+pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student yolo26n --epochs 100 --finetune-epochs 100 --batch_size 32
+```
+
+### 4. Distill Satellite Teacher into `dinov3/vitt16` (Tiny ViT-T Student Setup)
+```bash
+pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student dinov3/vitt16 --epochs 100 --finetune-epochs 100 --batch_size 32
+```
+
+### 5. High-Resolution $512\times512$ Distillation (~9.8 GB VRAM)
+```bash
+pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student yolo12s --imgsz 512 --epochs 100 --finetune-epochs 100 --batch_size 32
+```
+
+### 6. Ultra-Resolution $1024\times1024$ Distillation (~14.2 GB VRAM)
+```bash
+pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student yolo12s --imgsz 1024 --epochs 300 --finetune-epochs 100 --batch_size 16
+```
+
+### 7. Distill Combining Dataset `train/images` with Extra Unlabeled Images (`--data`)
+```bash
+# Automatically combines dataset train/images AND extra folder without modifying files on disk
+pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student yolo12s --data C:\path\to\extra_unlabeled_images --epochs 100 --finetune-epochs 100 --batch_size 32
+```
+
+### 8. Distill Standard Meta LVD-1689M Teacher into `YOLO12s` (Comparison Setup)
+```bash
+pixi run python run_distillation.py --teacher dinov3/vitl16 --student yolo12s --epochs 100 --finetune-epochs 100 --batch_size 32
+```
+
+### 9. Evaluate an Existing Distilled Checkpoint Only
+```bash
+pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student yolo12s --eval_only
+```
+
+---
+
 ## 🧠 DINO to LTDETR Architecture Mapping
 
 To use ViT-based foundation models (like DINOv2 and DINOv3) for real-time dense prediction tasks, we wrap them using a Spatial-Temporal-Attention (STA) fusion architecture. This maps the single-resolution block features of the transformer backbones to the multi-scale inputs expected by the LTDETR (RT-DETR/DFine) necks and heads.

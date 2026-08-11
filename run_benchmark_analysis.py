@@ -846,6 +846,68 @@ def run_statistical_analysis(df: pd.DataFrame) -> Dict[str, Any]:
     except Exception as e:
         results["lmm_error"] = str(e)
 
+    # All-vs-All 3-Seed Variance, ANOVA, Kruskal-Wallis, and Bonferroni Pairwise Superiority Tests
+    all_vs_all_results: Dict[str, Any] = {}
+    family_list = df["variant"].unique().tolist()
+    family_data: Dict[str, np.ndarray] = {}
+    for fam in family_list:
+        sub_df = pd.DataFrame(df[df["variant"] == fam])
+        vals = sub_df["mAP50"].dropna().to_numpy(dtype=np.float64)
+        if len(vals) >= 2:
+            family_data[str(fam)] = vals
+
+    valid_fams = list(family_data.keys())
+    valid_groups = [family_data[f] for f in valid_fams if len(family_data[f]) >= 3]
+
+    if len(valid_groups) >= 2:
+        from scipy import stats
+
+        res_f = stats.f_oneway(*valid_groups)
+        res_h = stats.kruskal(*valid_groups)
+
+        f_stat_val = float(res_f.statistic)  # type: ignore
+        anova_p_val = float(res_f.pvalue)  # type: ignore
+        h_stat_val = float(res_h.statistic)  # type: ignore
+        kw_p_val = float(res_h.pvalue)  # type: ignore
+
+        all_vs_all_results["global_anova"] = {
+            "f_stat": f_stat_val,
+            "p_value": anova_p_val,
+            "significant_005": bool(anova_p_val < 0.05),
+        }
+        all_vs_all_results["global_kruskal"] = {
+            "h_stat": h_stat_val,
+            "p_value": kw_p_val,
+            "significant_005": bool(kw_p_val < 0.05),
+        }
+
+        num_comp = (len(valid_fams) * (len(valid_fams) - 1)) // 2
+        pairwise_matrix: List[Dict[str, Any]] = []
+        for i in range(len(valid_fams)):
+            for j in range(i + 1, len(valid_fams)):
+                f1, f2 = valid_fams[i], valid_fams[j]
+                v1, v2 = family_data[f1], family_data[f2]
+                res_t = stats.ttest_ind(v1, v2, equal_var=False)
+                t_s = float(res_t.statistic)  # type: ignore
+                p_v = float(res_t.pvalue)  # type: ignore
+                bonf_p = min(1.0, float(p_v * num_comp))
+                diff = float(np.mean(v1) - np.mean(v2))
+                winner = f1 if diff > 0 else f2
+                pairwise_matrix.append(
+                    {
+                        "comparison": f"{f1} vs {f2}",
+                        "mean_diff": abs(diff),
+                        "higher_model": winner,
+                        "t_stat": t_s,
+                        "raw_p": p_v,
+                        "bonferroni_p": bonf_p,
+                        "statistically_superior": bool(bonf_p < 0.05),
+                    }
+                )
+        all_vs_all_results["pairwise_matrix"] = pairwise_matrix
+
+    results["all_vs_all_seed_variance"] = all_vs_all_results
+
     cnn_candidates = summary[summary["arch_type"] == "CNN"]
     best_cnn = cnn_candidates.iloc[0].to_dict()
 
@@ -918,6 +980,28 @@ def main() -> None:
         print(f" Paired t-test P-Value:   {rec['ttest_p_value']:.6f}")
         print(f" Statistically Sig?:      {rec['significant_005']}")
         print("=" * 115)
+
+    if "all_vs_all_seed_variance" in analysis:
+        av_res = analysis["all_vs_all_seed_variance"]
+        if "global_anova" in av_res:
+            print("\n" + "=" * 115)
+            print(" 5. ALL-VS-ALL 3-SEED MODEL VARIANCE & BONFERRONI PAIRWISE MATRIX")
+            print("=" * 115)
+            ga = av_res["global_anova"]
+            gk = av_res["global_kruskal"]
+            print(
+                f" One-Way ANOVA F-Test:   F = {ga['f_stat']:.4f}, p = {ga['p_value']:.6f} (Sig? {ga['significant_005']})"
+            )
+            print(
+                f" Kruskal-Wallis H-Test: H = {gk['h_stat']:.4f}, p = {gk['p_value']:.6f} (Sig? {gk['significant_005']})"
+            )
+            print("-" * 115)
+            for pair in av_res.get("pairwise_matrix", []):
+                print(
+                    f" [{pair['comparison']:<32}] Mean Diff: {pair['mean_diff']:.4f} | Winner: {pair['higher_model']:<18} | "
+                    f"Raw P: {pair['raw_p']:.5f} | Bonf P: {pair['bonferroni_p']:.5f} | Sig? {pair['statistically_superior']}"
+                )
+            print("=" * 115)
 
     print("\n" + "=" * 115)
     print(" 4. FINAL HPO CANDIDATE SELECTION RECOMMENDATION")

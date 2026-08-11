@@ -165,6 +165,12 @@ def parse_args() -> argparse.Namespace:
         help="List of tags to assign to the Weights & Biases run.",
     )
     parser.add_argument(
+        "--backbone-weights",
+        type=str,
+        default=None,
+        help="Path to custom pretrained or distilled backbone weights file (e.g. exported_last.pt).",
+    )
+    parser.add_argument(
         "--backbone-freeze",
         type=str,
         default=None,
@@ -849,6 +855,10 @@ def main() -> None:
                         model_args["backbone_weights"] = hf_weights
                     elif distilled_weights:
                         model_args["backbone_weights"] = distilled_weights
+                    elif args.backbone_weights:
+                        model_args["backbone_weights"] = os.path.abspath(
+                            args.backbone_weights
+                        )
 
                     # Apply configurations from W&B Phase 1 & 2 Sweeps
                     if best_aug_config:

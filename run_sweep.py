@@ -440,8 +440,11 @@ def main() -> None:
         )
 
         # Log COCOeval validation metrics to W&B
-        # W&B Sweep metrics controller reads "metrics/AP"
-        wandb.log({f"metrics/{k}": v for k, v in metrics["metrics"].items()})
+        # W&B Sweep metrics controller reads "metrics/mAP50(B)"
+        log_dict = {f"metrics/{k}": v for k, v in metrics["metrics"].items()}
+        if "AP50" in metrics["metrics"]:
+            log_dict["metrics/mAP50(B)"] = metrics["metrics"]["AP50"]
+        wandb.log(log_dict)
 
         # Automatically tag top-performing runs on the W&B dashboard for easy filtering
         val_map = metrics["metrics"].get("AP", 0.0)
