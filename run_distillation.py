@@ -25,10 +25,10 @@ import sys
 os.environ["PYTHONIOENCODING"] = "utf-8"
 _reconfig_out = getattr(sys.stdout, "reconfigure", None)
 if callable(_reconfig_out):
-    _reconfig_out(encoding="utf-8")
+    _reconfig_out(encoding="utf-8", errors="replace")
 _reconfig_err = getattr(sys.stderr, "reconfigure", None)
 if callable(_reconfig_err):
-    _reconfig_err(encoding="utf-8")
+    _reconfig_err(encoding="utf-8", errors="replace")
 
 from PIL import Image  # noqa: F401  # Fix for Windows DLL load order issue with torchvision/_imaging
 import lightly_train
@@ -196,6 +196,16 @@ def parse_args():
         help="Transformer decoder head selection for DINO foundation models (default: dfine).",
     )
     parser.add_argument(
+        "--raw-steps",
+        action="store_true",
+        help="Disable rounding to the next full 1,000 steps for DINO fine-tuning, using exact raw steps.",
+    )
+    parser.add_argument(
+        "--skip-pretrain",
+        action="store_true",
+        help="Skip Stage 1 pretraining distillation and proceed directly to Stage 2 fine-tuning using existing exported weights.",
+    )
+    parser.add_argument(
         "--skip-finetune",
         action="store_true",
         help="Skip supervised fine-tuning and evaluation after distillation pretraining.",
@@ -288,7 +298,7 @@ def main():
     # =========================================================================
     # STAGE 1: Distillation Pretraining (LightlyTrain)
     # =========================================================================
-    if not args.eval_only:
+    if not args.eval_only and not args.skip_pretrain:
         print("\n" + "=" * 80)
         print(" STAGE 1: KNOWLEDGE DISTILLATION PRETRAINING")
         print("=" * 80)
@@ -417,12 +427,37 @@ def main():
                     else f"{args.student}-ltdetr"
                 )
 
+                import math
+
+                num_train_images = 5553
+                effective_batch_size = (
+                    max(32, finetune_batch_size)
+                    if isinstance(finetune_batch_size, int)
+                    and finetune_batch_size >= 32
+                    else 32
+                )
+                if isinstance(finetune_epochs_val, int):
+                    steps_raw = math.ceil(
+                        finetune_epochs_val * (num_train_images / effective_batch_size)
+                    )
+                    if args.raw_steps:
+                        finetune_steps = steps_raw
+                    else:
+                        finetune_steps = math.ceil(steps_raw / 1000) * 1000
+                else:
+                    finetune_steps = finetune_epochs_val
+
+                checkpoint_arg = None
+                model_args_dict = {"decoder_name": args.decoder}
+                if os.path.exists(best_distill_ckpt):
+                    model_args_dict["backbone_weights"] = best_distill_ckpt
+
                 lightly_train.train_object_detection(
                     out=finetune_out,
                     model=lightly_model_name,
                     data=data_dict,
-                    checkpoint=best_distill_ckpt,
-                    steps=finetune_epochs_val,
+                    checkpoint=checkpoint_arg,
+                    steps=finetune_steps,
                     batch_size=finetune_batch_size,
                     num_workers=args.num_workers,
                     devices=device_arg,
@@ -430,7 +465,7 @@ def main():
                     precision="16-mixed" if cfg.amp else "32-true",
                     seed=42,
                     overwrite=True,
-                    model_args={"decoder_name": args.decoder},
+                    model_args=model_args_dict,
                     logger_args={
                         "wandb": {
                             "project": cfg.project,
@@ -473,67 +508,93 @@ def main():
                 else:
                     finetuned_ckpt = os.path.join(finetune_out, "weights", "last.pt")
 
+    if finetuned_ckpt is None:
+        possible_ckpts = [
+            os.path.join(finetune_out, "weights", "best.pt"),
+            os.path.join(finetune_out, "exported_models", "exported_best.pt"),
+            os.path.join(finetune_out, "weights", "last.pt"),
+            os.path.join(finetune_out, "exported_models", "exported_last.pt"),
+        ]
+        for p in possible_ckpts:
+            if os.path.exists(p):
+                finetuned_ckpt = p
+                break
+
     # =========================================================================
     # STAGE 3: Strict COCO Evaluation on Fine-Tuned Model
     # =========================================================================
-    if not args.skip_finetune:
-        eval_ckpt = (
-            finetuned_ckpt
-            if (finetuned_ckpt and os.path.exists(finetuned_ckpt))
-            else best_distill_ckpt
+    eval_ckpt = (
+        finetuned_ckpt
+        if (finetuned_ckpt and os.path.exists(finetuned_ckpt))
+        else best_distill_ckpt
+    )
+
+    if eval_ckpt and os.path.exists(eval_ckpt):
+        print("\n" + "=" * 80)
+        print(" STAGE 3: EXECUTING STRICT COCOEVALUATION ON FINE-TUNED MODEL")
+        print("=" * 80)
+        print(f" Evaluation Checkpoint:  {eval_ckpt}")
+        print("=" * 80 + "\n")
+
+        if wandb.run is None:
+            wandb.init(
+                project=cfg.project,
+                entity=cfg.entity,
+                name=finetune_run_name,
+                group=base_run_name,
+                job_type="eval",
+                reinit=True,
+            )
+
+        eval_model = safe_load_model(eval_ckpt)
+
+        print("Evaluating on Validation Set (val)...")
+        _ = evaluate_model_coco(
+            model_path_or_model=eval_model,
+            dataset_yaml_path=cfg.dataset_path,
+            split="val",
+            eval_results_dir=cfg.eval_results_dir,
+            run_name=f"{finetune_run_name}_VAL",
+            device=args.device,
+            batch_size=args.batch_size,
+            imgsz=cfg.image_size,
+            workers=4,
         )
 
-        if eval_ckpt and os.path.exists(eval_ckpt):
-            print("\n" + "=" * 80)
-            print(" STAGE 3: EXECUTING STRICT COCOEVALUATION ON FINE-TUNED MODEL")
-            print("=" * 80)
-            print(f" Evaluation Checkpoint:  {eval_ckpt}")
-            print("=" * 80 + "\n")
+        print("\nEvaluating on Hold-Out Test Set (test)...")
+        metrics = evaluate_model_coco(
+            model_path_or_model=eval_model,
+            dataset_yaml_path=cfg.dataset_path,
+            split="test",
+            eval_results_dir=cfg.eval_results_dir,
+            run_name=f"{finetune_run_name}_TEST",
+            device=args.device,
+            batch_size=args.batch_size,
+            imgsz=cfg.image_size,
+            workers=4,
+        )
 
-            if wandb.run is None:
-                wandb.init(
-                    project=cfg.project,
-                    entity=cfg.entity,
-                    name=finetune_run_name,
-                    group=base_run_name,
-                    job_type="eval",
-                    reinit=True,
-                )
+        # Log evaluation metrics to Fine-tuning W&B run
+        log_dict = {f"metrics/{k}": v for k, v in metrics["metrics"].items()}
+        if "AP50" in metrics["metrics"]:
+            log_dict["metrics/mAP50(B)"] = metrics["metrics"]["AP50"]
+        wandb.log(log_dict)
 
-            eval_model = safe_load_model(eval_ckpt)
-            metrics = evaluate_model_coco(
-                model_path_or_model=eval_model,
-                dataset_yaml_path=cfg.dataset_path,
-                split="val",
-                eval_results_dir=cfg.eval_results_dir,
-                run_name=finetune_run_name,
-                device=args.device,
-                batch_size=args.batch_size,
-                imgsz=cfg.image_size,
-                workers=4,
-            )
+        print("\n" + "=" * 80)
+        print(f" FINE-TUNED {student_tag.upper()} COCOEVAL PERFORMANCE RESULTS")
+        print("-" * 80)
+        print(f" mAP (50-95):   {metrics['metrics'].get('AP', 0.0):.4f}")
+        print(f" mAP50:         {metrics['metrics'].get('AP50', 0.0):.4f}")
+        print(
+            f" mAP30:         {metrics['metrics'].get('AP30', metrics['metrics'].get('mAP30', 0.0)):.4f}"
+        )
+        print(f" AR_max100:     {metrics['metrics'].get('AR_max100', 0.0):.4f}")
+        print("=" * 80 + "\n")
+    else:
+        print(f"\nWarning: Checkpoint not found at {eval_ckpt}. Skipping evaluation.")
 
-            # Log evaluation metrics to Fine-tuning W&B run
-            log_dict = {f"metrics/{k}": v for k, v in metrics["metrics"].items()}
-            if "AP50" in metrics["metrics"]:
-                log_dict["metrics/mAP50(B)"] = metrics["metrics"]["AP50"]
-            wandb.log(log_dict)
-
-            print("\n" + "=" * 80)
-            print(f" FINE-TUNED {student_tag.upper()} COCOEVAL PERFORMANCE RESULTS")
-            print("-" * 80)
-            print(f" mAP (50-95):   {metrics['metrics'].get('AP', 0.0):.4f}")
-            print(f" mAP50:         {metrics['metrics'].get('AP50', 0.0):.4f}")
-            print(f" mAP30:         {metrics['metrics'].get('mAP30', 0.0):.4f}")
-            print(f" AR_max100:     {metrics['metrics'].get('AR_max100', 0.0):.4f}")
-            print("=" * 80 + "\n")
-        else:
-            print(
-                f"\nWarning: Checkpoint not found at {eval_ckpt}. Skipping evaluation."
-            )
-
-        if wandb.run is not None:
-            wandb.finish()
+    if wandb.run is not None:
+        wandb.finish()
 
     gc.collect()
     if torch.cuda.is_available():

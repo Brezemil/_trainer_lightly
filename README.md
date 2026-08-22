@@ -203,6 +203,11 @@ Running `pixi run sweep` will automatically spawn agents up to `max_sweep_runs`.
 > **Student Architecture Support (including `yolo26s`, `yolo26n`, & `dinov3/vitt16`)**:
 > Distillation can target real-time YOLO students (`yolo12s`, `yolo12n`, `yolo26s`, `yolo26n`, `yolo11s`, `yolo11n`) or tiny vision transformers (`dinov3/vitt16` / DINOv3 ViT-T/16). Distillations using `dinov3/vitt16` transfer ViT-L/16 foundation representations into an efficient 5.7M-parameter ViT-T backbone.
 
+### 0. Master Production Chained Command (Sequential Execution)
+```bash
+pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student yolo12s --skip-pretrain --finetune-epochs 150 --patience 30 --finetune-batch-size 8 --finetune-imgsz 1024 --wandb-offline && pixi run python run_distillation.py --teacher dinov3/vitl16 --student yolo12s --data "C:\Users\emil_brezovsky\Documents\GitHub\_dataset_unlabeled_512" --epochs 11 --finetune-epochs 150 --patience 30 --pretrain-batch-size 32 --finetune-batch-size 8 --pretrain-imgsz 512 --finetune-imgsz 1024 --wandb-offline && pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student dinov3/vitt16 --data "C:\Users\emil_brezovsky\Documents\GitHub\_dataset_unlabeled_512" --epochs 11 --finetune-epochs 100 --raw-steps --pretrain-batch-size 32 --finetune-batch-size 8 --pretrain-imgsz 512 --finetune-imgsz 1024 --wandb-offline
+```
+
 ### 1. Full Pipeline Execution (300 Pretrain Epochs + 100 Fine-Tune Epochs)
 ```bash
 pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student yolo12s --data C:\Users\emil_brezovsky\Documents\GitHub\sliced_unlabeled\images --epochs 300 --finetune-epochs 100 --batch_size 16 --imgsz 1024 --wandb-offline

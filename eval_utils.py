@@ -156,11 +156,18 @@ def safe_load_model(
     device = _resolve_device(device)
     ckpt = torch.load(model_path, weights_only=False, map_location=device)
 
-    # Bugfix: If it's a DINOv3 SAT-493M checkpoint, ensure backbone_args.is_sat493m_weights is set to True.
-    # This prevents RuntimeError: Unexpected key(s) in state_dict: "backbone.dinov3.local_cls_norm.weight"...
+    # Bugfix: If it's a DINOv3 SAT-493M teacher checkpoint, ensure backbone_args.is_sat493m_weights is set to True.
+    # Do NOT apply to student models (e.g. vitt16 / vits16) fine-tuned from distillation.
     patched = False
     original_init = None
-    if "sat493m" in str(model_path).lower():
+    filename_lower = str(os.path.basename(model_path)).lower()
+    is_sat_ckpt = "sat493m" in filename_lower or (
+        "sat493m" in str(model_path).lower()
+        and "vitl16" in str(model_path).lower()
+        and "vitt16" not in str(model_path).lower()
+        and "vits16" not in str(model_path).lower()
+    )
+    if is_sat_ckpt:
         if "model_init_args" in ckpt:
             if (
                 "backbone_args" not in ckpt["model_init_args"]
@@ -205,7 +212,19 @@ def safe_load_model(
             print(f"Warning: Failed to patch DinoVisionTransformer for SAT-493M: {e}")
 
     try:
-        model_instance = init_model_from_checkpoint(checkpoint=ckpt, device=device)
+        if isinstance(ckpt, dict) and "model_class_path" not in ckpt:
+            from ultralytics import YOLO
+
+            model_instance = YOLO(model_path)
+        else:
+            model_instance = init_model_from_checkpoint(checkpoint=ckpt, device=device)
+    except Exception as err:
+        if "model_class_path" in str(err) or isinstance(err, KeyError):
+            from ultralytics import YOLO
+
+            model_instance = YOLO(model_path)
+        else:
+            raise err
     finally:
         if patched and original_init is not None:
             try:
@@ -313,12 +332,21 @@ def evaluate_model_coco(
 
                 model = YOLO(model_path_or_model)
                 is_yolo_fw = True
+    # Check instance type or attributes
+    if hasattr(model, "val") and (
+        hasattr(model, "overrides")
+        or "YOLO" in model.__class__.__name__
+        or "RTDETR" in model.__class__.__name__
+    ):
+        is_yolo_fw = True
+    elif (
+        hasattr(model, "postprocessor")
+        or hasattr(model, "forward_backend")
+        or "LTDETR" in model.__class__.__name__
+    ):
+        is_yolo_fw = False
     else:
-        # Check instance type or attributes
-        if hasattr(model, "postprocessor") or hasattr(model, "forward_backend"):
-            is_yolo_fw = False
-        else:
-            is_yolo_fw = True
+        is_yolo_fw = True
 
     print(
         f"Evaluating {run_name} ({'Ultralytics' if is_yolo_fw else 'LightlyTrain'}) on the {split} set (SAHI={sahi_enabled})..."

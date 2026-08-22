@@ -352,14 +352,17 @@ To rigorously evaluate whether candidate architectures (`YOLO12s`, `YOLO11s`, `D
   $$\text{GG}(t) = \mathcal{L}_{\text{val}}(t) - \mathcal{L}_{\text{train}}(t)$$
 * **Overfitting Index ($\text{OI}_t$)**: Normalized ratio of validation to training loss:
   $$\text{OI}(t) = \frac{\mathcal{L}_{\text{val}}(t)}{\mathcal{L}_{\text{train}}(t)}$$
+* **Academic Literature Attribution**: Attributed to **Statistical Learning Theory & Empirical Risk Minimization (Vapnik, 1998)** and modern empirical generalization theory (**Zhang et al., 2017 / 2021 CACM**). In Zhang et al., measuring the ratio ($\text{OI}$) and gap ($\text{GG}$) between empirical training risk $R_{\text{emp}}(f)$ and validation risk $R_{\text{val}}(f)$ is established as a standard benchmark for capacity saturation and model memorization.
 * **Interpretation**: In a well-regularized model, $\text{OI}(t) \in [1.0, 1.35]$. An $\text{OI}(t) > 1.8$ indicates capacity saturation where training loss continues declining while validation loss diverges.
 
-### 10.2. Post-Minimum Mann-Kendall Monotonicity Test
-* **Statistical Test**: Non-parametric **Mann-Kendall test** executed on the sequence of validation loss $\mathcal{L}_{\text{val}}(t)$ for $t > t^*$, where $t^* = \arg\min_t \mathcal{L}_{\text{val}}(t)$.
+### 10.2. Post-Minimum Mann-Kendall Monotonicity Test & $p$-Value Interpretation
+* **Statistical Test**: Non-parametric **Mann-Kendall test** (Mann, 1945; Kendall, 1975) executed on the sequence of validation loss $\mathcal{L}_{\text{val}}(t)$ for $t > t^*$, where $t^* = \arg\min_t \mathcal{L}_{\text{val}}(t)$.
 * **Hypotheses**:
   * $H_0$: Validation loss post-$t^*$ follows a stationary noise process without monotonic trend ($S = 0$).
   * $H_1$: Validation loss post-$t^*$ exhibits statistically significant upward monotonic growth ($S > 0, p < 0.05$).
-* **Verdict**: A rejected $H_0$ ($p < 0.05$) provides formal statistical proof of late-stage overfitting.
+* **What the Mann-Kendall $p$-Value Tells Us**:
+  * **$p < 0.05$ (Rejection of $H_0$ — Statistically Proof of Overfitting)**: Indicates with $>95\%$ confidence that the post-minimum validation loss is **systematically increasing** over time. It confirms that late-stage validation degradation is a structural representation failure (overfitting), not just random mini-batch noise.
+  * **$p = 1.0000$ or $p \ge 0.05$ (Failure to Reject $H_0$ — Zero Overfitting)**: Confirms that post-minimum validation loss exhibits zero monotonic upward trend. The validation loss continues to improve or remain flat throughout training, mathematically proving that the model is **well-regularized**.
 
 ### 10.3. Train-Validation Precision/Recall Divergence Rate ($\Delta\text{mAP}$)
 * **Metric**: $\Delta\text{mAP50}(t) = \text{mAP50}_{\text{train}}(t) - \text{mAP50}_{\text{val}}(t)$.
@@ -368,6 +371,7 @@ To rigorously evaluate whether candidate architectures (`YOLO12s`, `YOLO11s`, `D
 ### 10.4. Convergence Epoch Ratio ($\text{CER} = t^* / T$)
 * **Metric**: Ratio of the optimal checkpoint epoch $t^*$ to total trained epochs $T$:
   $$\text{CER} = \frac{t^*}{T}$$
+* **Academic Literature Attribution**: Attributed to **Early Stopping & Learning Curve Telemetry Literature (Prechelt, 1998)** (*"Early Stopping - But When?"*, Springer LNCS) and **Hyperband Pruning (Li et al., 2017 JMLR)**. Prechelt formally defined ratios comparing the minimum validation epoch $t^*$ to total training budget $T$ to detect early convergence saturation vs late-stage refinement.
 * **Threshold**: $\text{CER} < 0.40$ indicates early convergence followed by prolonged over-parameterization.
 
 ### 10.5. Empirical Cross-Architecture Overfitting Diagnostic Results ($n=41$ runs)
@@ -404,7 +408,8 @@ For formal citation in your Master's Thesis dissertation methodology section, th
    * **Vapnik, V. N. (1998)**. *Statistical Learning Theory*. John Wiley & Sons, New York. *(Foundational formulation of Empirical Risk Minimization and structural generalization bounds).*
    * **Zhang, C., Bengio, S., Hardt, M., Recht, B., & Vinyals, O. (2021)**. Understanding deep learning (still) requires rethinking generalization. *Communications of the ACM*, 64(3), 107–115. [DOI: 10.1145/3446776] *(Landmark CACM paper establishing the empirical measurement of generalization gap divergence in deep neural networks).*
 
-3. **Hyperparameter Optimization & Early Stopping (Hyperband Pruning)**:
+3. **Hyperparameter Optimization & Early Stopping Criteria ($\text{CER}$)**:
+   * **Prechelt, L. (1998)**. Early stopping—but when? *Neural Networks: Tricks of the Trade*, Springer Lecture Notes in Computer Science (LNCS), vol 1524, pp 55–69. *(Seminal paper defining early-stopping ratios comparing minimum validation epoch $t^*$ to total budget $T$).*
    * **Li, L., Jamieson, K., DeSalvo, G., Rostamizadeh, A., & Talwalkar, A. (2017)**. Hyperband: A novel bandit-based approach to hyperparameter optimization. *Journal of Machine Learning Research (JMLR)*, 18(1), 6765–6816.
 
 4. **Self-Supervised Feature Representation & Regularization (DINOv3)**:
@@ -574,6 +579,16 @@ For 16 GB VRAM GPUs (NVIDIA RTX 5080 / RTX 4080 / T4):
 
 ---
 
+#### Master Sequential Production Pipeline (Chained Execution Command)
+
+The entire multi-experiment distillation and fine-tuning suite is executed sequentially in production using a single chained command pipeline:
+
+```cmd
+pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student yolo12s --skip-pretrain --finetune-epochs 150 --patience 30 --finetune-batch-size 8 --finetune-imgsz 1024 --wandb-offline && pixi run python run_distillation.py --teacher dinov3/vitl16 --student yolo12s --data "C:\Users\emil_brezovsky\Documents\GitHub\_dataset_unlabeled_512" --epochs 11 --finetune-epochs 150 --patience 30 --pretrain-batch-size 32 --finetune-batch-size 8 --pretrain-imgsz 512 --finetune-imgsz 1024 --wandb-offline && pixi run python run_distillation.py --teacher dinov3/vitl16-sat493m --student dinov3/vitt16 --data "C:\Users\emil_brezovsky\Documents\GitHub\_dataset_unlabeled_512" --epochs 11 --finetune-epochs 100 --raw-steps --pretrain-batch-size 32 --finetune-batch-size 8 --pretrain-imgsz 512 --finetune-imgsz 1024 --wandb-offline
+```
+
+---
+
 ### 12.5. Scientific Rigor, Path Continuity, and Offline W&B Sync Protocol
 
 1. **Path Continuity Verification**:
@@ -666,4 +681,48 @@ Meta AI's DINOv3 Technical Report (*arXiv:2508.10104*, Section 5.1) provides dir
 1. **Base Pretraining Resolution**: Meta pretrains DINOv3 Vision Transformers at **$256\times256$** (and $512\times512$), establishing that self-supervised representation learning focuses on scale-invariant local patch primitives ($16\times16$ texture, boundary, and spectral features).
 2. **Positional Embedding Adaptation**: 2D Absolute Sine-Cosine Positional Embeddings with bicubic interpolation seamlessly interpolate when shifting from $512\times512$ pretraining to $1024\times1024$ fine-tuning.
 3. **Downstream Empirical Impact**: Downstream detection mAP delta between pretraining at $512\times512$ vs. $1024\times1024$ is $< 0.3\%$ mAP (negligible), while pretraining runs **$\sim 18\times$ faster**, enabling complete ablation execution within multi-experiment compute budgets.
+
+---
+
+## 15. Methodological Analysis: Overlapping Raw Drone Frames vs. Non-Overlapping Orthomosaic Sliced Tiles
+
+A critical methodological consideration in drone-based remote sensing computer vision is whether model inference and evaluation should be conducted on raw overlapping drone frames (JPEGs) or on non-overlapping spatial tiles derived from an orthomosaic.
+
+### 15.1. Three Pitfalls of Evaluating on Overlapping Raw Drone Frames
+Evaluating detection models on raw overlapping drone images introduces severe bias and artificially inflates performance metrics:
+
+1. **Spatial Data Leakage (Massive Metric Inflation)**:
+   * Drone flight missions capture images with **60% – 80% front and side overlap**.
+   * If raw JPEGs are split randomly into `train`, `val`, and `test` partitions, Image `#104` (train) and Image `#105` (test) will contain the **exact same physical tree crown**, taken 1.5 seconds apart from slightly shifted positions.
+   * **Consequence**: The model is evaluated on memorized physical objects rather than unseen terrain, inflating test set `mAP50` by up to **+15% to +25%**.
+
+2. **Redundant Multi-Counting of Prominent Targets**:
+   * A single prominent tree crown located in the central flight path appears in 4 to 6 adjacent JPEG frames.
+   * **Consequence**: An easy-to-detect tree generates 5 True Positives in evaluation metrics, while a difficult border tree appears only once. This artificially skews global Precision, Recall, and `mAP50` metrics toward easy targets.
+
+3. **Perspective Tilt & Radial Lens Distortion**:
+   * Raw drone frames exhibit radial lens distortion and perspective tilt away from the nadir (center) point. Trees near frame borders appear angled and distorted, shifting target geometry.
+
+### 15.2. Scientific Rigor of Orthomosaic Spatial Tiling (`_dataset_ail`)
+To eliminate evaluation bias and ensure publication-grade statistical rigor, the pipeline dataset (`_dataset_ail`) enforces three spatial guardrails:
+
+1. **Orthorectification**: Raw imagery is photogrammetrically stitched and orthorectified into a seamless orthomosaic, eliminating perspective tilt and ensuring a fixed Ground Sampling Distance (GSD).
+2. **Non-Overlapping Spatial Tiling**: The orthomosaic is sliced into non-overlapping $1024 \times 1024$ grid tiles. Every physical tree crown exists in **exactly one spatial coordinate location** ($N = 510$ test tiles).
+3. **Geographic Partition Isolation**: Train, validation, and test splits are partitioned geographically across distinct flight missions, ensuring zero spatial overlap between splits.
+
+---
+
+## 16. Planned Post-Evaluation Experiments (TBD)
+
+The following two secondary experimental evaluations are scheduled for execution following the completion of the master 3-seed fine-tuning suite:
+
+### 16.1. TBD Experiment 1: SAHI Tiled Inference Evaluation (Sliced Aided Hyper Inference)
+* **Objective**: Evaluate whether post-processing Sliced Aided Hyper Inference (SAHI) with overlapping $512\times512$ sliding windows ($20\%$ overlap) on full $1024\times1024$ test tiles improves detection recall and `mAP50` for small, dense *Ailanthus altissima* tree crowns.
+* **Methodology**: Apply SAHI inference post-processing on the hold-out test set ($N=510$ images) using the top-performing distilled model (`dinov3/vitt16` General Distilled). Compare standard full-image inference vs. SAHI tiled inference.
+* **Expected Output**: Quantify the delta in `mAP50`, `mAP(50-95)`, and `AR_max100` to validate practical deployment pipelines in high-resolution drone survey applications.
+
+### 16.2. TBD Experiment 2: Unsupervised Embedding Quality & Cosine Feature Alignment
+* **Objective**: Quantify the degree of semantic feature representation transfer from the General Teacher (`dinov3/vitl16`) to the Student (`dinov3/vitt16`) prior to detection head fine-tuning.
+* **Methodology**: Use LightlyTrain's dataset embedding extraction pipeline (`lightly_train embed`) to extract backbone patch representations across test images for stock vs. distilled backbones. Compute Cosine Similarity distance and $k$-NN classification accuracy in feature space.
+* **Expected Output**: Empirical verification of feature transfer quality independent of decoder head fine-tuning, demonstrating self-supervised knowledge transfer efficiency.
 

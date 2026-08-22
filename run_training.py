@@ -689,8 +689,13 @@ def main() -> None:
                         print(f"Loading RT-DETR model: {model_name}")
                         model = RTDETR(model_name)
                     else:
-                        print(f"Loading YOLO model: {model_name}")
-                        model = YOLO(model_name)
+                        init_weights = (
+                            args.backbone_weights
+                            if args.backbone_weights
+                            else model_name
+                        )
+                        print(f"Loading YOLO model: {init_weights}")
+                        model = YOLO(init_weights)
 
                     train_kwargs = {
                         "data": dataset_path,
