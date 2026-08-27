@@ -100,7 +100,7 @@ def parse_args() -> argparse.Namespace:
         "--fraction",
         type=float,
         default=None,
-        help="Override the fraction of dataset to train on (e.g. 0.01 for 1%% of data).",
+        help="Override the fraction of dataset to train on (e.g. 0.01 for 1% of data).",
     )
     parser.add_argument(
         "--dataset",

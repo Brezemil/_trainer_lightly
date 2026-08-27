@@ -21,7 +21,6 @@ import argparse
 import gc
 import os
 import sys
-from typing import Literal
 
 os.environ["PYTHONIOENCODING"] = "utf-8"
 _reconfig_out = getattr(sys.stdout, "reconfigure", None)
@@ -120,20 +119,14 @@ def parse_args():
     parser.add_argument(
         "--finetune-epochs",
         type=str,
-        default=None,
-        help="Supervised fine-tuning epochs on labeled dataset.yaml (default: 100 for DINO, 300 for YOLO; accepts 'auto' or integer).",
+        default="300",
+        help="Supervised fine-tuning epochs on labeled dataset.yaml (default: '300'; accepts 'auto' or integer).",
     )
     parser.add_argument(
         "--patience",
         type=int,
         default=30,
         help="Epoch patience for early stopping during YOLO supervised fine-tuning (default: 30; set 0 to disable).",
-    )
-    parser.add_argument(
-        "--batch",
-        type=int,
-        default=None,
-        help="Alias for --batch_size.",
     )
     parser.add_argument(
         "--batch_size",
@@ -208,12 +201,6 @@ def parse_args():
         help="Disable rounding to the next full 1,000 steps for DINO fine-tuning, using exact raw steps.",
     )
     parser.add_argument(
-        "--backbone-freeze",
-        type=str,
-        default=None,
-        help="Override the backbone_freeze setting (True/False).",
-    )
-    parser.add_argument(
         "--skip-pretrain",
         action="store_true",
         help="Skip Stage 1 pretraining distillation and proceed directly to Stage 2 fine-tuning using existing exported weights.",
@@ -227,18 +214,6 @@ def parse_args():
         "--eval_only",
         action="store_true",
         help="Skip pretraining & fine-tuning to evaluate an existing checkpoint.",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed for pretraining and fine-tuning (default: 42).",
-    )
-    parser.add_argument(
-        "--pretrained-checkpoint",
-        type=str,
-        default=None,
-        help="Explicit path to pretrained distillation checkpoint to fine-tune (default: pretrain_out/exported_models/exported_last.pt).",
     )
     parser.add_argument(
         "--wandb-offline",
@@ -262,16 +237,8 @@ def main():
     student_tag = args.student.replace(".pt", "").replace("/", "_")
 
     base_run_name = f"distill_{teacher_tag}_to_{student_tag}"
-    pretrain_run_name = (
-        f"pretrain_{base_run_name}"
-        if args.seed == 42
-        else f"pretrain_{base_run_name}_seed_{args.seed}"
-    )
-    finetune_run_name = (
-        f"finetune_{base_run_name}"
-        if args.seed == 42
-        else f"finetune_{base_run_name}_seed_{args.seed}"
-    )
+    pretrain_run_name = f"pretrain_{base_run_name}"
+    finetune_run_name = f"finetune_{base_run_name}"
 
     if args.out:
         out_dir = os.path.abspath(args.out)
@@ -279,11 +246,7 @@ def main():
         out_dir = os.path.abspath(os.path.join(cfg.runs_dir, "distill", base_run_name))
 
     pretrain_out = os.path.join(out_dir, "pretrain")
-    finetune_out = (
-        os.path.join(out_dir, "finetune")
-        if args.seed == 42
-        else os.path.join(out_dir, f"finetune_seed_{args.seed}")
-    )
+    finetune_out = os.path.join(out_dir, "finetune")
 
     # Resolve student model string for LightlyTrain
     if "dinov3/" in args.student:
@@ -304,49 +267,33 @@ def main():
         args.finetune_imgsz if args.finetune_imgsz is not None else args.imgsz
     )
 
-    effective_batch_arg = args.batch if args.batch is not None else args.batch_size
     # Resolve batch size for pretraining vs fine-tuning
     pretrain_batch_size = (
         args.pretrain_batch_size
         if args.pretrain_batch_size is not None
-        else effective_batch_arg
+        else args.batch_size
     )
     finetune_batch_size = (
         args.finetune_batch_size
         if args.finetune_batch_size is not None
-        else effective_batch_arg
+        else args.batch_size
     )
 
     epochs_val = int(args.epochs) if args.epochs.isdigit() else "auto"
-    if args.finetune_epochs is not None:
-        finetune_epochs_val: int | str = (
-            int(args.finetune_epochs)
-            if str(args.finetune_epochs).isdigit()
-            else args.finetune_epochs
-        )
-    elif args.skip_pretrain and args.epochs is not None:
-        finetune_epochs_val = (
-            int(args.epochs) if str(args.epochs).isdigit() else args.epochs
-        )
-    else:
-        finetune_epochs_val = 100 if "dinov3/" in args.student else 300
-
-    backbone_freeze = cfg.backbone_freeze
-    if args.backbone_freeze is not None:
-        backbone_freeze = args.backbone_freeze.lower() in ("true", "1", "yes")
-
+    finetune_epochs_val: int | str = (
+        int(args.finetune_epochs)
+        if str(args.finetune_epochs).isdigit()
+        else ("auto" if "dinov3/" in args.student else 300)
+    )
     data_input = resolve_distillation_data_paths(cfg.dataset_path, args.data)
 
-    if args.pretrained_checkpoint:
-        best_distill_ckpt = os.path.abspath(args.pretrained_checkpoint)
-    else:
+    best_distill_ckpt = os.path.join(
+        pretrain_out, "exported_models", "exported_best.pt"
+    )
+    if not os.path.exists(best_distill_ckpt):
         best_distill_ckpt = os.path.join(
-            pretrain_out, "exported_models", "exported_best.pt"
+            pretrain_out, "exported_models", "exported_last.pt"
         )
-        if not os.path.exists(best_distill_ckpt):
-            best_distill_ckpt = os.path.join(
-                pretrain_out, "exported_models", "exported_last.pt"
-            )
 
     # =========================================================================
     # STAGE 1: Distillation Pretraining (LightlyTrain)
@@ -360,7 +307,6 @@ def main():
         print(f" Pretrain Epoch Budget:  {epochs_val}")
         print(f" Pretrain Batch Size:    {pretrain_batch_size}")
         print(f" Pretrain Image Size:    {pretrain_imgsz} px")
-        print(f" Pretrain Random Seed:   {args.seed}")
         print(f" Target Pretrain Output: {pretrain_out}")
         print(f" W&B Pretrain Run Name:  {pretrain_run_name} (Group: {base_run_name})")
         print("=" * 80 + "\n")
@@ -377,7 +323,6 @@ def main():
                 "stage": "distillation_pretraining",
                 "teacher": args.teacher,
                 "student": args.student,
-                "seed": args.seed,
                 "epochs": epochs_val,
                 "pretrain_batch_size": pretrain_batch_size,
                 "finetune_batch_size": finetune_batch_size,
@@ -400,7 +345,7 @@ def main():
             devices=device_arg,
             accelerator=accel,
             precision="16-mixed" if cfg.amp else "32-true",
-            seed=args.seed,
+            seed=42,
             overwrite=True,
             method_args={
                 "teacher": args.teacher,
@@ -502,15 +447,8 @@ def main():
                 else:
                     finetune_steps = finetune_epochs_val
 
-                steps_arg: int | Literal["auto"] = (
-                    finetune_steps if isinstance(finetune_steps, int) else "auto"
-                )
-
                 checkpoint_arg = None
-                model_args_dict = {
-                    "decoder_name": args.decoder,
-                    "backbone_freeze": backbone_freeze,
-                }
+                model_args_dict = {"decoder_name": args.decoder}
                 if os.path.exists(best_distill_ckpt):
                     model_args_dict["backbone_weights"] = best_distill_ckpt
 
@@ -519,16 +457,15 @@ def main():
                     model=lightly_model_name,
                     data=data_dict,
                     checkpoint=checkpoint_arg,
-                    steps=steps_arg,
+                    steps=finetune_steps,
                     batch_size=finetune_batch_size,
                     num_workers=args.num_workers,
                     devices=device_arg,
                     accelerator=accel,
                     precision="16-mixed" if cfg.amp else "32-true",
-                    seed=args.seed,
+                    seed=42,
                     overwrite=True,
                     model_args=model_args_dict,
-                    transform_args={"image_size": [finetune_imgsz, finetune_imgsz]},
                     logger_args={
                         "wandb": {
                             "project": cfg.project,
@@ -562,7 +499,7 @@ def main():
                     exist_ok=True,
                     plots=True,
                     amp=cfg.amp,
-                    seed=args.seed,
+                    seed=42,
                 )
 
                 candidate_best = os.path.join(finetune_out, "weights", "best.pt")
