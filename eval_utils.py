@@ -45,7 +45,12 @@ def generate_coco_gt(dataset_yaml_path: str, split: str, save_path: str) -> str:
         if not os.path.isabs(split_img_dir)
         else split_img_dir
     )
-    labels_dir = images_dir.replace("images", "labels")
+    if os.path.basename(images_dir) == "images":
+        labels_dir = os.path.join(os.path.dirname(images_dir), "labels")
+    else:
+        # Fallback to rightmost occurrence replacement
+        head, sep, tail = images_dir.rpartition("images")
+        labels_dir = head + "labels" + tail if sep else images_dir
 
     if not os.path.exists(images_dir):
         raise FileNotFoundError(f"Images directory not found: {images_dir}")
